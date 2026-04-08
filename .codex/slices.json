@@ -75,7 +75,7 @@
     {
       "id": "S5",
       "title": "RCI client contracts",
-      "status": "planned",
+      "status": "done",
       "goal": "Define transport-facing interfaces and RCI-only client contracts.",
       "summary": "Add infrastructure interfaces without implementing sync behavior yet.",
       "acceptance": [
@@ -83,7 +83,7 @@
         "No HTTP details leak into domain or application."
       ],
       "depends_on": ["S3", "S4"],
-      "notes": ""
+      "notes": "Completed with green local verification on 2026-04-08."
     },
     {
       "id": "S6",
