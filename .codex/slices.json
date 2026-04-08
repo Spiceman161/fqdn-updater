@@ -144,6 +144,146 @@
       ],
       "depends_on": ["S4", "S5", "S7", "S8"],
       "notes": "Completed with green local verification on 2026-04-08."
+    },
+    {
+      "id": "S10",
+      "title": "RCI Read Transport Implementation",
+      "status": "ready",
+      "goal": "Implement the first real Keenetic RCI read path for object-group state and DNS proxy status.",
+      "summary": "Replace the current RCI client stub for read-only operations with an HTTP Digest-backed client that can execute RCI requests, parse managed object-group state, and expose DNS proxy status without any write behavior.",
+      "acceptance": [
+        "KeeneticRciClient can issue authenticated HTTPS requests to the configured /rci endpoint.",
+        "get_object_group returns deterministic ObjectGroupState for existing and missing groups.",
+        "get_dns_proxy_status returns a typed DnsProxyStatus from router data.",
+        "HTTP, Digest, and payload details remain fully inside infrastructure.",
+        "No write methods are implemented in this slice."
+      ],
+      "depends_on": ["S9"],
+      "notes": "Next minimal slice after S9. Enables real router-backed dry-run work without introducing apply behavior."
+    },
+    {
+      "id": "S11",
+      "title": "CLI Dry-Run Entry Point",
+      "status": "pending",
+      "goal": "Expose the read-only orchestration flow as a user-facing dry-run command with deterministic output and exit codes.",
+      "summary": "Add a CLI dry-run command that loads config, invokes the orchestration flow, renders human-readable and JSON output, writes artifacts, and returns stable exit codes for no-changes, planned changes, and errors.",
+      "acceptance": [
+        "A dry-run CLI command exists and accepts a config path.",
+        "The command uses the real RCI read path and existing orchestration service.",
+        "Human-readable and JSON output modes are supported.",
+        "Exit codes distinguish no changes, planned changes, and failures.",
+        "No router write methods are called in any dry-run path."
+      ],
+      "depends_on": ["S10"],
+      "notes": "Makes the existing dry-run internals usable for operators and OpenClaw."
+    },
+    {
+      "id": "S12",
+      "title": "Managed Object-Group Apply Core",
+      "status": "pending",
+      "goal": "Implement safe managed-only object-group mutation through the RCI client.",
+      "summary": "Add the first write path for object-group creation and entry add/remove operations, preserving read-before-write behavior and avoiding route changes for now.",
+      "acceptance": [
+        "KeeneticRciClient can ensure a target object-group exists.",
+        "KeeneticRciClient can add and remove entries for a managed object-group.",
+        "Write commands are skipped when the diff is empty.",
+        "Write batching is deterministic and bounded for larger diffs.",
+        "No route binding writes are introduced in this slice."
+      ],
+      "depends_on": ["S10"],
+      "notes": "Keeps the first mutation slice narrow by excluding route binding management."
+    },
+    {
+      "id": "S13",
+      "title": "Apply Orchestration And Sync CLI",
+      "status": "pending",
+      "goal": "Add a user-facing sync command that applies managed object-group diffs across routers.",
+      "summary": "Build the apply orchestration over the existing planning flow, call the new object-group write methods, persist artifacts, and expose the result through a sync CLI command with predictable exit behavior.",
+      "acceptance": [
+        "A sync CLI command exists and loads the configured routers and mappings.",
+        "Sync reuses read-before-write planning before any mutation.",
+        "Managed object-group changes are applied across multiple routers with failure isolation.",
+        "A successful apply run persists artifacts and returns deterministic exit codes.",
+        "Route binding writes are still out of scope in this slice."
+      ],
+      "depends_on": ["S11", "S12"],
+      "notes": "Delivers the first end-to-end working sync for object-group contents only."
+    },
+    {
+      "id": "S14",
+      "title": "Route Binding Read And Apply",
+      "status": "pending",
+      "goal": "Implement managed route binding support for configured object-groups.",
+      "summary": "Add typed route-state reads and route ensure behavior to the RCI layer, then extend apply orchestration to maintain configured route bindings with managed-only guarantees.",
+      "acceptance": [
+        "Current route binding state can be read without leaking RCI payloads outside infrastructure.",
+        "Configured route bindings are created or updated only for managed mappings.",
+        "Object-group writes and route writes stay ordered and deterministic.",
+        "Save behavior is invoked only after successful apply work.",
+        "Failures in one mapping do not block remaining mappings and routers."
+      ],
+      "depends_on": ["S13"],
+      "notes": "Closes a major PRD gap by making route management part of the production path."
+    },
+    {
+      "id": "S15",
+      "title": "Run Logging And Rich Failure Artifacts",
+      "status": "pending",
+      "goal": "Add operator-grade logging and richer artifact detail for dry-run and sync runs.",
+      "summary": "Introduce text and JSON logging modes, capture run/session context, and enrich failure artifacts with step-level error detail needed for automation and manual diagnosis.",
+      "acceptance": [
+        "Runs emit either text or JSON logs according to runtime config.",
+        "Run artifacts include enough failure detail to identify router, service, and step.",
+        "Dry-run and sync both use the same logging boundary and artifact conventions.",
+        "Logging stays outside core domain logic."
+      ],
+      "depends_on": ["S13"],
+      "notes": "Makes the tool operationally legible instead of test-only."
+    },
+    {
+      "id": "S16",
+      "title": "Status And Preconditions Diagnostics",
+      "status": "pending",
+      "goal": "Add user-facing status diagnostics for local config checks and remote Keenetic preconditions.",
+      "summary": "Expose a status command that reports local config readiness and remote router diagnostics such as DNS proxy availability and basic RCI access health, without mutating router state.",
+      "acceptance": [
+        "A status CLI command exists.",
+        "The command reports config readiness and router connectivity or read failures per router.",
+        "DNS proxy status is surfaced in a typed, operator-readable way.",
+        "The command never mutates router state."
+      ],
+      "depends_on": ["S10", "S11"],
+      "notes": "Covers the PRD need for practical diagnostics before and after sync runs."
+    },
+    {
+      "id": "S17",
+      "title": "Config Management CLI",
+      "status": "pending",
+      "goal": "Provide first-class CLI workflows for router and mapping management without manual JSON editing.",
+      "summary": "Add focused config subcommands for listing and editing routers and mappings while preserving atomic config writes and existing schema validation.",
+      "acceptance": [
+        "Router add and router list commands exist.",
+        "Mapping set or equivalent command exists for managed service routing configuration.",
+        "Config changes are written atomically through infrastructure persistence code.",
+        "User-facing validation errors remain actionable and deterministic."
+      ],
+      "depends_on": ["S13"],
+      "notes": "Improves operator UX after the core sync path exists."
+    },
+    {
+      "id": "S18",
+      "title": "Packaging And Scheduled Execution",
+      "status": "pending",
+      "goal": "Package the tool for repeatable VPS execution through Docker and systemd.",
+      "summary": "Add a minimal container entrypoint and example systemd service/timer assets that run the sync command as a one-shot scheduled job, plus concise operator documentation for deployment.",
+      "acceptance": [
+        "A minimal Docker runtime path exists for the CLI tool.",
+        "Example systemd service and timer files are provided.",
+        "The scheduled execution path uses the sync CLI command as a one-shot job.",
+        "Deployment documentation explains config, secrets, artifacts, and logs."
+      ],
+      "depends_on": ["S13", "S15"],
+      "notes": "Brings the repository up to the PRD’s intended VPS batch-job operation."
     }
   ]
 }
