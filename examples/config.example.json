@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "routers": [],
+  "services": [],
+  "mappings": [],
+  "runtime": {
+    "artifacts_dir": "data/artifacts",
+    "log_format": "text"
+  }
+}

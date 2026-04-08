@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "project": "fqdn-updater",
+  "current_slice_id": "S3",
+  "updated_at": "2026-04-08T15:30:00Z",
+  "slices": [
+    {
+      "id": "S0",
+      "title": "Workflow state bootstrap",
+      "status": "done",
+      "goal": "Introduce canonical slice tracking artifacts for roadmap-driven work.",
+      "summary": "Create machine-readable slice state and a human-readable roadmap before the first product slice.",
+      "acceptance": [
+        "Canonical slice state exists in .codex/slices.json.",
+        "Human-readable roadmap exists in docs/ROADMAP.md.",
+        "Current and completed slices are explicit."
+      ],
+      "depends_on": [],
+      "notes": "Bootstrapped as part of repository initialization."
+    },
+    {
+      "id": "S1",
+      "title": "Python CLI scaffold baseline",
+      "status": "done",
+      "goal": "Create the minimal installable Python CLI scaffold with config init and validation.",
+      "summary": "Add pyproject, src layout, typed config domain models, JSON persistence, and CLI commands.",
+      "acceptance": [
+        "python -m fqdn_updater --help works.",
+        "fqdn-updater init writes a valid scaffold config.",
+        "fqdn-updater config validate accepts the scaffold and rejects invalid files.",
+        "Ruff and pytest can be run once dependencies are installed."
+      ],
+      "depends_on": ["S0"],
+      "notes": "Completed with green local verification on 2026-04-08."
+    },
+    {
+      "id": "S2",
+      "title": "Config domain model expansion",
+      "status": "done",
+      "goal": "Deepen typed config models and validation rules toward router and mapping UX.",
+      "summary": "Extend config schema with stricter contracts while staying local-only.",
+      "acceptance": [
+        "Router, service, and mapping config rules are locally validated.",
+        "Validation errors are actionable and deterministic."
+      ],
+      "depends_on": ["S1"],
+      "notes": "Completed with stronger slug, list uniqueness, source URL presence, and allowed_source_ips validation on 2026-04-08."
+    },
+    {
+      "id": "S3",
+      "title": "Source registry scaffold",
+      "status": "ready",
+      "goal": "Introduce explicit service source registry contracts without fetching data yet.",
+      "summary": "Add typed source definitions and initial registry wiring.",
+      "acceptance": [
+        "Supported services are modeled explicitly.",
+        "Registry access stays out of CLI formatting code."
+      ],
+      "depends_on": ["S2"],
+      "notes": ""
+    },
+    {
+      "id": "S4",
+      "title": "Logging and run artifact scaffold",
+      "status": "planned",
+      "goal": "Prepare machine-readable run artifacts and logging boundaries.",
+      "summary": "Add typed run result skeletons and artifact persistence abstractions.",
+      "acceptance": [
+        "Run artifact models exist.",
+        "Artifact writing lives in infrastructure."
+      ],
+      "depends_on": ["S2"],
+      "notes": ""
+    },
+    {
+      "id": "S5",
+      "title": "RCI client contracts",
+      "status": "planned",
+      "goal": "Define transport-facing interfaces and RCI-only client contracts.",
+      "summary": "Add infrastructure interfaces without implementing sync behavior yet.",
+      "acceptance": [
+        "RCI client boundaries are explicit.",
+        "No HTTP details leak into domain or application."
+      ],
+      "depends_on": ["S3", "S4"],
+      "notes": ""
+    },
+    {
+      "id": "S6",
+      "title": "Workflow enforcement gates",
+      "status": "done",
+      "goal": "Add enforced verification and repo-local workflow rules for slice execution.",
+      "summary": "Introduce a canonical verify wrapper, CI gate, and explicit edit autonomy and sandbox rules.",
+      "acceptance": [
+        "A single verify wrapper exists and runs the required checks.",
+        "CI executes the verify wrapper on push and pull request.",
+        "Repository instructions explicitly allow non-destructive in-workspace edits without extra confirmation.",
+        "Repository instructions explicitly state that sandbox is still expected."
+      ],
+      "depends_on": ["S1"],
+      "notes": "Completed with green local verification on 2026-04-08."
+    }
+  ]
+}
