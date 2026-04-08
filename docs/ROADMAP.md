@@ -13,9 +13,9 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 
 ## Current State
 
-- Current slice: `S9` — Read-Only Sync Orchestration
-- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration
-- Next ready slice: `S10` — RCI Read Transport Implementation
+- Current slice: `S10` — RCI Read Transport Implementation
+- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation
+- Next ready slice: `S11` — CLI Dry-Run Entry Point
 
 ## Backlog
 
@@ -31,7 +31,7 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 | S7 | done | Fetch And Normalize Pipeline | Fetch raw service sources and normalize them into deterministic domain entries. |
 | S8 | done | Deterministic Managed Diff Planning | Plan managed object-group diffs deterministically before any apply path exists. |
 | S9 | done | Read-Only Sync Orchestration | Assemble the first dry-run orchestration flow without any router writes. |
-| S10 | ready | RCI Read Transport Implementation | Implement the first real Keenetic RCI read path for object-group state and DNS proxy status. |
+| S10 | done | RCI Read Transport Implementation | Implement the first real Keenetic RCI read path for object-group state and DNS proxy status. |
 | S11 | pending | CLI Dry-Run Entry Point | Expose the read-only orchestration flow as a user-facing dry-run command with deterministic output and exit codes. |
 | S12 | pending | Managed Object-Group Apply Core | Implement safe managed-only object-group mutation through the RCI client. |
 | S13 | pending | Apply Orchestration And Sync CLI | Add a user-facing sync command that applies managed object-group diffs across routers. |
