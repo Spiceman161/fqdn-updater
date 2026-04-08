@@ -13,7 +13,7 @@ fi
 TMUX_CMD=$(cat <<INNER
 export PATH="$HOME/.local/bin:$HOME/.pub-cache/bin:\$PATH" && \
 cd "$ROOT" && \
-exec codex
+exec codex --dangerously-bypass-approvals-and-sandbox
 INNER
 )
 
