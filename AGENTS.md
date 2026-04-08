@@ -159,6 +159,13 @@ Use a slice-oriented workflow for non-trivial work.
    - create a Conventional Commit
    - push to the configured tracking branch
 
+Finisher-specific repository rule:
+- `finisher` must operate only inside this repository's own `.git` root.
+- `finisher` must not use the parent `/home/moltuser/clawd` repository even if it exists.
+- Before commit/push, `finisher` must verify that `git rev-parse --show-toplevel` equals this repository root.
+- If `.codex/slices.json` or `docs/ROADMAP.md` need slice-status synchronization for the accepted slice, `finisher` should update them minimally before commit.
+- If the only configured remote is a local/bootstrap remote such as `root-source`, `finisher` must not push and must report that a real remote is missing.
+
 ### Verification gate
 - No slice is green until `./scripts/verify.sh` passes.
 - `test_builder` must use `./scripts/verify.sh` for final verification, not an ad hoc command list.
