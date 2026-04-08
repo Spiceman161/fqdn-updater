@@ -1,8 +1,8 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S8",
-  "updated_at": "2026-04-08T18:00:00Z",
+  "current_slice_id": "S9",
+  "updated_at": "2026-04-08T18:30:00Z",
   "slices": [
     {
       "id": "S0",
@@ -127,6 +127,22 @@
         "Route-binding intent is captured without route-state diffing."
       ],
       "depends_on": ["S7"],
+      "notes": "Completed with green local verification on 2026-04-08."
+    },
+    {
+      "id": "S9",
+      "title": "Read-Only Sync Orchestration",
+      "status": "done",
+      "goal": "Assemble the first dry-run orchestration flow without any router writes.",
+      "summary": "Add read-only orchestration over enabled routers and managed mappings, resolve router secrets, read current object-group state, build deterministic service plans, aggregate statuses, and persist run artifacts.",
+      "acceptance": [
+        "Dry-run orchestration processes enabled routers, enabled services, and managed mappings only.",
+        "Source loading happens once per run and service failures are isolated cleanly.",
+        "Router secret resolution and object-group reads are isolated per router and per mapping.",
+        "Run artifacts are persisted with deterministic ordering and status aggregation.",
+        "No router write methods are called anywhere in the new flow."
+      ],
+      "depends_on": ["S4", "S5", "S7", "S8"],
       "notes": "Completed with green local verification on 2026-04-08."
     }
   ]
