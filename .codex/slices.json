@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S4",
+  "current_slice_id": "S5",
   "updated_at": "2026-04-08T16:10:00Z",
   "slices": [
     {
@@ -62,7 +62,7 @@
     {
       "id": "S4",
       "title": "Logging and run artifact scaffold",
-      "status": "ready",
+      "status": "done",
       "goal": "Prepare machine-readable run artifacts and logging boundaries.",
       "summary": "Add typed run result skeletons and artifact persistence abstractions.",
       "acceptance": [
@@ -70,7 +70,7 @@
         "Artifact writing lives in infrastructure."
       ],
       "depends_on": ["S2"],
-      "notes": ""
+      "notes": "Completed with green local verification on 2026-04-08."
     },
     {
       "id": "S5",
