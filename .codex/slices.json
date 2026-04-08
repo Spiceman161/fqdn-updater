@@ -1,8 +1,8 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S3",
-  "updated_at": "2026-04-08T15:30:00Z",
+  "current_slice_id": "S4",
+  "updated_at": "2026-04-08T16:10:00Z",
   "slices": [
     {
       "id": "S0",
@@ -49,7 +49,7 @@
     {
       "id": "S3",
       "title": "Source registry scaffold",
-      "status": "ready",
+      "status": "done",
       "goal": "Introduce explicit service source registry contracts without fetching data yet.",
       "summary": "Add typed source definitions and initial registry wiring.",
       "acceptance": [
@@ -62,7 +62,7 @@
     {
       "id": "S4",
       "title": "Logging and run artifact scaffold",
-      "status": "planned",
+      "status": "ready",
       "goal": "Prepare machine-readable run artifacts and logging boundaries.",
       "summary": "Add typed run result skeletons and artifact persistence abstractions.",
       "acceptance": [

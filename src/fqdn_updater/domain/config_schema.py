@@ -239,4 +239,6 @@ class AppConfig(BaseModel):
 
     @classmethod
     def default(cls) -> AppConfig:
-        return cls()
+        from fqdn_updater.domain.source_registry import builtin_service_definitions
+
+        return cls(services=builtin_service_definitions())

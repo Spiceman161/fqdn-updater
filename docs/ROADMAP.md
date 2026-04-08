@@ -13,8 +13,8 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 
 ## Current State
 
-- Current slice: `S3` — Source registry scaffold
-- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S6` — Workflow enforcement gates
+- Current slice: `S4` — Logging and run artifact scaffold
+- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S6` — Workflow enforcement gates
 
 ## Backlog
 
@@ -23,7 +23,7 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 | S0 | done | Workflow state bootstrap | Introduce canonical slice tracking artifacts for roadmap-driven work. |
 | S1 | done | Python CLI scaffold baseline | Create the minimal installable Python CLI scaffold with config init and validation. |
 | S2 | done | Config domain model expansion | Deepen typed config models and validation rules toward router and mapping UX. |
-| S3 | ready | Source registry scaffold | Introduce explicit service source registry contracts without fetching data yet. |
-| S4 | planned | Logging and run artifact scaffold | Prepare machine-readable run artifacts and logging boundaries. |
+| S3 | done | Source registry scaffold | Introduce explicit service source registry contracts without fetching data yet. |
+| S4 | ready | Logging and run artifact scaffold | Prepare machine-readable run artifacts and logging boundaries. |
 | S5 | planned | RCI client contracts | Define transport-facing interfaces and RCI-only client contracts. |
 | S6 | done | Workflow enforcement gates | Add enforced verification and repo-local workflow rules for slice execution. |

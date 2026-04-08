@@ -26,7 +26,22 @@ def test_init_creates_scaffold_config(tmp_path) -> None:
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["version"] == 1
     assert payload["routers"] == []
-    assert payload["services"] == []
+    assert [service["key"] for service in payload["services"]] == [
+        "news",
+        "hdrezka",
+        "meta",
+        "tiktok",
+        "twitter",
+        "youtube",
+        "discord",
+        "cloudflare",
+        "telegram",
+        "google_meet",
+        "google_ai",
+    ]
+    assert payload["services"][-1]["source_urls"] == [
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/google_ai.lst"
+    ]
     assert payload["mappings"] == []
 
 
