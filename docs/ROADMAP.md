@@ -13,8 +13,8 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 
 ## Current State
 
-- Current slice: `S5` — RCI client contracts
-- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates
+- Current slice: `S7` — Fetch And Normalize Pipeline
+- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline
 
 ## Backlog
 
@@ -27,3 +27,4 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 | S4 | ready | Logging and run artifact scaffold | Prepare machine-readable run artifacts and logging boundaries. |
 | S5 | done | RCI client contracts | Define transport-facing interfaces and RCI-only client contracts. |
 | S6 | done | Workflow enforcement gates | Add enforced verification and repo-local workflow rules for slice execution. |
+| S7 | done | Fetch And Normalize Pipeline | Fetch raw service sources and normalize them into deterministic domain entries. |

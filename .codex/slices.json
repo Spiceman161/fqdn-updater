@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S5",
+  "current_slice_id": "S7",
   "updated_at": "2026-04-08T16:10:00Z",
   "slices": [
     {
@@ -98,6 +98,21 @@
         "Repository instructions explicitly state that sandbox is still expected."
       ],
       "depends_on": ["S1"],
+      "notes": "Completed with green local verification on 2026-04-08."
+    },
+    {
+      "id": "S7",
+      "title": "Fetch And Normalize Pipeline",
+      "status": "done",
+      "goal": "Fetch raw service sources and normalize them into deterministic domain entries.",
+      "summary": "Add the application service, domain normalization contracts, and HTTP raw source fetching for enabled service sources.",
+      "acceptance": [
+        "Raw source text can be fetched behind an infrastructure adapter.",
+        "Source entries are normalized deterministically by format.",
+        "Enabled services are loaded into a stable source report.",
+        "Failures are isolated per service/source and reported cleanly."
+      ],
+      "depends_on": ["S3", "S5"],
       "notes": "Completed with green local verification on 2026-04-08."
     }
   ]
