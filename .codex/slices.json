@@ -1,8 +1,8 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S7",
-  "updated_at": "2026-04-08T16:10:00Z",
+  "current_slice_id": "S8",
+  "updated_at": "2026-04-08T18:00:00Z",
   "slices": [
     {
       "id": "S0",
@@ -113,6 +113,20 @@
         "Failures are isolated per service/source and reported cleanly."
       ],
       "depends_on": ["S3", "S5"],
+      "notes": "Completed with green local verification on 2026-04-08."
+    },
+    {
+      "id": "S8",
+      "title": "Deterministic Managed Diff Planning",
+      "status": "done",
+      "goal": "Plan managed object-group diffs deterministically before any apply path exists.",
+      "summary": "Add a pure object-group diff model and an application planner for one managed mapping without transport or apply logic.",
+      "acceptance": [
+        "Managed object-group diffs are deterministic and typed.",
+        "Planning rejects unmanaged mappings.",
+        "Route-binding intent is captured without route-state diffing."
+      ],
+      "depends_on": ["S7"],
       "notes": "Completed with green local verification on 2026-04-08."
     }
   ]
