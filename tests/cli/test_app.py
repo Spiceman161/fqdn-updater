@@ -1,10 +1,30 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from pathlib import Path
 
 from typer.testing import CliRunner
 
+import fqdn_updater.cli.app as cli_app_module
+from fqdn_updater.application.dry_run_orchestration import DryRunExecutionResult, DryRunOrchestrator
+from fqdn_updater.application.keenetic_client import KeeneticClient, KeeneticClientFactory
+from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.cli.app import app
+from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
+from fqdn_updater.domain.keenetic import DnsProxyStatus, ObjectGroupState, RouteBindingSpec
+from fqdn_updater.domain.object_group_diff import ObjectGroupDiff
+from fqdn_updater.domain.run_artifact import (
+    RouterResultStatus,
+    RouterRunResult,
+    RunArtifact,
+    RunMode,
+    RunStatus,
+    RunTrigger,
+    ServiceResultStatus,
+    ServiceRunResult,
+)
+from fqdn_updater.domain.source_loading import NormalizedServiceSource, SourceLoadReport
 
 runner = CliRunner()
 
@@ -15,6 +35,7 @@ def test_root_help_shows_expected_commands() -> None:
     assert result.exit_code == 0
     assert "init" in result.stdout
     assert "config" in result.stdout
+    assert "dry-run" in result.stdout
 
 
 def test_init_creates_scaffold_config(tmp_path) -> None:
@@ -135,3 +156,382 @@ def test_validate_reports_semantic_errors_with_clean_location(tmp_path) -> None:
     assert "Config validation failed" in result.stderr
     assert "- config: duplicate router id 'router-1'" in result.stderr
     assert "Value error" not in result.stderr
+
+
+def test_dry_run_returns_zero_for_no_changes(monkeypatch) -> None:
+    config = _config()
+    result_payload = _dry_run_result(
+        status=RunStatus.SUCCESS,
+        artifact_path=Path("data/artifacts/run-100.json"),
+        plans=(
+            _plan(
+                to_add=(),
+                to_remove=(),
+                unchanged=("keep.example",),
+                has_changes=False,
+            ),
+        ),
+        service_results=(
+            ServiceRunResult(
+                service_key="telegram",
+                object_group_name="svc-telegram",
+                status=ServiceResultStatus.NO_CHANGES,
+                unchanged_count=1,
+            ),
+        ),
+        router_status=RouterResultStatus.NO_CHANGES,
+    )
+    _install_dry_run_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["dry-run", "--config", "config.json"])
+
+    assert result.exit_code == 0
+    assert "Dry run completed:" in result.stdout
+    assert "planned_changes=0" in result.stdout
+    assert "status=no_changes" in result.stdout
+
+
+def test_dry_run_returns_thirty_for_changes_and_json_output(monkeypatch) -> None:
+    config = _config()
+    result_payload = _dry_run_result(
+        status=RunStatus.SUCCESS,
+        artifact_path=Path("data/artifacts/run-101.json"),
+        plans=(
+            _plan(
+                to_add=("new.example",),
+                to_remove=("old.example",),
+                unchanged=("keep.example",),
+                has_changes=True,
+            ),
+        ),
+        service_results=(
+            ServiceRunResult(
+                service_key="telegram",
+                object_group_name="svc-telegram",
+                status=ServiceResultStatus.UPDATED,
+                added_count=1,
+                removed_count=1,
+                unchanged_count=1,
+            ),
+        ),
+        router_status=RouterResultStatus.UPDATED,
+    )
+    _install_dry_run_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["dry-run", "--config", "config.json", "--output", "json"])
+
+    assert result.exit_code == 30
+    payload = json.loads(result.stdout)
+    assert payload["artifact_path"] == "data/artifacts/run-101.json"
+    assert payload["artifact"]["status"] == "success"
+    assert payload["plans"] == [
+        {
+            "desired_route_binding": {
+                "auto": True,
+                "exclusive": False,
+                "object_group_name": "svc-telegram",
+                "route_interface": None,
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+            },
+            "object_group_diff": {
+                "has_changes": True,
+                "needs_create": False,
+                "object_group_name": "svc-telegram",
+                "to_add": ["new.example"],
+                "to_remove": ["old.example"],
+                "unchanged": ["keep.example"],
+            },
+            "object_group_name": "svc-telegram",
+            "router_id": "router-1",
+            "service_key": "telegram",
+        }
+    ]
+
+
+def test_dry_run_returns_twenty_for_partial_result(monkeypatch) -> None:
+    config = _config()
+    result_payload = _dry_run_result(
+        status=RunStatus.PARTIAL,
+        artifact_path=Path("data/artifacts/run-102.json"),
+        plans=(
+            _plan(
+                to_add=("new.example",),
+                to_remove=(),
+                unchanged=(),
+                has_changes=True,
+            ),
+        ),
+        service_results=(
+            ServiceRunResult(
+                service_key="telegram",
+                object_group_name="svc-telegram",
+                status=ServiceResultStatus.UPDATED,
+                added_count=1,
+            ),
+            ServiceRunResult(
+                service_key="youtube",
+                object_group_name="svc-youtube",
+                status=ServiceResultStatus.FAILED,
+                error_message="timeout",
+            ),
+        ),
+        router_status=RouterResultStatus.PARTIAL,
+    )
+    _install_dry_run_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["dry-run", "--config", "config.json"])
+
+    assert result.exit_code == 20
+    assert "status=partial" in result.stdout
+    assert "failed_services=1" in result.stdout
+    assert "error: timeout" in result.stdout
+
+
+def test_dry_run_returns_forty_for_invalid_config(monkeypatch) -> None:
+    class FailingValidationService:
+        def validate(self, path: Path) -> AppConfig:
+            raise RuntimeError(f"Invalid JSON in config file {path}: broken")
+
+    monkeypatch.setattr(cli_app_module, "_validation_service", lambda: FailingValidationService())
+
+    result = runner.invoke(app, ["dry-run", "--config", "missing.json"])
+
+    assert result.exit_code == 40
+    assert "Invalid JSON in config file missing.json: broken" in result.stderr
+
+
+def test_dry_run_never_calls_write_methods(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(_config().model_dump(mode="json")), encoding="utf-8")
+    monkeypatch.setenv("ROUTER_ONE_SECRET", "secret-1")
+
+    artifact_writer = RecordingArtifactWriter()
+    client_factory = RecordingClientFactory(
+        states={
+            ("router-1", "svc-telegram"): ObjectGroupState(
+                name="svc-telegram",
+                entries=("keep.example",),
+                exists=True,
+            )
+        }
+    )
+    orchestrator = DryRunOrchestrator(
+        source_loader=StubSourceLoader(
+            SourceLoadReport(
+                loaded=(
+                    NormalizedServiceSource(
+                        service_key="telegram",
+                        entries=("keep.example", "new.example"),
+                    ),
+                )
+            )
+        ),
+        secret_resolver=cli_app_module.EnvironmentFileSecretResolver(),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=artifact_writer,
+        now_provider=lambda: datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+        run_id_factory=lambda: "run-103",
+    )
+    monkeypatch.setattr(cli_app_module, "_dry_run_orchestrator", lambda: orchestrator)
+
+    result = runner.invoke(app, ["dry-run", "--config", str(config_path)])
+
+    assert result.exit_code == 30
+    assert artifact_writer.last_artifact is not None
+    assert client_factory.clients["router-1"].read_calls == ["svc-telegram"]
+    assert client_factory.clients["router-1"].write_calls == []
+
+
+class StubValidationService:
+    def __init__(self, config: AppConfig) -> None:
+        self._config = config
+
+    def validate(self, path: Path) -> AppConfig:
+        return self._config
+
+
+class StubOrchestrator:
+    def __init__(self, result: DryRunExecutionResult) -> None:
+        self._result = result
+
+    def run(self, *, config: AppConfig, trigger: RunTrigger) -> DryRunExecutionResult:
+        assert trigger is RunTrigger.MANUAL
+        return self._result
+
+
+class StubSourceLoader:
+    def __init__(self, report: SourceLoadReport) -> None:
+        self._report = report
+
+    def load_enabled_services(self, services: object) -> SourceLoadReport:
+        return self._report
+
+
+class RecordingArtifactWriter:
+    def __init__(self) -> None:
+        self.last_artifact: RunArtifact | None = None
+
+    def write(self, config: AppConfig, artifact: RunArtifact) -> Path:
+        self.last_artifact = artifact
+        return Path(config.runtime.artifacts_dir) / f"{artifact.run_id}.json"
+
+
+class RecordingClient(KeeneticClient):
+    def __init__(self, states: dict[str, ObjectGroupState]) -> None:
+        self._states = states
+        self.read_calls: list[str] = []
+        self.write_calls: list[str] = []
+
+    def get_object_group(self, name: str) -> ObjectGroupState:
+        self.read_calls.append(name)
+        return self._states[name]
+
+    def ensure_object_group(self, name: str) -> None:
+        self.write_calls.append(f"ensure_object_group:{name}")
+
+    def add_entries(self, name: str, items: object) -> None:
+        self.write_calls.append(f"add_entries:{name}")
+
+    def remove_entries(self, name: str, items: object) -> None:
+        self.write_calls.append(f"remove_entries:{name}")
+
+    def ensure_route(self, binding: RouteBindingSpec) -> None:
+        self.write_calls.append(f"ensure_route:{binding.object_group_name}")
+
+    def save_config(self) -> None:
+        self.write_calls.append("save_config")
+
+    def get_dns_proxy_status(self) -> DnsProxyStatus:
+        return DnsProxyStatus(enabled=True)
+
+
+class RecordingClientFactory(KeeneticClientFactory):
+    def __init__(self, states: dict[tuple[str, str], ObjectGroupState]) -> None:
+        self._states = states
+        self.clients: dict[str, RecordingClient] = {}
+
+    def create(self, router: RouterConfig, password: str) -> KeeneticClient:
+        router_states = {
+            group_name: state
+            for (router_id, group_name), state in self._states.items()
+            if router_id == router.id
+        }
+        client = RecordingClient(states=router_states)
+        self.clients[router.id] = client
+        return client
+
+
+def _install_dry_run_stubs(
+    monkeypatch,
+    *,
+    config: AppConfig,
+    result: DryRunExecutionResult,
+) -> None:
+    monkeypatch.setattr(
+        cli_app_module,
+        "_validation_service",
+        lambda: StubValidationService(config=config),
+    )
+    monkeypatch.setattr(
+        cli_app_module,
+        "_dry_run_orchestrator",
+        lambda: StubOrchestrator(result=result),
+    )
+
+
+def _dry_run_result(
+    *,
+    status: RunStatus,
+    artifact_path: Path,
+    plans: tuple[ServiceSyncPlan, ...],
+    service_results: tuple[ServiceRunResult, ...],
+    router_status: RouterResultStatus,
+) -> DryRunExecutionResult:
+    return DryRunExecutionResult(
+        artifact=RunArtifact(
+            run_id=artifact_path.stem,
+            trigger=RunTrigger.MANUAL,
+            mode=RunMode.DRY_RUN,
+            status=status,
+            started_at=datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            router_results=[
+                RouterRunResult(
+                    router_id="router-1",
+                    status=router_status,
+                    service_results=list(service_results),
+                )
+            ],
+        ),
+        artifact_path=artifact_path,
+        plans=plans,
+    )
+
+
+def _plan(
+    *,
+    to_add: tuple[str, ...],
+    to_remove: tuple[str, ...],
+    unchanged: tuple[str, ...],
+    has_changes: bool,
+) -> ServiceSyncPlan:
+    return ServiceSyncPlan(
+        service_key="telegram",
+        router_id="router-1",
+        object_group_name="svc-telegram",
+        object_group_diff=ObjectGroupDiff(
+            object_group_name="svc-telegram",
+            needs_create=False,
+            to_add=to_add,
+            to_remove=to_remove,
+            unchanged=unchanged,
+            has_changes=has_changes,
+        ),
+        desired_route_binding=RouteBindingSpec(
+            object_group_name="svc-telegram",
+            route_target_type="interface",
+            route_target_value="Wireguard0",
+            route_interface=None,
+            auto=True,
+            exclusive=False,
+        ),
+    )
+
+
+def _config() -> AppConfig:
+    return AppConfig.model_validate(
+        {
+            "version": 1,
+            "routers": [
+                {
+                    "id": "router-1",
+                    "name": "Router 1",
+                    "rci_url": "https://router-1.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_ONE_SECRET",
+                    "enabled": True,
+                }
+            ],
+            "services": [
+                {
+                    "key": "telegram",
+                    "source_urls": ["https://example.com/telegram.lst"],
+                    "format": "raw_domain_list",
+                    "enabled": True,
+                }
+            ],
+            "mappings": [
+                {
+                    "router_id": "router-1",
+                    "service_key": "telegram",
+                    "object_group_name": "svc-telegram",
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard0",
+                    "managed": True,
+                }
+            ],
+            "runtime": {"artifacts_dir": "data/artifacts"},
+        }
+    )
