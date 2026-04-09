@@ -23,7 +23,10 @@ python -m fqdn_updater --help
 fqdn-updater init --config config.json
 fqdn-updater config validate --config config.json
 fqdn-updater dry-run --config config.json
+fqdn-updater sync --config config.json
 ```
+
+`sync` в текущем состоянии применяет только managed object-group create/add/remove через RCI. Route bindings остаются вне scope до следующего slice.
 
 ## Verification
 

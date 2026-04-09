@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fqdn_updater.application.keenetic_client import KeeneticClientFactory
+from fqdn_updater.application.keenetic_client import KeeneticClient, KeeneticClientFactory
 from fqdn_updater.application.run_support import (
     aggregate_router_status,
     aggregate_run_status,
@@ -19,7 +19,6 @@ from fqdn_updater.application.run_support import (
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
 from fqdn_updater.domain.run_artifact import (
-    RouterResultStatus,
     RouterRunResult,
     RunArtifact,
     RunMode,
@@ -45,7 +44,7 @@ class RunArtifactWriter(Protocol):
         """Persist a run artifact and return its path."""
 
 
-class DryRunExecutionResult(BaseModel):
+class SyncExecutionResult(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     artifact: RunArtifact
@@ -53,7 +52,7 @@ class DryRunExecutionResult(BaseModel):
     plans: tuple[ServiceSyncPlan, ...] = Field(default_factory=tuple)
 
 
-class DryRunOrchestrator:
+class SyncOrchestrator:
     def __init__(
         self,
         *,
@@ -73,7 +72,7 @@ class DryRunOrchestrator:
         self._now_provider = now_provider or _utc_now
         self._run_id_factory = run_id_factory or _generate_run_id
 
-    def run(self, *, config: AppConfig, trigger: RunTrigger) -> DryRunExecutionResult:
+    def run(self, *, config: AppConfig, trigger: RunTrigger) -> SyncExecutionResult:
         started_at = self._now_provider()
         managed_mappings = eligible_mappings(config=config)
         loaded_sources = self._source_loader.load_enabled_services(config.services)
@@ -104,7 +103,7 @@ class DryRunOrchestrator:
         artifact = RunArtifact(
             run_id=self._run_id_factory(),
             trigger=trigger,
-            mode=RunMode.DRY_RUN,
+            mode=RunMode.APPLY,
             status=aggregate_run_status(router_results),
             started_at=started_at,
             finished_at=self._now_provider(),
@@ -112,7 +111,7 @@ class DryRunOrchestrator:
         )
         artifact_path = self._artifact_writer.write(config=config, artifact=artifact)
 
-        return DryRunExecutionResult(
+        return SyncExecutionResult(
             artifact=artifact,
             artifact_path=artifact_path,
             plans=tuple(plans),
@@ -128,6 +127,9 @@ class DryRunOrchestrator:
     ) -> tuple[RouterRunResult, list[ServiceSyncPlan]]:
         service_results: list[ServiceRunResult] = []
         plans: list[ServiceSyncPlan] = []
+        changed_service_indexes: list[int] = []
+        client: KeeneticClient | None = None
+        write_failure_message: str | None = None
 
         try:
             password = self._secret_resolver.resolve(router)
@@ -144,14 +146,23 @@ class DryRunOrchestrator:
             return (
                 RouterRunResult(
                     router_id=router.id,
-                    status=RouterResultStatus.FAILED,
+                    status=aggregate_router_status(service_results),
                     service_results=service_results,
                     error_message=error_message,
                 ),
                 plans,
             )
 
-        for mapping in mappings:
+        for index, mapping in enumerate(mappings):
+            if write_failure_message is not None:
+                service_results.append(
+                    _build_skipped_service_result(
+                        mapping=mapping,
+                        reason=write_failure_message,
+                    )
+                )
+                continue
+
             source_error = source_failures_by_service.get(mapping.service_key)
             if source_error is not None:
                 service_results.append(
@@ -185,29 +196,112 @@ class DryRunOrchestrator:
                 continue
 
             plans.append(plan)
-            service_results.append(_build_service_result_from_plan(plan=plan))
+            diff = plan.object_group_diff
+            if not diff.has_changes:
+                service_results.append(_build_no_changes_service_result(plan=plan))
+                continue
+
+            try:
+                self._apply_plan(client=client, plan=plan)
+            except Exception as exc:
+                write_failure_message = (
+                    f"Write stage failed for service '{mapping.service_key}': {exc}"
+                )
+                service_results.append(
+                    build_failed_service_result(
+                        mapping=mapping,
+                        error_message=write_failure_message,
+                    )
+                )
+                for remaining_mapping in mappings[index + 1 :]:
+                    service_results.append(
+                        _build_skipped_service_result(
+                            mapping=remaining_mapping,
+                            reason=write_failure_message,
+                        )
+                    )
+                break
+
+            changed_service_indexes.append(len(service_results))
+            service_results.append(_build_updated_service_result(plan=plan))
+
+        if changed_service_indexes and write_failure_message is None:
+            try:
+                client.save_config()
+            except Exception as exc:
+                save_error_message = f"Save config failed after apply changes: {exc}"
+                for result_index in changed_service_indexes:
+                    current_result = service_results[result_index]
+                    service_results[result_index] = current_result.model_copy(
+                        update={
+                            "status": ServiceResultStatus.FAILED,
+                            "error_message": save_error_message,
+                        }
+                    )
+                return (
+                    RouterRunResult(
+                        router_id=router.id,
+                        status=aggregate_router_status(service_results),
+                        service_results=service_results,
+                        error_message=save_error_message,
+                    ),
+                    plans,
+                )
 
         return (
             RouterRunResult(
                 router_id=router.id,
                 status=aggregate_router_status(service_results),
                 service_results=service_results,
+                error_message=write_failure_message,
             ),
             plans,
         )
 
+    def _apply_plan(self, *, client: KeeneticClient, plan: ServiceSyncPlan) -> None:
+        diff = plan.object_group_diff
+        if diff.needs_create:
+            client.ensure_object_group(plan.object_group_name)
+        if diff.to_remove:
+            client.remove_entries(plan.object_group_name, diff.to_remove)
+        if diff.to_add:
+            client.add_entries(plan.object_group_name, diff.to_add)
 
-def _build_service_result_from_plan(plan: ServiceSyncPlan) -> ServiceRunResult:
+
+def _build_no_changes_service_result(plan: ServiceSyncPlan) -> ServiceRunResult:
     diff = plan.object_group_diff
     return ServiceRunResult(
         service_key=plan.service_key,
         object_group_name=plan.object_group_name,
-        status=(
-            ServiceResultStatus.UPDATED if diff.has_changes else ServiceResultStatus.NO_CHANGES
-        ),
+        status=ServiceResultStatus.NO_CHANGES,
         added_count=len(diff.to_add),
         removed_count=len(diff.to_remove),
         unchanged_count=len(diff.unchanged),
+    )
+
+
+def _build_updated_service_result(plan: ServiceSyncPlan) -> ServiceRunResult:
+    diff = plan.object_group_diff
+    return ServiceRunResult(
+        service_key=plan.service_key,
+        object_group_name=plan.object_group_name,
+        status=ServiceResultStatus.UPDATED,
+        added_count=len(diff.to_add),
+        removed_count=len(diff.to_remove),
+        unchanged_count=len(diff.unchanged),
+    )
+
+
+def _build_skipped_service_result(
+    *,
+    mapping: RouterServiceMappingConfig,
+    reason: str,
+) -> ServiceRunResult:
+    return ServiceRunResult(
+        service_key=mapping.service_key,
+        object_group_name=mapping.object_group_name,
+        status=ServiceResultStatus.SKIPPED,
+        error_message=f"Skipped after router write failure: {reason}",
     )
 
 

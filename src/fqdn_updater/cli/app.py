@@ -12,6 +12,7 @@ from fqdn_updater.application.config_validation import ConfigValidationService
 from fqdn_updater.application.dry_run_orchestration import DryRunExecutionResult, DryRunOrchestrator
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.application.source_loading import SourceLoadingService
+from fqdn_updater.application.sync_orchestration import SyncExecutionResult, SyncOrchestrator
 from fqdn_updater.domain.config_schema import AppConfig
 from fqdn_updater.domain.run_artifact import RunStatus, RunTrigger
 from fqdn_updater.infrastructure.config_repository import ConfigRepository
@@ -45,6 +46,12 @@ DRY_RUN_CONFIG_OPTION = typer.Option(
     dir_okay=False,
     help="Path to the JSON config file to use for the dry-run.",
 )
+SYNC_CONFIG_OPTION = typer.Option(
+    DEFAULT_CONFIG_PATH,
+    "--config",
+    dir_okay=False,
+    help="Path to the JSON config file to use for sync.",
+)
 
 
 class OutputMode(StrEnum):
@@ -74,6 +81,16 @@ def _validation_service() -> ConfigValidationService:
 
 def _dry_run_orchestrator() -> DryRunOrchestrator:
     return DryRunOrchestrator(
+        source_loader=SourceLoadingService(fetcher=HttpRawSourceFetcher()),
+        secret_resolver=EnvironmentFileSecretResolver(),
+        client_factory=KeeneticRciClientFactory(),
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RunArtifactRepository(),
+    )
+
+
+def _sync_orchestrator() -> SyncOrchestrator:
+    return SyncOrchestrator(
         source_loader=SourceLoadingService(fetcher=HttpRawSourceFetcher()),
         secret_resolver=EnvironmentFileSecretResolver(),
         client_factory=KeeneticRciClientFactory(),
@@ -128,6 +145,32 @@ def dry_run_command(
     raise typer.Exit(code=_dry_run_exit_code(result=result))
 
 
+@app.command("sync")
+def sync_command(
+    config: Path = SYNC_CONFIG_OPTION,
+    output: OutputMode = DRY_RUN_OUTPUT_OPTION,
+) -> None:
+    """Apply managed object-group changes against configured routers."""
+    try:
+        validated_config = _validation_service().validate(path=config)
+    except RuntimeError as exc:
+        _runtime_error_handler(exc, code=40)
+
+    try:
+        result = _sync_orchestrator().run(
+            config=validated_config,
+            trigger=RunTrigger.MANUAL,
+        )
+    except RuntimeError as exc:
+        _runtime_error_handler(exc, code=20)
+
+    if output is OutputMode.JSON:
+        typer.echo(_render_sync_json(result=result))
+    else:
+        typer.echo(_render_sync_human(result=result))
+    raise typer.Exit(code=_sync_exit_code(result=result))
+
+
 def _render_validation_success(config: AppConfig, path: Path) -> None:
     typer.echo(
         "Config is valid: "
@@ -137,9 +180,35 @@ def _render_validation_success(config: AppConfig, path: Path) -> None:
 
 
 def _render_dry_run_human(result: DryRunExecutionResult) -> str:
+    return _render_operation_human(
+        operation_name="Dry run completed",
+        result=result,
+        include_diff_details=True,
+    )
+
+
+def _render_sync_human(result: SyncExecutionResult) -> str:
+    return _render_operation_human(
+        operation_name="Sync completed",
+        result=result,
+        include_diff_details=False,
+    )
+
+
+def _render_operation_human(
+    *,
+    operation_name: str,
+    result: DryRunExecutionResult | SyncExecutionResult,
+    include_diff_details: bool,
+) -> str:
     artifact = result.artifact
     failed_services = sum(
         service.error_message is not None
+        for router in artifact.router_results
+        for service in router.service_results
+    )
+    skipped_services = sum(
+        service.status.value == "skipped"
         for router in artifact.router_results
         for service in router.service_results
     )
@@ -149,10 +218,11 @@ def _render_dry_run_human(result: DryRunExecutionResult) -> str:
     }
 
     lines = [
-        "Dry run completed: "
+        f"{operation_name}: "
         f"run_id={artifact.run_id} status={artifact.status.value} "
         f"artifact_path={result.artifact_path} routers={len(artifact.router_results)} "
-        f"planned_changes={changed_services} failed_services={failed_services}"
+        f"planned_changes={changed_services} failed_services={failed_services} "
+        f"skipped_services={skipped_services}"
     ]
 
     for router in artifact.router_results:
@@ -171,7 +241,7 @@ def _render_dry_run_human(result: DryRunExecutionResult) -> str:
             plan = plan_index.get(
                 (router.router_id, service.service_key, service.object_group_name)
             )
-            if plan is None or not plan.object_group_diff.has_changes:
+            if not include_diff_details or plan is None or not plan.object_group_diff.has_changes:
                 continue
 
             diff = plan.object_group_diff
@@ -184,6 +254,17 @@ def _render_dry_run_human(result: DryRunExecutionResult) -> str:
 
 
 def _render_dry_run_json(result: DryRunExecutionResult) -> str:
+    return _render_operation_json(result=result)
+
+
+def _render_sync_json(result: SyncExecutionResult) -> str:
+    return _render_operation_json(result=result)
+
+
+def _render_operation_json(
+    *,
+    result: DryRunExecutionResult | SyncExecutionResult,
+) -> str:
     payload = {
         "artifact_path": str(result.artifact_path),
         "artifact": result.artifact.model_dump(mode="json"),
@@ -213,6 +294,14 @@ def _dry_run_exit_code(result: DryRunExecutionResult) -> int:
         return 20
     if any(plan.object_group_diff.has_changes for plan in result.plans):
         return 30
+    return 0
+
+
+def _sync_exit_code(result: SyncExecutionResult) -> int:
+    if result.artifact.status in {RunStatus.PARTIAL, RunStatus.FAILED}:
+        return 20
+    if any(plan.object_group_diff.has_changes for plan in result.plans):
+        return 10
     return 0
 
 

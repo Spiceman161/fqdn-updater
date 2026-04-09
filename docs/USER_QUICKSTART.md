@@ -8,9 +8,10 @@
 - валидацией конфига;
 - встроенным registry поддерживаемых сервисов;
 - загрузкой и нормализацией upstream-списков на уровне внутренних модулей;
-- read-only `dry-run` CLI-командой с human/json выводом и JSON artifact.
+- `dry-run` CLI-командой с human/json выводом и JSON artifact;
+- `sync` CLI-командой для apply managed object-group diff через RCI.
 
-Это еще не готовый production sync-инструмент для Keenetic. Команды `sync` и `status` пока не реализованы.
+Это еще не полный production sync-инструмент для Keenetic: route binding apply и `status` пока не реализованы.
 
 ## Требования
 
@@ -52,6 +53,12 @@ pip install -e .[dev]
 .venv/bin/python -m fqdn_updater dry-run --config config.json
 ```
 
+Запустить apply sync:
+
+```bash
+.venv/bin/python -m fqdn_updater sync --config config.json
+```
+
 ## Что будет в config
 
 Сгенерированный `config.json` содержит:
@@ -81,12 +88,11 @@ pip install -e .[dev]
 
 На текущем этапе проект еще не умеет:
 
-- выполнять реальный sync на Keenetic через RCI API;
-- применять diff и сохранять конфигурацию на роутере;
-- запускать `sync` и `status` через CLI;
+- поддерживать route binding apply для managed object-group;
+- запускать `status` через CLI;
 - поставлять Docker/systemd runtime для scheduled execution.
 
-Также apply-методы `KeeneticRciClient` пока остаются не реализованными.
+Также apply-путь пока ограничен object-group create/add/remove и не трогает route bindings.
 
 ## Что уже есть внутри кода
 
@@ -95,7 +101,7 @@ pip install -e .[dev]
 - typed config schema;
 - source registry и normalizer;
 - run artifact model и persistence;
-- read-only dry-run orchestration service и CLI entry point;
+- dry-run/sync orchestration service и CLI entry points;
 - resolver паролей из env/file.
 
 Это полезная база для следующих slice, но не завершенный пользовательский продукт.

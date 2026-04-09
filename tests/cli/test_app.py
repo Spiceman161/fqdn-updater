@@ -10,6 +10,7 @@ import fqdn_updater.cli.app as cli_app_module
 from fqdn_updater.application.dry_run_orchestration import DryRunExecutionResult, DryRunOrchestrator
 from fqdn_updater.application.keenetic_client import KeeneticClient, KeeneticClientFactory
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
+from fqdn_updater.application.sync_orchestration import SyncExecutionResult
 from fqdn_updater.cli.app import app
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
 from fqdn_updater.domain.keenetic import DnsProxyStatus, ObjectGroupState, RouteBindingSpec
@@ -36,6 +37,7 @@ def test_root_help_shows_expected_commands() -> None:
     assert "init" in result.stdout
     assert "config" in result.stdout
     assert "dry-run" in result.stdout
+    assert "sync" in result.stdout
 
 
 def test_init_creates_scaffold_config(tmp_path) -> None:
@@ -301,6 +303,128 @@ def test_dry_run_returns_forty_for_invalid_config(monkeypatch) -> None:
     assert "Invalid JSON in config file missing.json: broken" in result.stderr
 
 
+def test_sync_returns_zero_for_no_changes(monkeypatch) -> None:
+    config = _config()
+    result_payload = _sync_result(
+        status=RunStatus.SUCCESS,
+        artifact_path=Path("data/artifacts/run-200.json"),
+        plans=(
+            _plan(
+                to_add=(),
+                to_remove=(),
+                unchanged=("keep.example",),
+                has_changes=False,
+            ),
+        ),
+        service_results=(
+            ServiceRunResult(
+                service_key="telegram",
+                object_group_name="svc-telegram",
+                status=ServiceResultStatus.NO_CHANGES,
+                unchanged_count=1,
+            ),
+        ),
+        router_status=RouterResultStatus.NO_CHANGES,
+    )
+    _install_sync_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["sync", "--config", "config.json"])
+
+    assert result.exit_code == 0
+    assert "Sync completed:" in result.stdout
+    assert "planned_changes=0" in result.stdout
+    assert "skipped_services=0" in result.stdout
+
+
+def test_sync_returns_ten_for_applied_changes_and_json_output(monkeypatch) -> None:
+    config = _config()
+    result_payload = _sync_result(
+        status=RunStatus.SUCCESS,
+        artifact_path=Path("data/artifacts/run-201.json"),
+        plans=(
+            _plan(
+                to_add=("new.example",),
+                to_remove=("old.example",),
+                unchanged=("keep.example",),
+                has_changes=True,
+            ),
+        ),
+        service_results=(
+            ServiceRunResult(
+                service_key="telegram",
+                object_group_name="svc-telegram",
+                status=ServiceResultStatus.UPDATED,
+                added_count=1,
+                removed_count=1,
+                unchanged_count=1,
+            ),
+        ),
+        router_status=RouterResultStatus.UPDATED,
+    )
+    _install_sync_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["sync", "--config", "config.json", "--output", "json"])
+
+    assert result.exit_code == 10
+    payload = json.loads(result.stdout)
+    assert payload["artifact_path"] == "data/artifacts/run-201.json"
+    assert payload["artifact"]["mode"] == "apply"
+    assert payload["artifact"]["status"] == "success"
+    assert payload["plans"][0]["object_group_diff"]["has_changes"] is True
+
+
+def test_sync_returns_twenty_for_partial_result(monkeypatch) -> None:
+    config = _config()
+    result_payload = _sync_result(
+        status=RunStatus.PARTIAL,
+        artifact_path=Path("data/artifacts/run-202.json"),
+        plans=(
+            _plan(
+                to_add=("new.example",),
+                to_remove=(),
+                unchanged=(),
+                has_changes=True,
+            ),
+        ),
+        service_results=(
+            ServiceRunResult(
+                service_key="telegram",
+                object_group_name="svc-telegram",
+                status=ServiceResultStatus.FAILED,
+                error_message="Write stage failed for service 'telegram': timeout",
+            ),
+            ServiceRunResult(
+                service_key="youtube",
+                object_group_name="svc-youtube",
+                status=ServiceResultStatus.SKIPPED,
+                error_message="Skipped after router write failure: timeout",
+            ),
+        ),
+        router_status=RouterResultStatus.PARTIAL,
+    )
+    _install_sync_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["sync", "--config", "config.json"])
+
+    assert result.exit_code == 20
+    assert "status=partial" in result.stdout
+    assert "skipped_services=1" in result.stdout
+    assert "error: Skipped after router write failure: timeout" in result.stdout
+
+
+def test_sync_returns_forty_for_invalid_config(monkeypatch) -> None:
+    class FailingValidationService:
+        def validate(self, path: Path) -> AppConfig:
+            raise RuntimeError(f"Config validation failed for {path}")
+
+    monkeypatch.setattr(cli_app_module, "_validation_service", lambda: FailingValidationService())
+
+    result = runner.invoke(app, ["sync", "--config", "missing.json"])
+
+    assert result.exit_code == 40
+    assert "Config validation failed for missing.json" in result.stderr
+
+
 def test_dry_run_never_calls_write_methods(monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(_config().model_dump(mode="json")), encoding="utf-8")
@@ -357,6 +481,15 @@ class StubOrchestrator:
         self._result = result
 
     def run(self, *, config: AppConfig, trigger: RunTrigger) -> DryRunExecutionResult:
+        assert trigger is RunTrigger.MANUAL
+        return self._result
+
+
+class StubSyncOrchestrator:
+    def __init__(self, result: SyncExecutionResult) -> None:
+        self._result = result
+
+    def run(self, *, config: AppConfig, trigger: RunTrigger) -> SyncExecutionResult:
         assert trigger is RunTrigger.MANUAL
         return self._result
 
@@ -441,6 +574,24 @@ def _install_dry_run_stubs(
     )
 
 
+def _install_sync_stubs(
+    monkeypatch,
+    *,
+    config: AppConfig,
+    result: SyncExecutionResult,
+) -> None:
+    monkeypatch.setattr(
+        cli_app_module,
+        "_validation_service",
+        lambda: StubValidationService(config=config),
+    )
+    monkeypatch.setattr(
+        cli_app_module,
+        "_sync_orchestrator",
+        lambda: StubSyncOrchestrator(result=result),
+    )
+
+
 def _dry_run_result(
     *,
     status: RunStatus,
@@ -454,6 +605,35 @@ def _dry_run_result(
             run_id=artifact_path.stem,
             trigger=RunTrigger.MANUAL,
             mode=RunMode.DRY_RUN,
+            status=status,
+            started_at=datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            router_results=[
+                RouterRunResult(
+                    router_id="router-1",
+                    status=router_status,
+                    service_results=list(service_results),
+                )
+            ],
+        ),
+        artifact_path=artifact_path,
+        plans=plans,
+    )
+
+
+def _sync_result(
+    *,
+    status: RunStatus,
+    artifact_path: Path,
+    plans: tuple[ServiceSyncPlan, ...],
+    service_results: tuple[ServiceRunResult, ...],
+    router_status: RouterResultStatus,
+) -> SyncExecutionResult:
+    return SyncExecutionResult(
+        artifact=RunArtifact(
+            run_id=artifact_path.stem,
+            trigger=RunTrigger.MANUAL,
+            mode=RunMode.APPLY,
             status=status,
             started_at=datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
             finished_at=datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
