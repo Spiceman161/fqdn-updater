@@ -6,11 +6,13 @@ import pytest
 from pydantic import ValidationError
 
 from fqdn_updater.domain.run_artifact import (
+    FailureDetail,
     RouterResultStatus,
     RouterRunResult,
     RunArtifact,
     RunMode,
     RunStatus,
+    RunStep,
     RunTrigger,
     ServiceResultStatus,
     ServiceRunResult,
@@ -25,6 +27,7 @@ def test_run_artifact_model_dump_is_machine_readable_and_deterministic() -> None
         status=RunStatus.PARTIAL,
         started_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
         finished_at=datetime(2026, 4, 8, 13, 5, tzinfo=UTC),
+        log_path="data/logs/run-001.log",
         router_results=[
             RouterRunResult(
                 router_id="router-1",
@@ -43,6 +46,11 @@ def test_run_artifact_model_dump_is_machine_readable_and_deterministic() -> None
                         object_group_name="svc-youtube",
                         status=ServiceResultStatus.FAILED,
                         error_message="upstream timeout",
+                        failure_detail=FailureDetail(
+                            step=RunStep.SOURCE_LOAD,
+                            message="upstream timeout",
+                            occurred_at=datetime(2026, 4, 8, 13, 3, tzinfo=UTC),
+                        ),
                     ),
                 ],
             )
@@ -56,6 +64,7 @@ def test_run_artifact_model_dump_is_machine_readable_and_deterministic() -> None
         "status": "partial",
         "started_at": "2026-04-08T13:00:00Z",
         "finished_at": "2026-04-08T13:05:00Z",
+        "log_path": "data/logs/run-001.log",
         "router_results": [
             {
                 "router_id": "router-1",
@@ -70,6 +79,7 @@ def test_run_artifact_model_dump_is_machine_readable_and_deterministic() -> None
                         "unchanged_count": 4,
                         "route_changed": False,
                         "error_message": None,
+                        "failure_detail": None,
                     },
                     {
                         "service_key": "youtube",
@@ -80,9 +90,15 @@ def test_run_artifact_model_dump_is_machine_readable_and_deterministic() -> None
                         "unchanged_count": 0,
                         "route_changed": False,
                         "error_message": "upstream timeout",
+                        "failure_detail": {
+                            "step": "source_load",
+                            "message": "upstream timeout",
+                            "occurred_at": "2026-04-08T13:03:00Z",
+                        },
                     },
                 ],
                 "error_message": None,
+                "failure_detail": None,
             }
         ],
     }
@@ -99,6 +115,7 @@ def test_run_artifact_rejects_finished_at_before_started_at() -> None:
             status=RunStatus.FAILED,
             started_at=datetime(2026, 4, 8, 13, 5, tzinfo=UTC),
             finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
+            log_path="data/logs/run-001.log",
         )
 
 

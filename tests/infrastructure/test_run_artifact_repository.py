@@ -26,6 +26,7 @@ def test_write_creates_artifact_file_with_expected_json(tmp_path) -> None:
         {
             "runtime": {
                 "artifacts_dir": str(tmp_path / "artifacts"),
+                "logs_dir": str(tmp_path / "logs"),
             }
         }
     )
@@ -44,6 +45,7 @@ def test_write_cleans_up_temp_file_on_replace_failure(tmp_path, monkeypatch) -> 
         {
             "runtime": {
                 "artifacts_dir": str(tmp_path / "artifacts"),
+                "logs_dir": str(tmp_path / "logs"),
             }
         }
     )
@@ -68,6 +70,7 @@ def _artifact() -> RunArtifact:
         status=RunStatus.SUCCESS,
         started_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
         finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+        log_path="data/logs/run-001.log",
         router_results=[
             RouterRunResult(
                 router_id="router-1",

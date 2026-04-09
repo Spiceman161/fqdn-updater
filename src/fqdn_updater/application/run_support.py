@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from fqdn_updater.domain.config_schema import AppConfig, RouterServiceMappingConfig
 from fqdn_updater.domain.run_artifact import (
+    FailureDetail,
     RouterResultStatus,
     RouterRunResult,
     RunStatus,
+    RunStep,
     ServiceResultStatus,
     ServiceRunResult,
 )
@@ -39,14 +42,24 @@ def group_source_failures(report: SourceLoadReport) -> dict[str, str]:
 def build_failed_service_result(
     *,
     mapping: RouterServiceMappingConfig,
-    error_message: str,
+    failure_detail: FailureDetail,
 ) -> ServiceRunResult:
     return ServiceRunResult(
         service_key=mapping.service_key,
         object_group_name=mapping.object_group_name,
         status=ServiceResultStatus.FAILED,
-        error_message=error_message,
+        error_message=failure_detail.message,
+        failure_detail=failure_detail,
     )
+
+
+def build_failure_detail(
+    *,
+    step: RunStep,
+    message: str,
+    occurred_at: datetime,
+) -> FailureDetail:
+    return FailureDetail(step=step, message=message, occurred_at=occurred_at)
 
 
 def aggregate_router_status(

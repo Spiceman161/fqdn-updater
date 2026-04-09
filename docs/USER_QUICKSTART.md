@@ -9,7 +9,8 @@
 - встроенным registry поддерживаемых сервисов;
 - загрузкой и нормализацией upstream-списков на уровне внутренних модулей;
 - `dry-run` CLI-командой с human/json выводом и JSON artifact;
-- `sync` CLI-командой для apply managed object-group diff через RCI.
+- `sync` CLI-командой для apply managed object-group diff и route binding через RCI;
+- отдельными per-run логами в text/json режиме и JSON artifact с richer failure detail.
 
 Это еще не полный production sync-инструмент для Keenetic: route binding apply и `status` пока не реализованы.
 
@@ -67,6 +68,8 @@ pip install -e .[dev]
 - `services` — встроенные сервисы и upstream URL;
 - `mappings` — привязки `router/service -> object-group/route`;
 - `runtime` — базовые runtime-настройки, включая каталог артефактов.
+- `runtime.logs_dir` — каталог отдельных run-логов;
+- `runtime.log_format` — формат логов (`text` или `json`).
 
 Пример референс-конфига лежит в `examples/config.example.json`.
 
@@ -91,8 +94,6 @@ pip install -e .[dev]
 - поддерживать route binding apply для managed object-group;
 - запускать `status` через CLI;
 - поставлять Docker/systemd runtime для scheduled execution.
-
-Также apply-путь пока ограничен object-group create/add/remove и не трогает route bindings.
 
 ## Что уже есть внутри кода
 

@@ -166,6 +166,7 @@ class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     artifacts_dir: str = "data/artifacts"
+    logs_dir: str = "data/logs"
     log_format: Literal["text", "json"] = "text"
 
 

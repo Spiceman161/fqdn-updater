@@ -20,6 +20,7 @@ from fqdn_updater.infrastructure.keenetic_rci_client import KeeneticRciClientFac
 from fqdn_updater.infrastructure.raw_source_fetcher import HttpRawSourceFetcher
 from fqdn_updater.infrastructure.router_secret_resolver import EnvironmentFileSecretResolver
 from fqdn_updater.infrastructure.run_artifact_repository import RunArtifactRepository
+from fqdn_updater.infrastructure.run_logging import RunLoggerFactory
 
 app = typer.Typer(help="Synchronize managed FQDN object-groups on Keenetic routers.")
 config_app = typer.Typer(help="Configuration management commands.")
@@ -86,6 +87,7 @@ def _dry_run_orchestrator() -> DryRunOrchestrator:
         client_factory=KeeneticRciClientFactory(),
         planner=ServiceSyncPlanner(),
         artifact_writer=RunArtifactRepository(),
+        logger_factory=RunLoggerFactory(),
     )
 
 
@@ -96,6 +98,7 @@ def _sync_orchestrator() -> SyncOrchestrator:
         client_factory=KeeneticRciClientFactory(),
         planner=ServiceSyncPlanner(),
         artifact_writer=RunArtifactRepository(),
+        logger_factory=RunLoggerFactory(),
     )
 
 

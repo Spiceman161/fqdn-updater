@@ -725,6 +725,7 @@ def _dry_run_result(
             status=status,
             started_at=datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
             finished_at=datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            log_path=Path("data/logs") / f"{artifact_path.stem}.log",
             router_results=[
                 RouterRunResult(
                     router_id="router-1",
@@ -754,6 +755,7 @@ def _sync_result(
             status=status,
             started_at=datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
             finished_at=datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            log_path=Path("data/logs") / f"{artifact_path.stem}.log",
             router_results=[
                 RouterRunResult(
                     router_id="router-1",
@@ -882,6 +884,6 @@ def _config() -> AppConfig:
                     "managed": True,
                 }
             ],
-            "runtime": {"artifacts_dir": "data/artifacts"},
+            "runtime": {"artifacts_dir": "data/artifacts", "logs_dir": "data/logs"},
         }
     )

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S14",
+  "current_slice_id": "S15",
   "updated_at": "2026-04-09T12:00:00Z",
   "slices": [
     {
@@ -228,7 +228,7 @@
     {
       "id": "S15",
       "title": "Run Logging And Rich Failure Artifacts",
-      "status": "pending",
+      "status": "done",
       "goal": "Add operator-grade logging and richer artifact detail for dry-run and sync runs.",
       "summary": "Introduce text and JSON logging modes, capture run/session context, and enrich failure artifacts with step-level error detail needed for automation and manual diagnosis.",
       "acceptance": [
@@ -238,7 +238,7 @@
         "Logging stays outside core domain logic."
       ],
       "depends_on": ["S13"],
-      "notes": "Makes the tool operationally legible instead of test-only."
+      "notes": "Completed with green local verification on 2026-04-09."
     },
     {
       "id": "S16",

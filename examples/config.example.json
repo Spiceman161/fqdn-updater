@@ -105,6 +105,7 @@
   "mappings": [],
   "runtime": {
     "artifacts_dir": "data/artifacts",
+    "logs_dir": "data/logs",
     "log_format": "text"
   }
 }

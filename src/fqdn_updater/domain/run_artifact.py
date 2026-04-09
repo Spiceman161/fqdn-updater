@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -37,6 +38,28 @@ class ServiceResultStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class RunStep(StrEnum):
+    SOURCE_LOAD = "source_load"
+    SECRET_RESOLVE = "secret_resolve"
+    CLIENT_CREATE = "client_create"
+    READ_OBJECT_GROUP = "read_object_group"
+    READ_ROUTE_BINDING = "read_route_binding"
+    PLAN_SERVICE = "plan_service"
+    ENSURE_OBJECT_GROUP = "ensure_object_group"
+    REMOVE_ENTRIES = "remove_entries"
+    ADD_ENTRIES = "add_entries"
+    ENSURE_ROUTE = "ensure_route"
+    SAVE_CONFIG = "save_config"
+
+
+class FailureDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    step: RunStep
+    message: str
+    occurred_at: datetime
+
+
 class ServiceRunResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -48,6 +71,7 @@ class ServiceRunResult(BaseModel):
     unchanged_count: int = Field(default=0, ge=0)
     route_changed: bool = False
     error_message: str | None = None
+    failure_detail: FailureDetail | None = None
 
 
 class RouterRunResult(BaseModel):
@@ -57,6 +81,7 @@ class RouterRunResult(BaseModel):
     status: RouterResultStatus
     service_results: list[ServiceRunResult] = Field(default_factory=list)
     error_message: str | None = None
+    failure_detail: FailureDetail | None = None
 
 
 class RunArtifact(BaseModel):
@@ -68,6 +93,7 @@ class RunArtifact(BaseModel):
     status: RunStatus
     started_at: datetime
     finished_at: datetime
+    log_path: Path
     router_results: list[RouterRunResult] = Field(default_factory=list)
 
     @model_validator(mode="after")
