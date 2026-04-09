@@ -1,8 +1,8 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S13",
-  "updated_at": "2026-04-09T09:48:00Z",
+  "current_slice_id": "S14",
+  "updated_at": "2026-04-09T12:00:00Z",
   "slices": [
     {
       "id": "S0",
@@ -212,7 +212,7 @@
     {
       "id": "S14",
       "title": "Route Binding Read And Apply",
-      "status": "pending",
+      "status": "done",
       "goal": "Implement managed route binding support for configured object-groups.",
       "summary": "Add typed route-state reads and route ensure behavior to the RCI layer, then extend apply orchestration to maintain configured route bindings with managed-only guarantees.",
       "acceptance": [
@@ -223,7 +223,7 @@
         "Failures in one mapping do not block remaining mappings and routers."
       ],
       "depends_on": ["S13"],
-      "notes": "Closes a major PRD gap by making route management part of the production path."
+      "notes": "Closes a major PRD gap by making route management part of the production path. Completed with green local verification on 2026-04-09."
     },
     {
       "id": "S15",

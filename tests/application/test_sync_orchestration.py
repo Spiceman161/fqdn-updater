@@ -6,7 +6,7 @@ from pathlib import Path
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.application.sync_orchestration import SyncOrchestrator
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
-from fqdn_updater.domain.keenetic import ObjectGroupState
+from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
 from fqdn_updater.domain.run_artifact import (
     RouterResultStatus,
     RunStatus,
@@ -39,7 +39,13 @@ def test_sync_orchestrator_applies_changes_and_saves_once_per_router() -> None:
                 entries=(),
                 exists=False,
             )
-        }
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=False,
+            )
+        },
     )
     orchestrator = SyncOrchestrator(
         source_loader=source_loader,
@@ -62,6 +68,7 @@ def test_sync_orchestrator_applies_changes_and_saves_once_per_router() -> None:
     assert client.write_calls == [
         "ensure_object_group:svc-telegram",
         "add_entries:svc-telegram:new.example",
+        "ensure_route:svc-telegram",
         "save_config",
     ]
     assert result.artifact.mode.value == "apply"
@@ -93,7 +100,17 @@ def test_sync_orchestrator_skips_writes_and_save_when_diff_is_empty() -> None:
                 entries=("keep.example",),
                 exists=True,
             )
-        }
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=False,
+            )
+        },
     )
     orchestrator = SyncOrchestrator(
         source_loader=source_loader,
@@ -142,6 +159,20 @@ def test_sync_orchestrator_stops_current_router_after_write_failure_and_skips_re
                 name="svc-youtube",
                 entries=("keep.example",),
                 exists=True,
+            ),
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=False,
+            ),
+            ("router-1", "svc-youtube"): RouteBindingState(
+                object_group_name="svc-youtube",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=False,
             ),
         },
         write_errors={("router-1", "remove_entries", "svc-telegram"): "delete failed"},
@@ -203,7 +234,25 @@ def test_sync_orchestrator_continues_other_routers_after_partial_failures() -> N
                 entries=("old.example",),
                 exists=True,
             ),
-        }
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=False,
+            ),
+            ("router-2", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=False,
+            ),
+        },
     )
     orchestrator = SyncOrchestrator(
         source_loader=source_loader,
@@ -256,6 +305,16 @@ def test_sync_orchestrator_marks_updated_services_failed_when_save_config_fails(
                 exists=True,
             )
         },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Other0",
+                auto=False,
+                exclusive=False,
+            )
+        },
         save_errors={"router-1": "save failed"},
     )
     orchestrator = SyncOrchestrator(
@@ -279,6 +338,7 @@ def test_sync_orchestrator_marks_updated_services_failed_when_save_config_fails(
     assert client_factory.clients["router-1"].write_calls == [
         "remove_entries:svc-telegram:old.example",
         "add_entries:svc-telegram:new.example",
+        "ensure_route:svc-telegram",
         "save_config",
     ]
     assert router_result.status is RouterResultStatus.FAILED
@@ -287,6 +347,66 @@ def test_sync_orchestrator_marks_updated_services_failed_when_save_config_fails(
         router_result.service_results[0].error_message or ""
     )
     assert result.artifact.status is RunStatus.FAILED
+
+
+def test_sync_orchestrator_applies_route_only_changes_and_saves() -> None:
+    config = _config()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(
+                    service_key="telegram",
+                    entries=("keep.example",),
+                ),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={
+            ("router-1", "svc-telegram"): ObjectGroupState(
+                name="svc-telegram",
+                entries=("keep.example",),
+                exists=True,
+            )
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Other0",
+                auto=False,
+                exclusive=False,
+            )
+        },
+    )
+    orchestrator = SyncOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            ]
+        ),
+        run_id_factory=lambda: "run-106",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    assert client.write_calls == [
+        "ensure_route:svc-telegram",
+        "save_config",
+    ]
+    service_result = result.artifact.router_results[0].service_results[0]
+    assert service_result.status is ServiceResultStatus.UPDATED
+    assert service_result.route_changed is True
+    assert service_result.added_count == 0
+    assert service_result.removed_count == 0
 
 
 class StubSourceLoader:
@@ -318,11 +438,13 @@ class RecordingClientFactory:
         self,
         *,
         states: dict[tuple[str, str], ObjectGroupState],
+        route_bindings: dict[tuple[str, str], RouteBindingState],
         read_errors: dict[tuple[str, str], str] | None = None,
         write_errors: dict[tuple[str, str, str], str] | None = None,
         save_errors: dict[str, str] | None = None,
     ) -> None:
         self.states = states
+        self.route_bindings = route_bindings
         self.read_errors = read_errors or {}
         self.write_errors = write_errors or {}
         self.save_errors = save_errors or {}
@@ -332,6 +454,7 @@ class RecordingClientFactory:
         client = RecordingClient(
             router_id=router.id,
             states=self.states,
+            route_bindings=self.route_bindings,
             read_errors=self.read_errors,
             write_errors=self.write_errors,
             save_errors=self.save_errors,
@@ -346,12 +469,14 @@ class RecordingClient:
         *,
         router_id: str,
         states: dict[tuple[str, str], ObjectGroupState],
+        route_bindings: dict[tuple[str, str], RouteBindingState],
         read_errors: dict[tuple[str, str], str],
         write_errors: dict[tuple[str, str, str], str],
         save_errors: dict[str, str],
     ) -> None:
         self.router_id = router_id
         self.states = states
+        self.route_bindings = route_bindings
         self.read_errors = read_errors
         self.write_errors = write_errors
         self.save_errors = save_errors
@@ -362,6 +487,12 @@ class RecordingClient:
         if key in self.read_errors:
             raise RuntimeError(self.read_errors[key])
         return self.states[key]
+
+    def get_route_binding(self, object_group_name: str) -> RouteBindingState:
+        key = (self.router_id, object_group_name)
+        if key in self.read_errors:
+            raise RuntimeError(self.read_errors[key])
+        return self.route_bindings[key]
 
     def ensure_object_group(self, name: str) -> None:
         self.write_calls.append(f"ensure_object_group:{name}")
@@ -376,7 +507,8 @@ class RecordingClient:
         self._raise_write_error("remove_entries", name)
 
     def ensure_route(self, binding) -> None:
-        raise AssertionError("ensure_route must not be called in slice S13")
+        self.write_calls.append(f"ensure_route:{binding.object_group_name}")
+        self._raise_write_error("ensure_route", binding.object_group_name)
 
     def save_config(self) -> None:
         self.write_calls.append("save_config")

@@ -88,6 +88,75 @@ class RouteBindingSpec(BaseModel):
         return self
 
 
+class RouteBindingState(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    object_group_name: str
+    exists: bool = True
+    route_target_type: Literal["interface", "gateway"] | None = None
+    route_target_value: str | None = None
+    route_interface: str | None = None
+    auto: bool = False
+    exclusive: bool = False
+
+    @field_validator("object_group_name", mode="before")
+    @classmethod
+    def _validate_object_group_name(cls, value: Any) -> str:
+        return _require_object_group_name(str(value), "object_group_name")
+
+    @field_validator("route_target_value", "route_interface", mode="before")
+    @classmethod
+    def _validate_text_fields(cls, value: Any, info: Any) -> str | None:
+        if value is None:
+            return None
+        return _require_non_blank(str(value), info.field_name)
+
+    @model_validator(mode="after")
+    def _validate_state_shape(self) -> RouteBindingState:
+        if not self.exists:
+            if self.route_target_type is not None:
+                raise ValueError("route_target_type must be unset when exists is false")
+            if self.route_target_value is not None:
+                raise ValueError("route_target_value must be unset when exists is false")
+            if self.route_interface is not None:
+                raise ValueError("route_interface must be unset when exists is false")
+            if self.auto:
+                raise ValueError("auto must be false when exists is false")
+            if self.exclusive:
+                raise ValueError("exclusive must be false when exists is false")
+            return self
+
+        if self.route_target_type is None:
+            raise ValueError("route_target_type must be set when exists is true")
+        if self.route_target_value is None:
+            raise ValueError("route_target_value must be set when exists is true")
+        if self.route_target_type == "interface" and self.route_interface is not None:
+            raise ValueError("route_interface must be unset when route_target_type is interface")
+        return self
+
+
+class RouteBindingDiff(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    object_group_name: str
+    current_binding: RouteBindingState
+    desired_binding: RouteBindingSpec
+    has_changes: bool
+
+    @field_validator("object_group_name", mode="before")
+    @classmethod
+    def _validate_object_group_name(cls, value: Any) -> str:
+        return _require_object_group_name(str(value), "object_group_name")
+
+    @model_validator(mode="after")
+    def _validate_object_group_match(self) -> RouteBindingDiff:
+        if self.current_binding.object_group_name != self.object_group_name:
+            raise ValueError("current_binding object_group_name must match object_group_name")
+        if self.desired_binding.object_group_name != self.object_group_name:
+            raise ValueError("desired_binding object_group_name must match object_group_name")
+        return self
+
+
 class DnsProxyStatus(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

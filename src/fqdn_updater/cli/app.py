@@ -212,7 +212,7 @@ def _render_operation_human(
         for router in artifact.router_results
         for service in router.service_results
     )
-    changed_services = sum(plan.object_group_diff.has_changes for plan in result.plans)
+    changed_services = sum(plan.has_changes for plan in result.plans)
     plan_index = {
         (plan.router_id, plan.service_key, plan.object_group_name): plan for plan in result.plans
     }
@@ -232,7 +232,8 @@ def _render_operation_human(
                 "  "
                 f"Service {service.service_key} group={service.object_group_name} "
                 f"status={service.status.value} added={service.added_count} "
-                f"removed={service.removed_count} unchanged={service.unchanged_count}"
+                f"removed={service.removed_count} unchanged={service.unchanged_count} "
+                f"route_changed={'yes' if service.route_changed else 'no'}"
             )
             if service.error_message is not None:
                 lines.append(f"    error: {service.error_message}")
@@ -241,14 +242,22 @@ def _render_operation_human(
             plan = plan_index.get(
                 (router.router_id, service.service_key, service.object_group_name)
             )
-            if not include_diff_details or plan is None or not plan.object_group_diff.has_changes:
+            if not include_diff_details or plan is None or not plan.has_changes:
                 continue
 
             diff = plan.object_group_diff
+            route_diff = plan.route_binding_diff
             lines.append(f"    needs_create: {str(diff.needs_create).lower()}")
             lines.append(f"    to_add: {_format_entries(diff.to_add)}")
             lines.append(f"    to_remove: {_format_entries(diff.to_remove)}")
             lines.append(f"    unchanged: {_format_entries(diff.unchanged)}")
+            lines.append(f"    route_has_changes: {str(route_diff.has_changes).lower()}")
+            lines.append(
+                f"    route_current: {_format_route_binding_state(route_diff.current_binding)}"
+            )
+            lines.append(
+                f"    route_desired: {_format_route_binding_spec(route_diff.desired_binding)}"
+            )
 
     return "\n".join(lines)
 
@@ -280,6 +289,8 @@ def _serialize_service_sync_plan(plan: ServiceSyncPlan) -> dict[str, object]:
         "object_group_name": plan.object_group_name,
         "object_group_diff": plan.object_group_diff.model_dump(mode="json"),
         "desired_route_binding": plan.desired_route_binding.model_dump(mode="json"),
+        "route_binding_diff": plan.route_binding_diff.model_dump(mode="json"),
+        "has_changes": plan.has_changes,
     }
 
 
@@ -289,10 +300,28 @@ def _format_entries(entries: tuple[str, ...]) -> str:
     return ", ".join(entries)
 
 
+def _format_route_binding_state(binding) -> str:
+    if not binding.exists:
+        return "absent"
+    return _format_route_binding_spec(binding)
+
+
+def _format_route_binding_spec(binding) -> str:
+    parts = [
+        f"type={binding.route_target_type}",
+        f"value={binding.route_target_value}",
+    ]
+    if binding.route_interface is not None:
+        parts.append(f"interface={binding.route_interface}")
+    parts.append(f"auto={'yes' if binding.auto else 'no'}")
+    parts.append(f"exclusive={'yes' if binding.exclusive else 'no'}")
+    return " ".join(parts)
+
+
 def _dry_run_exit_code(result: DryRunExecutionResult) -> int:
     if result.artifact.status in {RunStatus.PARTIAL, RunStatus.FAILED}:
         return 20
-    if any(plan.object_group_diff.has_changes for plan in result.plans):
+    if any(plan.has_changes for plan in result.plans):
         return 30
     return 0
 
@@ -300,7 +329,7 @@ def _dry_run_exit_code(result: DryRunExecutionResult) -> int:
 def _sync_exit_code(result: SyncExecutionResult) -> int:
     if result.artifact.status in {RunStatus.PARTIAL, RunStatus.FAILED}:
         return 20
-    if any(plan.object_group_diff.has_changes for plan in result.plans):
+    if any(plan.has_changes for plan in result.plans):
         return 10
     return 0
 

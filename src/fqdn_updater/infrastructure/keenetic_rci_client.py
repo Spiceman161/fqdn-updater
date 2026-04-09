@@ -9,7 +9,12 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from fqdn_updater.application.keenetic_client import KeeneticClient, KeeneticClientFactory
 from fqdn_updater.domain.config_schema import RouterConfig
-from fqdn_updater.domain.keenetic import DnsProxyStatus, ObjectGroupState, RouteBindingSpec
+from fqdn_updater.domain.keenetic import (
+    DnsProxyStatus,
+    ObjectGroupState,
+    RouteBindingSpec,
+    RouteBindingState,
+)
 
 _MAX_COMMANDS_PER_BATCH = 200
 
@@ -72,6 +77,22 @@ class KeeneticRciClient(KeeneticClient):
         )
         return self._parse_object_group_state(groups_payload=groups_payload, name=normalized_name)
 
+    def get_route_binding(self, object_group_name: str) -> RouteBindingState:
+        normalized_name = _require_non_blank(object_group_name, "object_group_name")
+        response_payload = self._post_commands(
+            operation=f"get_route_binding({normalized_name})",
+            commands=[{"show": {"sc": {"dns-proxy": {}}}}],
+        )
+        dns_proxy_payload = self._unwrap_response_path(
+            response_payload,
+            operation=f"get_route_binding({normalized_name})",
+            path=("show", "sc", "dns-proxy"),
+        )
+        return self._parse_route_binding_state(
+            dns_proxy_payload=dns_proxy_payload,
+            object_group_name=normalized_name,
+        )
+
     def ensure_object_group(self, name: str) -> None:
         normalized_name = _require_non_blank(name, "name")
         self._post_commands(
@@ -102,7 +123,10 @@ class KeeneticRciClient(KeeneticClient):
         )
 
     def ensure_route(self, binding: RouteBindingSpec) -> None:
-        raise self._not_implemented("ensure_route")
+        self._post_commands(
+            operation=f"ensure_route({binding.object_group_name})",
+            commands=[self._build_ensure_route_command(binding)],
+        )
 
     def save_config(self) -> None:
         self._post_commands(
@@ -122,11 +146,6 @@ class KeeneticRciClient(KeeneticClient):
         )
         enabled = self._parse_dns_proxy_enabled(dns_proxy_payload)
         return DnsProxyStatus(enabled=enabled)
-
-    def _not_implemented(self, method_name: str) -> NotImplementedError:
-        return NotImplementedError(
-            f"KeeneticRciClient.{method_name} is not implemented in slice S12"
-        )
 
     def _post_commands(self, *, operation: str, commands: Sequence[dict[str, Any]]) -> Any:
         if not commands:
@@ -240,6 +259,30 @@ class KeeneticRciClient(KeeneticClient):
                             "include": {
                                 "address": item,
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+    def _build_ensure_route_command(self, binding: RouteBindingSpec) -> dict[str, Any]:
+        route_payload: dict[str, Any] = {
+            "type": binding.route_target_type,
+            "target": binding.route_target_value,
+        }
+        if binding.route_interface is not None:
+            route_payload["interface"] = binding.route_interface
+        if binding.auto:
+            route_payload["auto"] = True
+        if binding.exclusive:
+            route_payload["reject"] = True
+
+        return {
+            "set": {
+                "dns-proxy": {
+                    "route": {
+                        "object-group": {
+                            binding.object_group_name: route_payload,
                         }
                     }
                 }
@@ -459,6 +502,210 @@ class KeeneticRciClient(KeeneticClient):
             operation="get_dns_proxy_status",
             field_name="proxy-status",
         )
+
+    def _parse_route_binding_state(
+        self,
+        *,
+        dns_proxy_payload: Any,
+        object_group_name: str,
+    ) -> RouteBindingState:
+        if not isinstance(dns_proxy_payload, dict):
+            raise self._runtime_error(
+                f"get_route_binding({object_group_name})",
+                f"unexpected dns-proxy payload type {type(dns_proxy_payload).__name__}",
+            )
+
+        route_entries = self._extract_route_entries(
+            dns_proxy_payload=dns_proxy_payload,
+            object_group_name=object_group_name,
+        )
+        if not route_entries:
+            return RouteBindingState(object_group_name=object_group_name, exists=False)
+        if len(route_entries) != 1:
+            raise self._runtime_error(
+                f"get_route_binding({object_group_name})",
+                f"expected at most one route binding, got {len(route_entries)}",
+            )
+
+        return self._build_route_binding_state(
+            raw_entry=route_entries[0],
+            object_group_name=object_group_name,
+        )
+
+    def _extract_route_entries(
+        self,
+        *,
+        dns_proxy_payload: dict[str, Any],
+        object_group_name: str,
+    ) -> list[dict[str, Any]]:
+        route_payload = dns_proxy_payload.get("route")
+        if route_payload is None:
+            return []
+        if not isinstance(route_payload, dict):
+            raise self._runtime_error(
+                f"get_route_binding({object_group_name})",
+                f"route payload must be an object, got {type(route_payload).__name__}",
+            )
+
+        object_group_payload = route_payload.get("object-group")
+        if object_group_payload is None:
+            return []
+        if isinstance(object_group_payload, dict):
+            matching_entry = object_group_payload.get(object_group_name)
+            if matching_entry is None:
+                return []
+            if not isinstance(matching_entry, dict):
+                raise self._runtime_error(
+                    f"get_route_binding({object_group_name})",
+                    "object-group route entry must be an object",
+                )
+            return [matching_entry]
+        if isinstance(object_group_payload, list):
+            matches: list[dict[str, Any]] = []
+            for item in object_group_payload:
+                if not isinstance(item, dict):
+                    raise self._runtime_error(
+                        f"get_route_binding({object_group_name})",
+                        f"route item must be an object, got {type(item).__name__}",
+                    )
+                item_group_name = item.get("object-group")
+                if not isinstance(item_group_name, str):
+                    item_group_name = item.get("group")
+                if not isinstance(item_group_name, str):
+                    raise self._runtime_error(
+                        f"get_route_binding({object_group_name})",
+                        "route item is missing string field 'object-group' or 'group'",
+                    )
+                if item_group_name == object_group_name:
+                    matches.append(item)
+            return matches
+
+        raise self._runtime_error(
+            f"get_route_binding({object_group_name})",
+            "object-group route payload must be an object or list, got "
+            f"{type(object_group_payload).__name__}",
+        )
+
+    def _build_route_binding_state(
+        self,
+        *,
+        raw_entry: dict[str, Any],
+        object_group_name: str,
+    ) -> RouteBindingState:
+        route_target_type = self._parse_route_target_type(
+            raw_entry=raw_entry,
+            operation=f"get_route_binding({object_group_name})",
+        )
+        route_target_value = self._parse_route_target_value(
+            raw_entry=raw_entry,
+            route_target_type=route_target_type,
+            operation=f"get_route_binding({object_group_name})",
+        )
+        route_interface = None
+        if route_target_type == "gateway":
+            route_interface = self._parse_optional_string(
+                raw_entry.get("interface"),
+                operation=f"get_route_binding({object_group_name})",
+                field_name="interface",
+            )
+        auto = self._parse_optional_boolean(
+            raw_entry.get("auto"),
+            operation=f"get_route_binding({object_group_name})",
+            field_name="auto",
+            default=False,
+        )
+        exclusive = self._parse_optional_boolean(
+            raw_entry.get("reject", raw_entry.get("exclusive")),
+            operation=f"get_route_binding({object_group_name})",
+            field_name="reject",
+            default=False,
+        )
+        return RouteBindingState(
+            object_group_name=object_group_name,
+            exists=True,
+            route_target_type=route_target_type,
+            route_target_value=route_target_value,
+            route_interface=route_interface,
+            auto=auto,
+            exclusive=exclusive,
+        )
+
+    def _parse_route_target_type(
+        self,
+        *,
+        raw_entry: dict[str, Any],
+        operation: str,
+    ) -> str:
+        explicit_type = raw_entry.get("type")
+        if isinstance(explicit_type, str):
+            normalized_type = explicit_type.strip().lower()
+            if normalized_type in {"interface", "gateway"}:
+                return normalized_type
+            raise self._runtime_error(
+                operation,
+                f"field 'type' must be 'interface' or 'gateway', got {explicit_type!r}",
+            )
+
+        if isinstance(raw_entry.get("gateway"), str):
+            return "gateway"
+        if isinstance(raw_entry.get("interface"), str) and "target" not in raw_entry:
+            return "interface"
+        raise self._runtime_error(
+            operation,
+            "route entry must define either explicit type or gateway/interface target",
+        )
+
+    def _parse_route_target_value(
+        self,
+        *,
+        raw_entry: dict[str, Any],
+        route_target_type: str,
+        operation: str,
+    ) -> str:
+        if route_target_type == "gateway":
+            gateway = raw_entry.get("gateway", raw_entry.get("target"))
+            if not isinstance(gateway, str):
+                raise self._runtime_error(
+                    operation,
+                    "gateway route entry is missing string field 'gateway' or 'target'",
+                )
+            return _require_non_blank(gateway, "gateway")
+
+        interface = raw_entry.get("target", raw_entry.get("interface"))
+        if not isinstance(interface, str):
+            raise self._runtime_error(
+                operation,
+                "interface route entry is missing string field 'interface' or 'target'",
+            )
+        return _require_non_blank(interface, "interface")
+
+    def _parse_optional_string(
+        self,
+        value: Any,
+        *,
+        operation: str,
+        field_name: str,
+    ) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise self._runtime_error(
+                operation,
+                f"field '{field_name}' must be a string, got {type(value).__name__}",
+            )
+        return _require_non_blank(value, field_name)
+
+    def _parse_optional_boolean(
+        self,
+        value: Any,
+        *,
+        operation: str,
+        field_name: str,
+        default: bool,
+    ) -> bool:
+        if value is None:
+            return default
+        return self._coerce_boolean(value, operation=operation, field_name=field_name)
 
     def _coerce_boolean(self, value: Any, *, operation: str, field_name: str) -> bool:
         if isinstance(value, bool):

@@ -13,7 +13,13 @@ from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, Serv
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult
 from fqdn_updater.cli.app import app
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
-from fqdn_updater.domain.keenetic import DnsProxyStatus, ObjectGroupState, RouteBindingSpec
+from fqdn_updater.domain.keenetic import (
+    DnsProxyStatus,
+    ObjectGroupState,
+    RouteBindingDiff,
+    RouteBindingSpec,
+    RouteBindingState,
+)
 from fqdn_updater.domain.object_group_diff import ObjectGroupDiff
 from fqdn_updater.domain.run_artifact import (
     RouterResultStatus,
@@ -179,6 +185,7 @@ def test_dry_run_returns_zero_for_no_changes(monkeypatch) -> None:
                 object_group_name="svc-telegram",
                 status=ServiceResultStatus.NO_CHANGES,
                 unchanged_count=1,
+                route_changed=False,
             ),
         ),
         router_status=RouterResultStatus.NO_CHANGES,
@@ -214,6 +221,7 @@ def test_dry_run_returns_thirty_for_changes_and_json_output(monkeypatch) -> None
                 added_count=1,
                 removed_count=1,
                 unchanged_count=1,
+                route_changed=True,
             ),
         ),
         router_status=RouterResultStatus.UPDATED,
@@ -236,6 +244,7 @@ def test_dry_run_returns_thirty_for_changes_and_json_output(monkeypatch) -> None
                 "route_target_type": "interface",
                 "route_target_value": "Wireguard0",
             },
+            "has_changes": True,
             "object_group_diff": {
                 "has_changes": True,
                 "needs_create": False,
@@ -246,6 +255,27 @@ def test_dry_run_returns_thirty_for_changes_and_json_output(monkeypatch) -> None
             },
             "object_group_name": "svc-telegram",
             "router_id": "router-1",
+            "route_binding_diff": {
+                "current_binding": {
+                    "auto": True,
+                    "exclusive": False,
+                    "exists": True,
+                    "object_group_name": "svc-telegram",
+                    "route_interface": None,
+                    "route_target_type": "interface",
+                    "route_target_value": "Other0",
+                },
+                "desired_binding": {
+                    "auto": True,
+                    "exclusive": False,
+                    "object_group_name": "svc-telegram",
+                    "route_interface": None,
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard0",
+                },
+                "has_changes": True,
+                "object_group_name": "svc-telegram",
+            },
             "service_key": "telegram",
         }
     ]
@@ -290,6 +320,32 @@ def test_dry_run_returns_twenty_for_partial_result(monkeypatch) -> None:
     assert "error: timeout" in result.stdout
 
 
+def test_dry_run_returns_thirty_for_route_only_changes(monkeypatch) -> None:
+    config = _config()
+    result_payload = _dry_run_result(
+        status=RunStatus.SUCCESS,
+        artifact_path=Path("data/artifacts/run-105.json"),
+        plans=(_route_only_plan(),),
+        service_results=(
+            ServiceRunResult(
+                service_key="telegram",
+                object_group_name="svc-telegram",
+                status=ServiceResultStatus.UPDATED,
+                unchanged_count=1,
+                route_changed=True,
+            ),
+        ),
+        router_status=RouterResultStatus.UPDATED,
+    )
+    _install_dry_run_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["dry-run", "--config", "config.json"])
+
+    assert result.exit_code == 30
+    assert "planned_changes=1" in result.stdout
+    assert "route_changed=yes" in result.stdout
+
+
 def test_dry_run_returns_forty_for_invalid_config(monkeypatch) -> None:
     class FailingValidationService:
         def validate(self, path: Path) -> AppConfig:
@@ -322,6 +378,7 @@ def test_sync_returns_zero_for_no_changes(monkeypatch) -> None:
                 object_group_name="svc-telegram",
                 status=ServiceResultStatus.NO_CHANGES,
                 unchanged_count=1,
+                route_changed=False,
             ),
         ),
         router_status=RouterResultStatus.NO_CHANGES,
@@ -357,6 +414,7 @@ def test_sync_returns_ten_for_applied_changes_and_json_output(monkeypatch) -> No
                 added_count=1,
                 removed_count=1,
                 unchanged_count=1,
+                route_changed=True,
             ),
         ),
         router_status=RouterResultStatus.UPDATED,
@@ -371,6 +429,7 @@ def test_sync_returns_ten_for_applied_changes_and_json_output(monkeypatch) -> No
     assert payload["artifact"]["mode"] == "apply"
     assert payload["artifact"]["status"] == "success"
     assert payload["plans"][0]["object_group_diff"]["has_changes"] is True
+    assert payload["plans"][0]["route_binding_diff"]["has_changes"] is True
 
 
 def test_sync_returns_twenty_for_partial_result(monkeypatch) -> None:
@@ -412,6 +471,32 @@ def test_sync_returns_twenty_for_partial_result(monkeypatch) -> None:
     assert "error: Skipped after router write failure: timeout" in result.stdout
 
 
+def test_sync_returns_ten_for_route_only_changes(monkeypatch) -> None:
+    config = _config()
+    result_payload = _sync_result(
+        status=RunStatus.SUCCESS,
+        artifact_path=Path("data/artifacts/run-203.json"),
+        plans=(_route_only_plan(),),
+        service_results=(
+            ServiceRunResult(
+                service_key="telegram",
+                object_group_name="svc-telegram",
+                status=ServiceResultStatus.UPDATED,
+                unchanged_count=1,
+                route_changed=True,
+            ),
+        ),
+        router_status=RouterResultStatus.UPDATED,
+    )
+    _install_sync_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["sync", "--config", "config.json"])
+
+    assert result.exit_code == 10
+    assert "planned_changes=1" in result.stdout
+    assert "route_changed=yes" in result.stdout
+
+
 def test_sync_returns_forty_for_invalid_config(monkeypatch) -> None:
     class FailingValidationService:
         def validate(self, path: Path) -> AppConfig:
@@ -438,7 +523,17 @@ def test_dry_run_never_calls_write_methods(monkeypatch, tmp_path) -> None:
                 entries=("keep.example",),
                 exists=True,
             )
-        }
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=False,
+            )
+        },
     )
     orchestrator = DryRunOrchestrator(
         source_loader=StubSourceLoader(
@@ -464,7 +559,10 @@ def test_dry_run_never_calls_write_methods(monkeypatch, tmp_path) -> None:
 
     assert result.exit_code == 30
     assert artifact_writer.last_artifact is not None
-    assert client_factory.clients["router-1"].read_calls == ["svc-telegram"]
+    assert client_factory.clients["router-1"].read_calls == [
+        "svc-telegram",
+        "route:svc-telegram",
+    ]
     assert client_factory.clients["router-1"].write_calls == []
 
 
@@ -512,14 +610,23 @@ class RecordingArtifactWriter:
 
 
 class RecordingClient(KeeneticClient):
-    def __init__(self, states: dict[str, ObjectGroupState]) -> None:
+    def __init__(
+        self,
+        states: dict[str, ObjectGroupState],
+        route_bindings: dict[str, RouteBindingState],
+    ) -> None:
         self._states = states
+        self._route_bindings = route_bindings
         self.read_calls: list[str] = []
         self.write_calls: list[str] = []
 
     def get_object_group(self, name: str) -> ObjectGroupState:
         self.read_calls.append(name)
         return self._states[name]
+
+    def get_route_binding(self, object_group_name: str) -> RouteBindingState:
+        self.read_calls.append(f"route:{object_group_name}")
+        return self._route_bindings[object_group_name]
 
     def ensure_object_group(self, name: str) -> None:
         self.write_calls.append(f"ensure_object_group:{name}")
@@ -541,8 +648,13 @@ class RecordingClient(KeeneticClient):
 
 
 class RecordingClientFactory(KeeneticClientFactory):
-    def __init__(self, states: dict[tuple[str, str], ObjectGroupState]) -> None:
+    def __init__(
+        self,
+        states: dict[tuple[str, str], ObjectGroupState],
+        route_bindings: dict[tuple[str, str], RouteBindingState],
+    ) -> None:
         self._states = states
+        self._route_bindings = route_bindings
         self.clients: dict[str, RecordingClient] = {}
 
     def create(self, router: RouterConfig, password: str) -> KeeneticClient:
@@ -551,7 +663,12 @@ class RecordingClientFactory(KeeneticClientFactory):
             for (router_id, group_name), state in self._states.items()
             if router_id == router.id
         }
-        client = RecordingClient(states=router_states)
+        router_route_bindings = {
+            group_name: state
+            for (router_id, group_name), state in self._route_bindings.items()
+            if router_id == router.id
+        }
+        client = RecordingClient(states=router_states, route_bindings=router_route_bindings)
         self.clients[router.id] = client
         return client
 
@@ -657,6 +774,15 @@ def _plan(
     unchanged: tuple[str, ...],
     has_changes: bool,
 ) -> ServiceSyncPlan:
+    desired_route_binding = RouteBindingSpec(
+        object_group_name="svc-telegram",
+        route_target_type="interface",
+        route_target_value="Wireguard0",
+        route_interface=None,
+        auto=True,
+        exclusive=False,
+    )
+    current_route_value = "Other0" if has_changes else "Wireguard0"
     return ServiceSyncPlan(
         service_key="telegram",
         router_id="router-1",
@@ -669,13 +795,57 @@ def _plan(
             unchanged=unchanged,
             has_changes=has_changes,
         ),
-        desired_route_binding=RouteBindingSpec(
+        desired_route_binding=desired_route_binding,
+        route_binding_diff=RouteBindingDiff(
             object_group_name="svc-telegram",
-            route_target_type="interface",
-            route_target_value="Wireguard0",
-            route_interface=None,
-            auto=True,
-            exclusive=False,
+            current_binding=RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value=current_route_value,
+                auto=True,
+                exclusive=False,
+            ),
+            desired_binding=desired_route_binding,
+            has_changes=has_changes,
+        ),
+    )
+
+
+def _route_only_plan() -> ServiceSyncPlan:
+    desired_route_binding = RouteBindingSpec(
+        object_group_name="svc-telegram",
+        route_target_type="interface",
+        route_target_value="Wireguard0",
+        route_interface=None,
+        auto=True,
+        exclusive=False,
+    )
+    return ServiceSyncPlan(
+        service_key="telegram",
+        router_id="router-1",
+        object_group_name="svc-telegram",
+        object_group_diff=ObjectGroupDiff(
+            object_group_name="svc-telegram",
+            needs_create=False,
+            to_add=(),
+            to_remove=(),
+            unchanged=("keep.example",),
+            has_changes=False,
+        ),
+        desired_route_binding=desired_route_binding,
+        route_binding_diff=RouteBindingDiff(
+            object_group_name="svc-telegram",
+            current_binding=RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Other0",
+                auto=False,
+                exclusive=False,
+            ),
+            desired_binding=desired_route_binding,
+            has_changes=True,
         ),
     )
 

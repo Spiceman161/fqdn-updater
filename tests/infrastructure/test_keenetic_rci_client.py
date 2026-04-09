@@ -6,6 +6,7 @@ from urllib import error
 
 import pytest
 
+from fqdn_updater.domain.keenetic import RouteBindingSpec
 from fqdn_updater.infrastructure.keenetic_rci_client import (
     KeeneticRciClient,
     KeeneticRciClientFactory,
@@ -278,6 +279,91 @@ def test_get_dns_proxy_status_parses_boolean_like_payloads(
     assert status.enabled is expected_enabled
 
 
+def test_get_route_binding_parses_list_payload_for_interface_route(router_config) -> None:
+    payload = [
+        {
+            "show": {
+                "sc": {
+                    "dns-proxy": {
+                        "route": {
+                            "object-group": [
+                                {
+                                    "object-group": "svc-other",
+                                    "interface": "Other0",
+                                },
+                                {
+                                    "object-group": "svc-telegram",
+                                    "interface": "Wireguard0",
+                                    "auto": "yes",
+                                    "reject": "no",
+                                },
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    ]
+    client, opener = _make_client(router_config, payload)
+
+    state = client.get_route_binding("svc-telegram")
+
+    assert state.object_group_name == "svc-telegram"
+    assert state.exists is True
+    assert state.route_target_type == "interface"
+    assert state.route_target_value == "Wireguard0"
+    assert state.route_interface is None
+    assert state.auto is True
+    assert state.exclusive is False
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {"show": {"sc": {"dns-proxy": {}}}}
+    ]
+
+
+def test_get_route_binding_parses_dict_payload_for_gateway_route(router_config) -> None:
+    payload = [
+        {
+            "show": {
+                "sc": {
+                    "dns-proxy": {
+                        "route": {
+                            "object-group": {
+                                "svc-telegram": {
+                                    "type": "gateway",
+                                    "target": "10.1.111.12",
+                                    "interface": "Wireguard0",
+                                    "auto": True,
+                                    "reject": True,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+    client, _ = _make_client(router_config, payload)
+
+    state = client.get_route_binding("svc-telegram")
+
+    assert state.exists is True
+    assert state.route_target_type == "gateway"
+    assert state.route_target_value == "10.1.111.12"
+    assert state.route_interface == "Wireguard0"
+    assert state.auto is True
+    assert state.exclusive is True
+
+
+def test_get_route_binding_reports_absent_binding_when_route_is_missing(router_config) -> None:
+    payload = [{"show": {"sc": {"dns-proxy": {"proxy-status": True}}}}]
+    client, _ = _make_client(router_config, payload)
+
+    state = client.get_route_binding("svc-telegram")
+
+    assert state.object_group_name == "svc-telegram"
+    assert state.exists is False
+
+
 def test_get_object_group_raises_runtime_error_for_invalid_shape(router_config) -> None:
     payload = [
         {
@@ -321,6 +407,38 @@ def test_get_dns_proxy_status_raises_runtime_error_for_invalid_shape(router_conf
         ),
     ):
         client.get_dns_proxy_status()
+
+
+def test_get_route_binding_raises_runtime_error_for_multiple_matches(router_config) -> None:
+    payload = [
+        {
+            "show": {
+                "sc": {
+                    "dns-proxy": {
+                        "route": {
+                            "object-group": [
+                                {
+                                    "object-group": "svc-telegram",
+                                    "interface": "Wireguard0",
+                                },
+                                {
+                                    "object-group": "svc-telegram",
+                                    "interface": "Other0",
+                                },
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    ]
+    client, _ = _make_client(router_config, payload)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"get_route_binding\(svc-telegram\) failed: expected at most one route binding",
+    ):
+        client.get_route_binding("svc-telegram")
 
 
 def test_ensure_object_group_posts_single_create_command(router_config) -> None:
@@ -405,6 +523,42 @@ def test_save_config_posts_dedicated_save_command(router_config) -> None:
     ]
 
 
+def test_ensure_route_posts_single_managed_command(router_config) -> None:
+    client, opener = _make_client(router_config, {})
+
+    client.ensure_route(
+        RouteBindingSpec(
+            object_group_name="svc-telegram",
+            route_target_type="gateway",
+            route_target_value="10.1.111.12",
+            route_interface="Wireguard0",
+            auto=True,
+            exclusive=True,
+        )
+    )
+
+    assert len(opener.requests) == 1
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {
+            "set": {
+                "dns-proxy": {
+                    "route": {
+                        "object-group": {
+                            "svc-telegram": {
+                                "type": "gateway",
+                                "target": "10.1.111.12",
+                                "interface": "Wireguard0",
+                                "auto": True,
+                                "reject": True,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+
+
 def test_write_operations_wrap_http_errors_as_runtime_errors(router_config) -> None:
     client = KeeneticRciClientFactory().create(router=router_config, password="secret")
 
@@ -425,21 +579,6 @@ def test_write_operations_wrap_http_errors_as_runtime_errors(router_config) -> N
         match=r"Router 'router-1' add_entries\(svc-telegram\) failed: authentication failed",
     ):
         client.add_entries("svc-telegram", ["a.example"])
-
-
-def test_ensure_route_remains_explicitly_unimplemented(router_config) -> None:
-    from fqdn_updater.domain.keenetic import RouteBindingSpec
-
-    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
-
-    with pytest.raises(NotImplementedError, match=r"KeeneticRciClient\.ensure_route"):
-        client.ensure_route(
-            RouteBindingSpec(
-                object_group_name="svc-telegram",
-                route_target_type="interface",
-                route_target_value="Wireguard0",
-            )
-        )
 
 
 @pytest.fixture

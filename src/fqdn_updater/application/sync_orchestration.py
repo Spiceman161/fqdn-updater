@@ -184,10 +184,12 @@ class SyncOrchestrator:
 
             try:
                 actual_state = client.get_object_group(mapping.object_group_name)
+                actual_route_binding = client.get_route_binding(mapping.object_group_name)
                 plan = self._planner.plan(
                     mapping=mapping,
                     desired_entries=desired_entries,
                     actual_state=actual_state,
+                    actual_route_binding=actual_route_binding,
                 )
             except Exception as exc:
                 service_results.append(
@@ -196,8 +198,7 @@ class SyncOrchestrator:
                 continue
 
             plans.append(plan)
-            diff = plan.object_group_diff
-            if not diff.has_changes:
+            if not plan.has_changes:
                 service_results.append(_build_no_changes_service_result(plan=plan))
                 continue
 
@@ -259,13 +260,16 @@ class SyncOrchestrator:
         )
 
     def _apply_plan(self, *, client: KeeneticClient, plan: ServiceSyncPlan) -> None:
-        diff = plan.object_group_diff
-        if diff.needs_create:
+        object_group_diff = plan.object_group_diff
+        route_diff = plan.route_binding_diff
+        if object_group_diff.needs_create:
             client.ensure_object_group(plan.object_group_name)
-        if diff.to_remove:
-            client.remove_entries(plan.object_group_name, diff.to_remove)
-        if diff.to_add:
-            client.add_entries(plan.object_group_name, diff.to_add)
+        if object_group_diff.to_remove:
+            client.remove_entries(plan.object_group_name, object_group_diff.to_remove)
+        if object_group_diff.to_add:
+            client.add_entries(plan.object_group_name, object_group_diff.to_add)
+        if route_diff.has_changes:
+            client.ensure_route(plan.desired_route_binding)
 
 
 def _build_no_changes_service_result(plan: ServiceSyncPlan) -> ServiceRunResult:
@@ -277,6 +281,7 @@ def _build_no_changes_service_result(plan: ServiceSyncPlan) -> ServiceRunResult:
         added_count=len(diff.to_add),
         removed_count=len(diff.to_remove),
         unchanged_count=len(diff.unchanged),
+        route_changed=False,
     )
 
 
@@ -289,6 +294,7 @@ def _build_updated_service_result(plan: ServiceSyncPlan) -> ServiceRunResult:
         added_count=len(diff.to_add),
         removed_count=len(diff.to_remove),
         unchanged_count=len(diff.unchanged),
+        route_changed=plan.route_binding_diff.has_changes,
     )
 
 

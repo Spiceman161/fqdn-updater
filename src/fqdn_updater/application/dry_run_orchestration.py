@@ -173,10 +173,12 @@ class DryRunOrchestrator:
 
             try:
                 actual_state = client.get_object_group(mapping.object_group_name)
+                actual_route_binding = client.get_route_binding(mapping.object_group_name)
                 plan = self._planner.plan(
                     mapping=mapping,
                     desired_entries=desired_entries,
                     actual_state=actual_state,
+                    actual_route_binding=actual_route_binding,
                 )
             except Exception as exc:
                 service_results.append(
@@ -202,12 +204,11 @@ def _build_service_result_from_plan(plan: ServiceSyncPlan) -> ServiceRunResult:
     return ServiceRunResult(
         service_key=plan.service_key,
         object_group_name=plan.object_group_name,
-        status=(
-            ServiceResultStatus.UPDATED if diff.has_changes else ServiceResultStatus.NO_CHANGES
-        ),
+        status=ServiceResultStatus.UPDATED if plan.has_changes else ServiceResultStatus.NO_CHANGES,
         added_count=len(diff.to_add),
         removed_count=len(diff.to_remove),
         unchanged_count=len(diff.unchanged),
+        route_changed=plan.route_binding_diff.has_changes,
     )
 
 

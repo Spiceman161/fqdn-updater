@@ -4,13 +4,22 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
 from fqdn_updater.domain.config_schema import RouterConfig
-from fqdn_updater.domain.keenetic import DnsProxyStatus, ObjectGroupState, RouteBindingSpec
+from fqdn_updater.domain.keenetic import (
+    DnsProxyStatus,
+    ObjectGroupState,
+    RouteBindingSpec,
+    RouteBindingState,
+)
 
 
 class KeeneticClient(ABC):
     @abstractmethod
     def get_object_group(self, name: str) -> ObjectGroupState:
         """Read the current state of an object-group."""
+
+    @abstractmethod
+    def get_route_binding(self, object_group_name: str) -> RouteBindingState:
+        """Read the current DNS route binding for an object-group."""
 
     @abstractmethod
     def ensure_object_group(self, name: str) -> None:

@@ -46,6 +46,7 @@ class ServiceRunResult(BaseModel):
     added_count: int = Field(default=0, ge=0)
     removed_count: int = Field(default=0, ge=0)
     unchanged_count: int = Field(default=0, ge=0)
+    route_changed: bool = False
     error_message: str | None = None
 
 

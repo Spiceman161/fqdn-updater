@@ -68,6 +68,7 @@ def test_run_artifact_model_dump_is_machine_readable_and_deterministic() -> None
                         "added_count": 2,
                         "removed_count": 1,
                         "unchanged_count": 4,
+                        "route_changed": False,
                         "error_message": None,
                     },
                     {
@@ -77,6 +78,7 @@ def test_run_artifact_model_dump_is_machine_readable_and_deterministic() -> None
                         "added_count": 0,
                         "removed_count": 0,
                         "unchanged_count": 0,
+                        "route_changed": False,
                         "error_message": "upstream timeout",
                     },
                 ],

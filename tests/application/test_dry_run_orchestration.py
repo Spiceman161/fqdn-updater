@@ -6,7 +6,7 @@ from pathlib import Path
 from fqdn_updater.application.dry_run_orchestration import DryRunOrchestrator
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
-from fqdn_updater.domain.keenetic import ObjectGroupState
+from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
 from fqdn_updater.domain.run_artifact import (
     RouterResultStatus,
     RunStatus,
@@ -39,7 +39,13 @@ def test_dry_run_orchestrator_builds_plans_and_artifact_deterministically() -> N
                 entries=("keep.example", "old.example"),
                 exists=True,
             )
-        }
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=False,
+            )
+        },
     )
     artifact_writer = RecordingArtifactWriter()
     orchestrator = DryRunOrchestrator(
@@ -61,7 +67,10 @@ def test_dry_run_orchestrator_builds_plans_and_artifact_deterministically() -> N
 
     assert source_loader.load_calls == 1
     assert client_factory.created_passwords == [("router-1", "secret-1")]
-    assert client_factory.clients["router-1"].read_calls == ["svc-telegram"]
+    assert client_factory.clients["router-1"].read_calls == [
+        "svc-telegram",
+        "route:svc-telegram",
+    ]
     assert artifact_writer.last_path == Path("data/artifacts/run-001.json")
     assert result.artifact_path == Path("data/artifacts/run-001.json")
     assert result.artifact.run_id == "run-001"
@@ -77,6 +86,7 @@ def test_dry_run_orchestrator_builds_plans_and_artifact_deterministically() -> N
     assert len(result.plans) == 1
     assert result.plans[0].service_key == "telegram"
     assert result.plans[0].object_group_diff.to_add == ("new.example",)
+    assert result.plans[0].route_binding_diff.has_changes is True
 
 
 def test_dry_run_orchestrator_skips_disabled_and_unmanaged_mappings() -> None:
@@ -168,7 +178,17 @@ def test_dry_run_orchestrator_skips_disabled_and_unmanaged_mappings() -> None:
                 entries=("keep.example",),
                 exists=True,
             )
-        }
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=False,
+            )
+        },
     )
     orchestrator = DryRunOrchestrator(
         source_loader=source_loader,
@@ -219,7 +239,17 @@ def test_dry_run_orchestrator_marks_source_failures_per_service_and_keeps_other_
                 entries=("keep.example",),
                 exists=True,
             )
-        }
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=False,
+            )
+        },
     )
     orchestrator = DryRunOrchestrator(
         source_loader=source_loader,
@@ -243,7 +273,10 @@ def test_dry_run_orchestrator_marks_source_failures_per_service_and_keeps_other_
     assert service_results[0].status is ServiceResultStatus.NO_CHANGES
     assert service_results[1].status is ServiceResultStatus.FAILED
     assert "timeout" in service_results[1].error_message
-    assert client_factory.clients["router-1"].read_calls == ["svc-telegram"]
+    assert client_factory.clients["router-1"].read_calls == [
+        "svc-telegram",
+        "route:svc-telegram",
+    ]
     assert result.artifact.router_results[0].status is RouterResultStatus.PARTIAL
     assert result.artifact.status is RunStatus.PARTIAL
 
@@ -261,7 +294,7 @@ def test_dry_run_orchestrator_marks_router_secret_failure_for_all_services() -> 
     orchestrator = DryRunOrchestrator(
         source_loader=source_loader,
         secret_resolver=StubSecretResolver(errors={"router-1": "missing secret"}),
-        client_factory=RecordingClientFactory(states={}),
+        client_factory=RecordingClientFactory(states={}, route_bindings={}),
         planner=ServiceSyncPlanner(),
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
@@ -303,6 +336,16 @@ def test_dry_run_orchestrator_marks_read_failures_partial_and_preserves_order() 
                 exists=True,
             )
         },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=False,
+            )
+        },
         errors={("router-1", "svc-youtube"): "read failed"},
     )
     orchestrator = DryRunOrchestrator(
@@ -336,6 +379,63 @@ def test_dry_run_orchestrator_marks_read_failures_partial_and_preserves_order() 
     assert [plan.service_key for plan in result.plans] == ["telegram"]
 
 
+def test_dry_run_orchestrator_marks_route_only_changes_as_updated() -> None:
+    config = _config()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(
+                    service_key="telegram",
+                    entries=("keep.example",),
+                ),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={
+            ("router-1", "svc-telegram"): ObjectGroupState(
+                name="svc-telegram",
+                entries=("keep.example",),
+                exists=True,
+            )
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Other0",
+                auto=False,
+                exclusive=False,
+            )
+        },
+    )
+    orchestrator = DryRunOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
+                datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+            ]
+        ),
+        run_id_factory=lambda: "run-006",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    service_result = result.artifact.router_results[0].service_results[0]
+    assert service_result.status is ServiceResultStatus.UPDATED
+    assert service_result.route_changed is True
+    assert service_result.added_count == 0
+    assert service_result.removed_count == 0
+    assert result.plans[0].object_group_diff.has_changes is False
+    assert result.plans[0].route_binding_diff.has_changes is True
+
+
 class StubSourceLoader:
     def __init__(self, report: SourceLoadReport) -> None:
         self.report = report
@@ -367,9 +467,11 @@ class RecordingClientFactory:
         self,
         *,
         states: dict[tuple[str, str], ObjectGroupState],
+        route_bindings: dict[tuple[str, str], RouteBindingState],
         errors: dict[tuple[str, str], str] | None = None,
     ) -> None:
         self.states = states
+        self.route_bindings = route_bindings
         self.errors = errors or {}
         self.created_passwords: list[tuple[str, str]] = []
         self.clients: dict[str, RecordingClient] = {}
@@ -379,6 +481,7 @@ class RecordingClientFactory:
         client = RecordingClient(
             router_id=router.id,
             states=self.states,
+            route_bindings=self.route_bindings,
             errors=self.errors,
         )
         self.clients[router.id] = client
@@ -391,10 +494,12 @@ class RecordingClient:
         *,
         router_id: str,
         states: dict[tuple[str, str], ObjectGroupState],
+        route_bindings: dict[tuple[str, str], RouteBindingState],
         errors: dict[tuple[str, str], str],
     ) -> None:
         self.router_id = router_id
         self.states = states
+        self.route_bindings = route_bindings
         self.errors = errors
         self.read_calls: list[str] = []
 
@@ -404,6 +509,13 @@ class RecordingClient:
         if key in self.errors:
             raise RuntimeError(self.errors[key])
         return self.states[key]
+
+    def get_route_binding(self, object_group_name: str) -> RouteBindingState:
+        self.read_calls.append(f"route:{object_group_name}")
+        key = (self.router_id, object_group_name)
+        if key in self.errors:
+            raise RuntimeError(self.errors[key])
+        return self.route_bindings[key]
 
 
 class RecordingArtifactWriter:

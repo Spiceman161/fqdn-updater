@@ -13,9 +13,9 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 
 ## Current State
 
-- Current slice: `S13` — Apply Orchestration And Sync CLI
-- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation; `S11` — CLI Dry-Run Entry Point; `S12` — Managed Object-Group Apply Core; `S13` — Apply Orchestration And Sync CLI
-- Next ready slice: `S14` — Route Binding Read And Apply
+- Current slice: `S14` — Route Binding Read And Apply
+- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation; `S11` — CLI Dry-Run Entry Point; `S12` — Managed Object-Group Apply Core; `S13` — Apply Orchestration And Sync CLI; `S14` — Route Binding Read And Apply
+- Next ready slice: `S15` — Run Logging And Rich Failure Artifacts
 
 ## Backlog
 
@@ -35,7 +35,7 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 | S11 | done | CLI Dry-Run Entry Point | Expose the read-only orchestration flow as a user-facing dry-run command with deterministic output and exit codes. |
 | S12 | done | Managed Object-Group Apply Core | Implement safe managed-only object-group mutation through the RCI client. |
 | S13 | done | Apply Orchestration And Sync CLI | Add a user-facing sync command that applies managed object-group diffs across routers. |
-| S14 | pending | Route Binding Read And Apply | Implement managed route binding support for configured object-groups. |
+| S14 | done | Route Binding Read And Apply | Implement managed route binding support for configured object-groups. |
 | S15 | pending | Run Logging And Rich Failure Artifacts | Add operator-grade logging and richer artifact detail for dry-run and sync runs. |
 | S16 | pending | Status And Preconditions Diagnostics | Add user-facing status diagnostics for local config checks and remote Keenetic preconditions. |
 | S17 | pending | Config Management CLI | Provide first-class CLI workflows for router and mapping management without manual JSON editing. |
