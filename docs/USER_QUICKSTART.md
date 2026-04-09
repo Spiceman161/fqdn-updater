@@ -10,9 +10,10 @@
 - загрузкой и нормализацией upstream-списков на уровне внутренних модулей;
 - `dry-run` CLI-командой с human/json выводом и JSON artifact;
 - `sync` CLI-командой для apply managed object-group diff и route binding через RCI;
+- `status` CLI-командой для read-only диагностики enabled роутеров и DNS proxy;
 - отдельными per-run логами в text/json режиме и JSON artifact с richer failure detail.
 
-Это еще не полный production sync-инструмент для Keenetic: route binding apply и `status` пока не реализованы.
+Это еще не полный production sync-инструмент для Keenetic: Docker/systemd packaging и более глубокий `doctor`-режим пока не реализованы.
 
 ## Требования
 
@@ -60,6 +61,12 @@ pip install -e .[dev]
 .venv/bin/python -m fqdn_updater sync --config config.json
 ```
 
+Запустить read-only status diagnostics:
+
+```bash
+.venv/bin/python -m fqdn_updater status --config config.json
+```
+
 ## Что будет в config
 
 Сгенерированный `config.json` содержит:
@@ -91,9 +98,8 @@ pip install -e .[dev]
 
 На текущем этапе проект еще не умеет:
 
-- поддерживать route binding apply для managed object-group;
-- запускать `status` через CLI;
 - поставлять Docker/systemd runtime для scheduled execution.
+- выполнять расширенную удалённую диагностику client-side DNS/default policy через `doctor`.
 
 ## Что уже есть внутри кода
 

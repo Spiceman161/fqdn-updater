@@ -12,9 +12,11 @@ from fqdn_updater.application.config_validation import ConfigValidationService
 from fqdn_updater.application.dry_run_orchestration import DryRunExecutionResult, DryRunOrchestrator
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.application.source_loading import SourceLoadingService
+from fqdn_updater.application.status_diagnostics import StatusDiagnosticsService
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult, SyncOrchestrator
 from fqdn_updater.domain.config_schema import AppConfig
 from fqdn_updater.domain.run_artifact import RunStatus, RunTrigger
+from fqdn_updater.domain.status_diagnostics import StatusDiagnosticsResult
 from fqdn_updater.infrastructure.config_repository import ConfigRepository
 from fqdn_updater.infrastructure.keenetic_rci_client import KeeneticRciClientFactory
 from fqdn_updater.infrastructure.raw_source_fetcher import HttpRawSourceFetcher
@@ -52,6 +54,12 @@ SYNC_CONFIG_OPTION = typer.Option(
     "--config",
     dir_okay=False,
     help="Path to the JSON config file to use for sync.",
+)
+STATUS_CONFIG_OPTION = typer.Option(
+    DEFAULT_CONFIG_PATH,
+    "--config",
+    dir_okay=False,
+    help="Path to the JSON config file to use for status diagnostics.",
 )
 
 
@@ -99,6 +107,13 @@ def _sync_orchestrator() -> SyncOrchestrator:
         planner=ServiceSyncPlanner(),
         artifact_writer=RunArtifactRepository(),
         logger_factory=RunLoggerFactory(),
+    )
+
+
+def _status_service() -> StatusDiagnosticsService:
+    return StatusDiagnosticsService(
+        secret_resolver=EnvironmentFileSecretResolver(),
+        client_factory=KeeneticRciClientFactory(),
     )
 
 
@@ -172,6 +187,29 @@ def sync_command(
     else:
         typer.echo(_render_sync_human(result=result))
     raise typer.Exit(code=_sync_exit_code(result=result))
+
+
+@app.command("status")
+def status_command(
+    config: Path = STATUS_CONFIG_OPTION,
+    output: OutputMode = DRY_RUN_OUTPUT_OPTION,
+) -> None:
+    """Run read-only router diagnostics for configured enabled routers."""
+    try:
+        validated_config = _validation_service().validate(path=config)
+    except RuntimeError as exc:
+        _runtime_error_handler(exc, code=40)
+
+    try:
+        result = _status_service().check(config=validated_config)
+    except RuntimeError as exc:
+        _runtime_error_handler(exc, code=40)
+
+    if output is OutputMode.JSON:
+        typer.echo(_render_status_json(result=result))
+    else:
+        typer.echo(_render_status_human(result=result))
+    raise typer.Exit(code=_status_exit_code(result=result))
 
 
 def _render_validation_success(config: AppConfig, path: Path) -> None:
@@ -265,12 +303,49 @@ def _render_operation_human(
     return "\n".join(lines)
 
 
+def _render_status_human(result: StatusDiagnosticsResult) -> str:
+    healthy_count = sum(router.status.value == "healthy" for router in result.router_results)
+    degraded_count = sum(router.status.value == "degraded" for router in result.router_results)
+    failed_count = sum(router.status.value == "failed" for router in result.router_results)
+
+    lines = [
+        "Status completed: "
+        f"config_ready={'yes' if result.config_ready else 'no'} "
+        f"overall_status={result.overall_status.value} "
+        f"checked_routers={result.checked_router_count} "
+        f"healthy={healthy_count} degraded={degraded_count} failed={failed_count}"
+    ]
+
+    for router in result.router_results:
+        dns_proxy = (
+            "unknown"
+            if router.dns_proxy_enabled is None
+            else "enabled"
+            if router.dns_proxy_enabled
+            else "disabled"
+        )
+        lines.append(
+            f"Router {router.router_id}: status={router.status.value} dns_proxy={dns_proxy}"
+        )
+        if router.failure_step is not None:
+            lines.append(f"  failure_step: {router.failure_step.value}")
+        if router.error_message is not None:
+            lines.append(f"  error: {router.error_message}")
+
+    return "\n".join(lines)
+
+
 def _render_dry_run_json(result: DryRunExecutionResult) -> str:
     return _render_operation_json(result=result)
 
 
 def _render_sync_json(result: SyncExecutionResult) -> str:
     return _render_operation_json(result=result)
+
+
+def _render_status_json(result: StatusDiagnosticsResult) -> str:
+    payload = result.model_dump(mode="json")
+    return json.dumps(payload, indent=2, sort_keys=True)
 
 
 def _render_operation_json(
@@ -335,6 +410,12 @@ def _sync_exit_code(result: SyncExecutionResult) -> int:
     if any(plan.has_changes for plan in result.plans):
         return 10
     return 0
+
+
+def _status_exit_code(result: StatusDiagnosticsResult) -> int:
+    if result.overall_status.value == "healthy":
+        return 0
+    return 20
 
 
 def _runtime_error_handler(exc: RuntimeError, *, code: int = 1) -> NoReturn:

@@ -1,8 +1,8 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S15",
-  "updated_at": "2026-04-09T12:00:00Z",
+  "current_slice_id": "S16",
+  "updated_at": "2026-04-09T00:00:00Z",
   "slices": [
     {
       "id": "S0",
@@ -243,7 +243,7 @@
     {
       "id": "S16",
       "title": "Status And Preconditions Diagnostics",
-      "status": "pending",
+      "status": "done",
       "goal": "Add user-facing status diagnostics for local config checks and remote Keenetic preconditions.",
       "summary": "Expose a status command that reports local config readiness and remote router diagnostics such as DNS proxy availability and basic RCI access health, without mutating router state.",
       "acceptance": [
@@ -253,7 +253,7 @@
         "The command never mutates router state."
       ],
       "depends_on": ["S10", "S11"],
-      "notes": "Covers the PRD need for practical diagnostics before and after sync runs."
+      "notes": "Completed with green local verification on 2026-04-09."
     },
     {
       "id": "S17",

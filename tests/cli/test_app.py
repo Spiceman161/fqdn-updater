@@ -27,11 +27,18 @@ from fqdn_updater.domain.run_artifact import (
     RunArtifact,
     RunMode,
     RunStatus,
+    RunStep,
     RunTrigger,
     ServiceResultStatus,
     ServiceRunResult,
 )
 from fqdn_updater.domain.source_loading import NormalizedServiceSource, SourceLoadReport
+from fqdn_updater.domain.status_diagnostics import (
+    OverallDiagnosticStatus,
+    RouterDiagnosticStatus,
+    RouterStatusDiagnostic,
+    StatusDiagnosticsResult,
+)
 
 runner = CliRunner()
 
@@ -44,6 +51,7 @@ def test_root_help_shows_expected_commands() -> None:
     assert "config" in result.stdout
     assert "dry-run" in result.stdout
     assert "sync" in result.stdout
+    assert "status" in result.stdout
 
 
 def test_init_creates_scaffold_config(tmp_path) -> None:
@@ -510,6 +518,89 @@ def test_sync_returns_forty_for_invalid_config(monkeypatch) -> None:
     assert "Config validation failed for missing.json" in result.stderr
 
 
+def test_status_returns_zero_for_healthy_result(monkeypatch) -> None:
+    config = _config()
+    result_payload = _status_result(
+        overall_status=OverallDiagnosticStatus.HEALTHY,
+        router_results=(
+            RouterStatusDiagnostic(
+                router_id="router-1",
+                status=RouterDiagnosticStatus.HEALTHY,
+                dns_proxy_enabled=True,
+            ),
+        ),
+    )
+    _install_status_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["status", "--config", "config.json"])
+
+    assert result.exit_code == 0
+    assert "Status completed:" in result.stdout
+    assert "overall_status=healthy" in result.stdout
+    assert "dns_proxy=enabled" in result.stdout
+
+
+def test_status_returns_twenty_for_degraded_result_and_json_output(monkeypatch) -> None:
+    config = _config()
+    result_payload = _status_result(
+        overall_status=OverallDiagnosticStatus.DEGRADED,
+        router_results=(
+            RouterStatusDiagnostic(
+                router_id="router-1",
+                status=RouterDiagnosticStatus.DEGRADED,
+                dns_proxy_enabled=False,
+            ),
+        ),
+    )
+    _install_status_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["status", "--config", "config.json", "--output", "json"])
+
+    assert result.exit_code == 20
+    payload = json.loads(result.stdout)
+    assert payload["config_ready"] is True
+    assert payload["overall_status"] == "degraded"
+    assert payload["checked_router_count"] == 1
+    assert payload["router_results"][0]["dns_proxy_enabled"] is False
+
+
+def test_status_returns_twenty_for_failed_result(monkeypatch) -> None:
+    config = _config()
+    result_payload = _status_result(
+        overall_status=OverallDiagnosticStatus.FAILED,
+        router_results=(
+            RouterStatusDiagnostic(
+                router_id="router-1",
+                status=RouterDiagnosticStatus.FAILED,
+                dns_proxy_enabled=None,
+                error_message="authentication failed",
+                failure_step=RunStep.CLIENT_CREATE,
+            ),
+        ),
+    )
+    _install_status_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["status", "--config", "config.json"])
+
+    assert result.exit_code == 20
+    assert "status=failed" in result.stdout
+    assert "failure_step: client_create" in result.stdout
+    assert "error: authentication failed" in result.stdout
+
+
+def test_status_returns_forty_for_invalid_config(monkeypatch) -> None:
+    class FailingValidationService:
+        def validate(self, path: Path) -> AppConfig:
+            raise RuntimeError(f"Config validation failed for {path}")
+
+    monkeypatch.setattr(cli_app_module, "_validation_service", lambda: FailingValidationService())
+
+    result = runner.invoke(app, ["status", "--config", "missing.json"])
+
+    assert result.exit_code == 40
+    assert "Config validation failed for missing.json" in result.stderr
+
+
 def test_dry_run_never_calls_write_methods(monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(_config().model_dump(mode="json")), encoding="utf-8")
@@ -589,6 +680,14 @@ class StubSyncOrchestrator:
 
     def run(self, *, config: AppConfig, trigger: RunTrigger) -> SyncExecutionResult:
         assert trigger is RunTrigger.MANUAL
+        return self._result
+
+
+class StubStatusService:
+    def __init__(self, result: StatusDiagnosticsResult) -> None:
+        self._result = result
+
+    def check(self, *, config: AppConfig) -> StatusDiagnosticsResult:
         return self._result
 
 
@@ -709,6 +808,24 @@ def _install_sync_stubs(
     )
 
 
+def _install_status_stubs(
+    monkeypatch,
+    *,
+    config: AppConfig,
+    result: StatusDiagnosticsResult,
+) -> None:
+    monkeypatch.setattr(
+        cli_app_module,
+        "_validation_service",
+        lambda: StubValidationService(config=config),
+    )
+    monkeypatch.setattr(
+        cli_app_module,
+        "_status_service",
+        lambda: StubStatusService(result=result),
+    )
+
+
 def _dry_run_result(
     *,
     status: RunStatus,
@@ -766,6 +883,19 @@ def _sync_result(
         ),
         artifact_path=artifact_path,
         plans=plans,
+    )
+
+
+def _status_result(
+    *,
+    overall_status: OverallDiagnosticStatus,
+    router_results: tuple[RouterStatusDiagnostic, ...],
+) -> StatusDiagnosticsResult:
+    return StatusDiagnosticsResult(
+        config_ready=True,
+        overall_status=overall_status,
+        checked_router_count=len(router_results),
+        router_results=router_results,
     )
 
 
