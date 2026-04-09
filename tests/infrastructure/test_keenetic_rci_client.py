@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from urllib import error
 
 import pytest
 
@@ -36,18 +37,24 @@ class _FakeResponse:
 
 
 class _FakeOpener:
-    def __init__(self, payload: object) -> None:
-        self._payload = payload
+    def __init__(self, payload: object | tuple[object, ...]) -> None:
+        if isinstance(payload, tuple):
+            self._payloads = list(payload)
+        else:
+            self._payloads = [payload]
         self.requests: list[object] = []
         self.timeouts: list[int] = []
 
     def open(self, http_request, timeout: int) -> _FakeResponse:
         self.requests.append(http_request)
         self.timeouts.append(timeout)
-        return _FakeResponse(self._payload)
+        payload = self._payloads.pop(0) if self._payloads else {}
+        return _FakeResponse(payload)
 
 
-def _make_client(router_config, payload: object) -> tuple[KeeneticRciClient, _FakeOpener]:
+def _make_client(
+    router_config, payload: object | tuple[object, ...]
+) -> tuple[KeeneticRciClient, _FakeOpener]:
     client = KeeneticRciClientFactory().create(router=router_config, password="secret")
     opener = _FakeOpener(payload)
     client._opener = opener  # type: ignore[attr-defined]
@@ -316,24 +323,123 @@ def test_get_dns_proxy_status_raises_runtime_error_for_invalid_shape(router_conf
         client.get_dns_proxy_status()
 
 
-@pytest.mark.parametrize(
-    ("method_name", "args"),
-    [
-        ("ensure_object_group", ("svc-telegram",)),
-        ("add_entries", ("svc-telegram", ["a.example"])),
-        ("remove_entries", ("svc-telegram", ["a.example"])),
-        ("ensure_route", ({"object_group_name": "svc-telegram"},)),
-        ("save_config", ()),
-    ],
-)
-def test_client_write_methods_are_explicitly_unimplemented(
-    router_config, method_name: str, args: tuple[object, ...]
-) -> None:
-    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
-    method = getattr(client, method_name)
+def test_ensure_object_group_posts_single_create_command(router_config) -> None:
+    client, opener = _make_client(router_config, {})
 
-    with pytest.raises(NotImplementedError, match=rf"KeeneticRciClient\.{method_name}"):
-        method(*args)
+    client.ensure_object_group("svc-telegram")
+
+    assert len(opener.requests) == 1
+    assert opener.timeouts == [15]
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {"set": {"object-group": {"fqdn": {"svc-telegram": {}}}}}
+    ]
+
+
+def test_add_entries_skips_request_for_empty_normalized_input(router_config) -> None:
+    client, opener = _make_client(router_config, {})
+
+    client.add_entries("svc-telegram", ["  ", "\t"])
+
+    assert opener.requests == []
+
+
+def test_add_entries_normalizes_sorts_and_deduplicates_commands(router_config) -> None:
+    client, opener = _make_client(router_config, {})
+
+    client.add_entries(
+        "svc-telegram",
+        [" z.example ", "a.example", "z.example", "b.example"],
+    )
+
+    assert len(opener.requests) == 1
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {
+            "set": {
+                "object-group": {"fqdn": {"svc-telegram": {"include": {"address": "a.example"}}}}
+            }
+        },
+        {
+            "set": {
+                "object-group": {"fqdn": {"svc-telegram": {"include": {"address": "b.example"}}}}
+            }
+        },
+        {
+            "set": {
+                "object-group": {"fqdn": {"svc-telegram": {"include": {"address": "z.example"}}}}
+            }
+        },
+    ]
+
+
+def test_remove_entries_batches_commands_in_fixed_chunks(router_config) -> None:
+    items = [f"host-{index:03d}.example" for index in range(205)]
+    client, opener = _make_client(router_config, ({}, {}))
+
+    client.remove_entries("svc-telegram", items)
+
+    assert len(opener.requests) == 2
+    first_batch = json.loads(opener.requests[0].data.decode("utf-8"))
+    second_batch = json.loads(opener.requests[1].data.decode("utf-8"))
+    assert len(first_batch) == 200
+    assert len(second_batch) == 5
+    assert first_batch[0] == {
+        "delete": {
+            "object-group": {"fqdn": {"svc-telegram": {"include": {"address": "host-000.example"}}}}
+        }
+    }
+    assert second_batch[-1] == {
+        "delete": {
+            "object-group": {"fqdn": {"svc-telegram": {"include": {"address": "host-204.example"}}}}
+        }
+    }
+
+
+def test_save_config_posts_dedicated_save_command(router_config) -> None:
+    client, opener = _make_client(router_config, {})
+
+    client.save_config()
+
+    assert len(opener.requests) == 1
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {"system": {"configuration": {"save": {}}}}
+    ]
+
+
+def test_write_operations_wrap_http_errors_as_runtime_errors(router_config) -> None:
+    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
+
+    class _FailingOpener:
+        def open(self, http_request, timeout: int) -> _FakeResponse:
+            raise error.HTTPError(
+                url=http_request.full_url,
+                code=403,
+                msg="Forbidden",
+                hdrs=None,
+                fp=None,
+            )
+
+    client._opener = _FailingOpener()  # type: ignore[attr-defined]
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Router 'router-1' add_entries\(svc-telegram\) failed: authentication failed",
+    ):
+        client.add_entries("svc-telegram", ["a.example"])
+
+
+def test_ensure_route_remains_explicitly_unimplemented(router_config) -> None:
+    from fqdn_updater.domain.keenetic import RouteBindingSpec
+
+    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
+
+    with pytest.raises(NotImplementedError, match=r"KeeneticRciClient\.ensure_route"):
+        client.ensure_route(
+            RouteBindingSpec(
+                object_group_name="svc-telegram",
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+            )
+        )
 
 
 @pytest.fixture

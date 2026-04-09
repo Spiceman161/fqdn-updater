@@ -11,6 +11,8 @@ from fqdn_updater.application.keenetic_client import KeeneticClient, KeeneticCli
 from fqdn_updater.domain.config_schema import RouterConfig
 from fqdn_updater.domain.keenetic import DnsProxyStatus, ObjectGroupState, RouteBindingSpec
 
+_MAX_COMMANDS_PER_BATCH = 200
+
 
 def _require_non_blank(value: str, field_name: str) -> str:
     normalized_value = value.strip()
@@ -59,9 +61,9 @@ class KeeneticRciClient(KeeneticClient):
 
     def get_object_group(self, name: str) -> ObjectGroupState:
         normalized_name = _require_non_blank(name, "name")
-        response_payload = self._post_read_command(
+        response_payload = self._post_commands(
             operation=f"get_object_group({normalized_name})",
-            command={"show": {"sc": {"object-group": {"fqdn": {}}}}},
+            commands=[{"show": {"sc": {"object-group": {"fqdn": {}}}}}],
         )
         groups_payload = self._unwrap_response_path(
             response_payload,
@@ -71,24 +73,47 @@ class KeeneticRciClient(KeeneticClient):
         return self._parse_object_group_state(groups_payload=groups_payload, name=normalized_name)
 
     def ensure_object_group(self, name: str) -> None:
-        raise self._not_implemented("ensure_object_group")
+        normalized_name = _require_non_blank(name, "name")
+        self._post_commands(
+            operation=f"ensure_object_group({normalized_name})",
+            commands=[self._build_ensure_object_group_command(normalized_name)],
+        )
 
     def add_entries(self, name: str, items: Sequence[str]) -> None:
-        raise self._not_implemented("add_entries")
+        normalized_name = _require_non_blank(name, "name")
+        normalized_items = self._normalize_items(items, field_name="items")
+        commands = [
+            self._build_add_entry_command(normalized_name, item) for item in normalized_items
+        ]
+        self._post_batched_commands(
+            operation=f"add_entries({normalized_name})",
+            commands=commands,
+        )
 
     def remove_entries(self, name: str, items: Sequence[str]) -> None:
-        raise self._not_implemented("remove_entries")
+        normalized_name = _require_non_blank(name, "name")
+        normalized_items = self._normalize_items(items, field_name="items")
+        commands = [
+            self._build_remove_entry_command(normalized_name, item) for item in normalized_items
+        ]
+        self._post_batched_commands(
+            operation=f"remove_entries({normalized_name})",
+            commands=commands,
+        )
 
     def ensure_route(self, binding: RouteBindingSpec) -> None:
         raise self._not_implemented("ensure_route")
 
     def save_config(self) -> None:
-        raise self._not_implemented("save_config")
+        self._post_commands(
+            operation="save_config",
+            commands=[{"system": {"configuration": {"save": {}}}}],
+        )
 
     def get_dns_proxy_status(self) -> DnsProxyStatus:
-        response_payload = self._post_read_command(
+        response_payload = self._post_commands(
             operation="get_dns_proxy_status",
-            command={"show": {"sc": {"dns-proxy": {}}}},
+            commands=[{"show": {"sc": {"dns-proxy": {}}}}],
         )
         dns_proxy_payload = self._unwrap_response_path(
             response_payload,
@@ -100,11 +125,14 @@ class KeeneticRciClient(KeeneticClient):
 
     def _not_implemented(self, method_name: str) -> NotImplementedError:
         return NotImplementedError(
-            f"KeeneticRciClient.{method_name} is not implemented in slice S10"
+            f"KeeneticRciClient.{method_name} is not implemented in slice S12"
         )
 
-    def _post_read_command(self, *, operation: str, command: dict[str, Any]) -> Any:
-        request_body = json.dumps([command]).encode("utf-8")
+    def _post_commands(self, *, operation: str, commands: Sequence[dict[str, Any]]) -> Any:
+        if not commands:
+            return None
+
+        request_body = json.dumps(list(commands)).encode("utf-8")
         http_request = request.Request(
             self.profile.endpoint_url,
             data=request_body,
@@ -146,6 +174,77 @@ class KeeneticRciClient(KeeneticClient):
             return json.loads(decoded_body)
         except json.JSONDecodeError as exc:
             raise self._runtime_error(operation, f"response JSON decode failed: {exc}") from exc
+
+    def _post_batched_commands(
+        self,
+        *,
+        operation: str,
+        commands: Sequence[dict[str, Any]],
+    ) -> None:
+        for batch in self._batch_commands(commands):
+            self._post_commands(operation=operation, commands=batch)
+
+    def _batch_commands(
+        self,
+        commands: Sequence[dict[str, Any]],
+    ) -> tuple[tuple[dict[str, Any], ...], ...]:
+        if not commands:
+            return ()
+
+        batches: list[tuple[dict[str, Any], ...]] = []
+        for offset in range(0, len(commands), _MAX_COMMANDS_PER_BATCH):
+            batches.append(tuple(commands[offset : offset + _MAX_COMMANDS_PER_BATCH]))
+        return tuple(batches)
+
+    def _normalize_items(self, items: Sequence[str], *, field_name: str) -> tuple[str, ...]:
+        normalized_items: set[str] = set()
+        for item in items:
+            normalized_item = str(item).strip()
+            if not normalized_item:
+                continue
+            normalized_items.add(_require_non_blank(normalized_item, field_name))
+        return tuple(sorted(normalized_items))
+
+    def _build_ensure_object_group_command(self, name: str) -> dict[str, Any]:
+        return {
+            "set": {
+                "object-group": {
+                    "fqdn": {
+                        name: {},
+                    }
+                }
+            }
+        }
+
+    def _build_add_entry_command(self, name: str, item: str) -> dict[str, Any]:
+        return {
+            "set": {
+                "object-group": {
+                    "fqdn": {
+                        name: {
+                            "include": {
+                                "address": item,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+    def _build_remove_entry_command(self, name: str, item: str) -> dict[str, Any]:
+        return {
+            "delete": {
+                "object-group": {
+                    "fqdn": {
+                        name: {
+                            "include": {
+                                "address": item,
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
     def _unwrap_response_path(
         self,

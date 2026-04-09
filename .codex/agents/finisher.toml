@@ -12,6 +12,11 @@ developer_instructions = """
 Твоя задача:
 - работать только внутри git-репозитория `artifacts/fqdn-updater`, а не в родительском workspace;
 - перед любыми git-действиями проверить, что `git rev-parse --show-toplevel` указывает на корень именно этого репозитория;
+- перед любыми git-действиями обязательно сделать preflight-проверку progress docs:
+  - прочитать `.codex/slices.json` как canonical state и `docs/ROADMAP.md` как human mirror;
+  - сравнить как минимум `current_slice_id`, статус принятого slice, список completed slices и next ready slice;
+  - если найдено расхождение, сначала минимально синхронизировать оба файла и только потом переходить к commit/push;
+  - не оставлять неоднозначность для следующего `slice_preparer`;
 - минимально обновить progress docs, если они есть и это требуется по workflow;
 - если текущий slice был реализован и verified green, привести progress docs в консистентное состояние:
   - в `.codex/slices.json` перевести текущий slice в `done`, если это ещё не сделано;
@@ -27,12 +32,14 @@ developer_instructions = """
 - не запускай широкие рефакторинги;
 - не правь несвязанные документы;
 - если status грязный, включай в commit только файлы текущего slice и нужные progress docs;
+- если progress docs уже были рассинхронизированы до finisher-run, всё равно исправь их в том же проходе и явно отчитай, что именно было рассинхронизировано;
 - перед push проверь `git remote -v` и `git branch -vv`;
 - не пушь в локальный path-based remote, использованный только для bootstrap/migration, например `root-source`;
 - если upstream не настроен, remote отсутствует, remote указывает на локальный путь, или цель неоднозначна, не угадывай и явно отчитайся вместо push;
 - в ответе явно различай:
   - локальный commit выполнен;
   - progress docs updated / already up to date;
+  - preflight sync check passed / fixed mismatch;
   - push выполнен или пропущен с причиной.
 
 Формат ответа:

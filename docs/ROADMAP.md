@@ -13,9 +13,9 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 
 ## Current State
 
-- Current slice: `S11` — CLI Dry-Run Entry Point
-- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation; `S11` — CLI Dry-Run Entry Point
-- Next ready slice: `S12` — Managed Object-Group Apply Core
+- Current slice: `S12` — Managed Object-Group Apply Core
+- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation; `S11` — CLI Dry-Run Entry Point; `S12` — Managed Object-Group Apply Core
+- Next ready slice: `S13` — Apply Orchestration And Sync CLI
 
 ## Backlog
 
@@ -33,7 +33,7 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 | S9 | done | Read-Only Sync Orchestration | Assemble the first dry-run orchestration flow without any router writes. |
 | S10 | done | RCI Read Transport Implementation | Implement the first real Keenetic RCI read path for object-group state and DNS proxy status. |
 | S11 | done | CLI Dry-Run Entry Point | Expose the read-only orchestration flow as a user-facing dry-run command with deterministic output and exit codes. |
-| S12 | pending | Managed Object-Group Apply Core | Implement safe managed-only object-group mutation through the RCI client. |
+| S12 | done | Managed Object-Group Apply Core | Implement safe managed-only object-group mutation through the RCI client. |
 | S13 | pending | Apply Orchestration And Sync CLI | Add a user-facing sync command that applies managed object-group diffs across routers. |
 | S14 | pending | Route Binding Read And Apply | Implement managed route binding support for configured object-groups. |
 | S15 | pending | Run Logging And Rich Failure Artifacts | Add operator-grade logging and richer artifact detail for dry-run and sync runs. |

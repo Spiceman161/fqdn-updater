@@ -1,8 +1,8 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S10",
-  "updated_at": "2026-04-08T18:30:00Z",
+  "current_slice_id": "S12",
+  "updated_at": "2026-04-09T05:40:24Z",
   "slices": [
     {
       "id": "S0",
@@ -164,7 +164,7 @@
     {
       "id": "S11",
       "title": "CLI Dry-Run Entry Point",
-      "status": "pending",
+      "status": "done",
       "goal": "Expose the read-only orchestration flow as a user-facing dry-run command with deterministic output and exit codes.",
       "summary": "Add a CLI dry-run command that loads config, invokes the orchestration flow, renders human-readable and JSON output, writes artifacts, and returns stable exit codes for no-changes, planned changes, and errors.",
       "acceptance": [
@@ -175,12 +175,12 @@
         "No router write methods are called in any dry-run path."
       ],
       "depends_on": ["S10"],
-      "notes": "Makes the existing dry-run internals usable for operators and OpenClaw."
+      "notes": "Completed with green local verification on 2026-04-08."
     },
     {
       "id": "S12",
       "title": "Managed Object-Group Apply Core",
-      "status": "pending",
+      "status": "done",
       "goal": "Implement safe managed-only object-group mutation through the RCI client.",
       "summary": "Add the first write path for object-group creation and entry add/remove operations, preserving read-before-write behavior and avoiding route changes for now.",
       "acceptance": [
@@ -191,7 +191,7 @@
         "No route binding writes are introduced in this slice."
       ],
       "depends_on": ["S10"],
-      "notes": "Keeps the first mutation slice narrow by excluding route binding management."
+      "notes": "Completed with green local verification on 2026-04-09."
     },
     {
       "id": "S13",
