@@ -17,6 +17,7 @@ from fqdn_updater.domain.keenetic import (
 )
 
 _MAX_COMMANDS_PER_BATCH = 200
+_MAX_REQUEST_ATTEMPTS = 3
 
 
 def _require_non_blank(value: str, field_name: str) -> str:
@@ -62,7 +63,8 @@ class KeeneticRciClient(KeeneticClient):
             passwd=profile.password,
         )
         digest_handler = request.HTTPDigestAuthHandler(password_manager)
-        self._opener = request.build_opener(digest_handler)
+        basic_handler = request.HTTPBasicAuthHandler(password_manager)
+        self._opener = request.build_opener(digest_handler, basic_handler)
 
     def get_object_group(self, name: str) -> ObjectGroupState:
         normalized_name = _require_non_blank(name, "name")
@@ -131,18 +133,18 @@ class KeeneticRciClient(KeeneticClient):
     def save_config(self) -> None:
         self._post_commands(
             operation="save_config",
-            commands=[{"system": {"configuration": {"save": {}}}}],
+            commands=[{"parse": "system configuration save"}],
         )
 
     def get_dns_proxy_status(self) -> DnsProxyStatus:
         response_payload = self._post_commands(
             operation="get_dns_proxy_status",
-            commands=[{"show": {"sc": {"dns-proxy": {}}}}],
+            commands=[{"show": {"dns-proxy": {}}}],
         )
         dns_proxy_payload = self._unwrap_response_path(
             response_payload,
             operation="get_dns_proxy_status",
-            path=("show", "sc", "dns-proxy"),
+            path=("show", "dns-proxy"),
         )
         enabled = self._parse_dns_proxy_enabled(dns_proxy_payload)
         return DnsProxyStatus(enabled=enabled)
@@ -163,23 +165,10 @@ class KeeneticRciClient(KeeneticClient):
             },
         )
 
-        try:
-            with self._opener.open(http_request, timeout=self.profile.timeout_seconds) as response:
-                charset = response.headers.get_content_charset("utf-8")
-                response_body = response.read()
-        except error.HTTPError as exc:
-            if exc.code in {401, 403}:
-                raise self._runtime_error(
-                    operation,
-                    f"authentication failed with HTTP {exc.code}",
-                ) from exc
-            raise self._runtime_error(
-                operation,
-                f"request failed with HTTP {exc.code}: {exc.reason}",
-            ) from exc
-        except error.URLError as exc:
-            reason = getattr(exc, "reason", exc)
-            raise self._runtime_error(operation, f"transport failed: {reason}") from exc
+        charset, response_body = self._send_request_with_retries(
+            operation=operation,
+            http_request=http_request,
+        )
 
         try:
             decoded_body = response_body.decode(charset)
@@ -190,9 +179,51 @@ class KeeneticRciClient(KeeneticClient):
             ) from exc
 
         try:
-            return json.loads(decoded_body)
+            payload = json.loads(decoded_body)
         except json.JSONDecodeError as exc:
             raise self._runtime_error(operation, f"response JSON decode failed: {exc}") from exc
+        self._raise_on_rci_status_errors(payload=payload, operation=operation)
+        return payload
+
+    def _send_request_with_retries(
+        self,
+        *,
+        operation: str,
+        http_request: request.Request,
+    ) -> tuple[str, bytes]:
+        for attempt in range(1, _MAX_REQUEST_ATTEMPTS + 1):
+            try:
+                with self._opener.open(
+                    http_request,
+                    timeout=self.profile.timeout_seconds,
+                ) as response:
+                    charset = response.headers.get_content_charset("utf-8")
+                    return charset, response.read()
+            except error.HTTPError as exc:
+                if exc.code in {401, 403}:
+                    raise self._runtime_error(
+                        operation,
+                        f"authentication failed with HTTP {exc.code}",
+                    ) from exc
+                raise self._runtime_error(
+                    operation,
+                    f"request failed with HTTP {exc.code}: {exc.reason}",
+                ) from exc
+            except (TimeoutError, error.URLError) as exc:
+                if attempt == _MAX_REQUEST_ATTEMPTS:
+                    raise self._runtime_error(
+                        operation,
+                        "transport failed after "
+                        f"{_MAX_REQUEST_ATTEMPTS} attempts: "
+                        f"{self._transport_error_reason(exc)}",
+                    ) from exc
+
+        raise self._runtime_error(operation, "transport failed without response")
+
+    def _transport_error_reason(self, exc: TimeoutError | error.URLError) -> object:
+        if isinstance(exc, error.URLError):
+            return getattr(exc, "reason", exc)
+        return exc
 
     def _post_batched_commands(
         self,
@@ -225,69 +256,86 @@ class KeeneticRciClient(KeeneticClient):
         return tuple(sorted(normalized_items))
 
     def _build_ensure_object_group_command(self, name: str) -> dict[str, Any]:
-        return {
-            "set": {
-                "object-group": {
-                    "fqdn": {
-                        name: {},
-                    }
-                }
-            }
-        }
+        return {"parse": f"object-group fqdn {self._format_cli_argument(name, 'name')}"}
 
     def _build_add_entry_command(self, name: str, item: str) -> dict[str, Any]:
         return {
-            "set": {
-                "object-group": {
-                    "fqdn": {
-                        name: {
-                            "include": {
-                                "address": item,
-                            }
-                        }
-                    }
-                }
-            }
+            "parse": (
+                "object-group fqdn "
+                f"{self._format_cli_argument(name, 'name')} "
+                f"include {self._format_cli_argument(item, 'item')}"
+            )
         }
 
     def _build_remove_entry_command(self, name: str, item: str) -> dict[str, Any]:
         return {
-            "delete": {
-                "object-group": {
-                    "fqdn": {
-                        name: {
-                            "include": {
-                                "address": item,
-                            }
-                        }
-                    }
-                }
-            }
+            "parse": (
+                "no object-group fqdn "
+                f"{self._format_cli_argument(name, 'name')} "
+                f"include {self._format_cli_argument(item, 'item')}"
+            )
         }
 
     def _build_ensure_route_command(self, binding: RouteBindingSpec) -> dict[str, Any]:
-        route_payload: dict[str, Any] = {
-            "type": binding.route_target_type,
-            "target": binding.route_target_value,
-        }
+        route_parts = [
+            "dns-proxy",
+            "route",
+            "object-group",
+            self._format_cli_argument(binding.object_group_name, "object_group_name"),
+            self._format_cli_argument(binding.route_target_value, "route_target_value"),
+        ]
         if binding.route_interface is not None:
-            route_payload["interface"] = binding.route_interface
+            route_parts.append(
+                self._format_cli_argument(binding.route_interface, "route_interface")
+            )
         if binding.auto:
-            route_payload["auto"] = True
+            route_parts.append("auto")
         if binding.exclusive:
-            route_payload["reject"] = True
+            route_parts.append("reject")
 
-        return {
-            "set": {
-                "dns-proxy": {
-                    "route": {
-                        "object-group": {
-                            binding.object_group_name: route_payload,
-                        }
-                    }
-                }
-            }
-        }
+        return {"parse": " ".join(route_parts)}
+
+    def _format_cli_argument(self, value: str, field_name: str) -> str:
+        normalized_value = _require_non_blank(value, field_name)
+        if any(character.isspace() for character in normalized_value):
+            raise ValueError(f"{field_name} must not contain whitespace")
+        if '"' in normalized_value or "'" in normalized_value:
+            raise ValueError(f"{field_name} must not contain quotes")
+        return normalized_value
+
+    def _raise_on_rci_status_errors(self, *, payload: Any, operation: str) -> None:
+        errors = tuple(self._iter_rci_status_errors(payload))
+        if not errors:
+            return
+        raise self._runtime_error(operation, "; ".join(errors))
+
+    def _iter_rci_status_errors(self, payload: Any) -> tuple[str, ...]:
+        errors: list[str] = []
+
+        def visit(value: Any) -> None:
+            if isinstance(value, dict):
+                status = value.get("status")
+                if isinstance(status, list):
+                    for item in status:
+                        if not isinstance(item, dict) or item.get("status") != "error":
+                            continue
+                        message = item.get("message")
+                        code = item.get("code")
+                        ident = item.get("ident")
+                        parts = [
+                            str(part)
+                            for part in (ident, code, message)
+                            if part is not None and str(part).strip()
+                        ]
+                        errors.append(" - ".join(parts) if parts else "RCI status error")
+                for child in value.values():
+                    visit(child)
+            elif isinstance(value, list):
+                for item in value:
+                    visit(item)
+
+        visit(payload)
+        return tuple(errors)
 
     def _unwrap_response_path(
         self,
@@ -541,6 +589,11 @@ class KeeneticRciClient(KeeneticClient):
         route_payload = dns_proxy_payload.get("route")
         if route_payload is None:
             return []
+        if isinstance(route_payload, list):
+            return self._extract_route_entries_from_list(
+                route_items=route_payload,
+                object_group_name=object_group_name,
+            )
         if not isinstance(route_payload, dict):
             raise self._runtime_error(
                 f"get_route_binding({object_group_name})",
@@ -585,6 +638,31 @@ class KeeneticRciClient(KeeneticClient):
             "object-group route payload must be an object or list, got "
             f"{type(object_group_payload).__name__}",
         )
+
+    def _extract_route_entries_from_list(
+        self,
+        *,
+        route_items: list[Any],
+        object_group_name: str,
+    ) -> list[dict[str, Any]]:
+        matches: list[dict[str, Any]] = []
+        for item in route_items:
+            if not isinstance(item, dict):
+                raise self._runtime_error(
+                    f"get_route_binding({object_group_name})",
+                    f"route item must be an object, got {type(item).__name__}",
+                )
+            item_group_name = item.get("object-group")
+            if not isinstance(item_group_name, str):
+                item_group_name = item.get("group")
+            if not isinstance(item_group_name, str):
+                raise self._runtime_error(
+                    f"get_route_binding({object_group_name})",
+                    "route item is missing string field 'object-group' or 'group'",
+                )
+            if item_group_name == object_group_name:
+                matches.append(item)
+        return matches
 
     def _build_route_binding_state(
         self,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from urllib import error
+from urllib import error, request
 
 import pytest
 
@@ -53,6 +53,21 @@ class _FakeOpener:
         return _FakeResponse(payload)
 
 
+class _FlakyTransportOpener:
+    def __init__(self, *, failures_before_success: int, payload: object) -> None:
+        self._failures_before_success = failures_before_success
+        self._payload = payload
+        self.requests: list[object] = []
+        self.timeouts: list[int] = []
+
+    def open(self, http_request, timeout: int) -> _FakeResponse:
+        self.requests.append(http_request)
+        self.timeouts.append(timeout)
+        if len(self.requests) <= self._failures_before_success:
+            raise error.URLError("temporary TLS failure")
+        return _FakeResponse(self._payload)
+
+
 def _make_client(
     router_config, payload: object | tuple[object, ...]
 ) -> tuple[KeeneticRciClient, _FakeOpener]:
@@ -77,6 +92,26 @@ def test_factory_creates_rci_client_with_profile(router_config) -> None:
 
     assert isinstance(client, KeeneticRciClient)
     assert client.profile.router_id == "router-1"
+
+
+def test_client_opener_supports_digest_and_basic_auth(monkeypatch, router_config) -> None:
+    captured_handler_types: list[type[object]] = []
+
+    def fake_build_opener(*handlers):
+        captured_handler_types.extend(type(handler) for handler in handlers)
+        return _FakeOpener({})
+
+    monkeypatch.setattr(
+        "fqdn_updater.infrastructure.keenetic_rci_client.request.build_opener",
+        fake_build_opener,
+    )
+
+    KeeneticRciClientFactory().create(router=router_config, password="secret")
+
+    assert captured_handler_types == [
+        request.HTTPDigestAuthHandler,
+        request.HTTPBasicAuthHandler,
+    ]
 
 
 def test_get_object_group_parses_cli_style_payload_and_ignores_runtime_entries(
@@ -263,20 +298,21 @@ def test_get_object_group_reports_absence_only_when_group_is_explicitly_missing(
 @pytest.mark.parametrize(
     ("payload", "expected_enabled"),
     [
-        ([{"show": {"sc": {"dns-proxy": {"proxy-status": True}}}}], True),
-        ([{"show": {"sc": {"dns-proxy": {"proxy-status": "enabled"}}}}], True),
-        ([{"show": {"sc": {"dns-proxy": {"enabled": "yes"}}}}], True),
-        ([{"show": {"sc": {"dns-proxy": {"enable": "off"}}}}], False),
+        ([{"show": {"dns-proxy": {"proxy-status": True}}}], True),
+        ([{"show": {"dns-proxy": {"proxy-status": "enabled"}}}], True),
+        ([{"show": {"dns-proxy": {"enabled": "yes"}}}], True),
+        ([{"show": {"dns-proxy": {"enable": "off"}}}], False),
     ],
 )
 def test_get_dns_proxy_status_parses_boolean_like_payloads(
     router_config, payload: object, expected_enabled: bool
 ) -> None:
-    client, _ = _make_client(router_config, payload)
+    client, opener = _make_client(router_config, payload)
 
     status = client.get_dns_proxy_status()
 
     assert status.enabled is expected_enabled
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [{"show": {"dns-proxy": {}}}]
 
 
 def test_get_route_binding_parses_list_payload_for_interface_route(router_config) -> None:
@@ -318,6 +354,42 @@ def test_get_route_binding_parses_list_payload_for_interface_route(router_config
     assert json.loads(opener.requests[0].data.decode("utf-8")) == [
         {"show": {"sc": {"dns-proxy": {}}}}
     ]
+
+
+def test_get_route_binding_parses_flat_route_list_payload(router_config) -> None:
+    payload = [
+        {
+            "show": {
+                "sc": {
+                    "dns-proxy": {
+                        "route": [
+                            {
+                                "group": "svc-other",
+                                "interface": "Other0",
+                            },
+                            {
+                                "group": "svc-telegram",
+                                "interface": "Wireguard1",
+                                "auto": True,
+                                "reject": True,
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    ]
+    client, _ = _make_client(router_config, payload)
+
+    state = client.get_route_binding("svc-telegram")
+
+    assert state.object_group_name == "svc-telegram"
+    assert state.exists is True
+    assert state.route_target_type == "interface"
+    assert state.route_target_value == "Wireguard1"
+    assert state.route_interface is None
+    assert state.auto is True
+    assert state.exclusive is True
 
 
 def test_get_route_binding_parses_dict_payload_for_gateway_route(router_config) -> None:
@@ -396,7 +468,7 @@ def test_get_object_group_raises_runtime_error_for_invalid_shape(router_config) 
 
 
 def test_get_dns_proxy_status_raises_runtime_error_for_invalid_shape(router_config) -> None:
-    payload = [{"show": {"sc": {"dns-proxy": {"proxy-status": 1}}}}]
+    payload = [{"show": {"dns-proxy": {"proxy-status": 1}}}]
     client, _ = _make_client(router_config, payload)
 
     with pytest.raises(
@@ -449,7 +521,7 @@ def test_ensure_object_group_posts_single_create_command(router_config) -> None:
     assert len(opener.requests) == 1
     assert opener.timeouts == [15]
     assert json.loads(opener.requests[0].data.decode("utf-8")) == [
-        {"set": {"object-group": {"fqdn": {"svc-telegram": {}}}}}
+        {"parse": "object-group fqdn svc-telegram"}
     ]
 
 
@@ -471,21 +543,9 @@ def test_add_entries_normalizes_sorts_and_deduplicates_commands(router_config) -
 
     assert len(opener.requests) == 1
     assert json.loads(opener.requests[0].data.decode("utf-8")) == [
-        {
-            "set": {
-                "object-group": {"fqdn": {"svc-telegram": {"include": {"address": "a.example"}}}}
-            }
-        },
-        {
-            "set": {
-                "object-group": {"fqdn": {"svc-telegram": {"include": {"address": "b.example"}}}}
-            }
-        },
-        {
-            "set": {
-                "object-group": {"fqdn": {"svc-telegram": {"include": {"address": "z.example"}}}}
-            }
-        },
+        {"parse": "object-group fqdn svc-telegram include a.example"},
+        {"parse": "object-group fqdn svc-telegram include b.example"},
+        {"parse": "object-group fqdn svc-telegram include z.example"},
     ]
 
 
@@ -500,15 +560,9 @@ def test_remove_entries_batches_commands_in_fixed_chunks(router_config) -> None:
     second_batch = json.loads(opener.requests[1].data.decode("utf-8"))
     assert len(first_batch) == 200
     assert len(second_batch) == 5
-    assert first_batch[0] == {
-        "delete": {
-            "object-group": {"fqdn": {"svc-telegram": {"include": {"address": "host-000.example"}}}}
-        }
-    }
+    assert first_batch[0] == {"parse": "no object-group fqdn svc-telegram include host-000.example"}
     assert second_batch[-1] == {
-        "delete": {
-            "object-group": {"fqdn": {"svc-telegram": {"include": {"address": "host-204.example"}}}}
-        }
+        "parse": "no object-group fqdn svc-telegram include host-204.example"
     }
 
 
@@ -519,7 +573,7 @@ def test_save_config_posts_dedicated_save_command(router_config) -> None:
 
     assert len(opener.requests) == 1
     assert json.loads(opener.requests[0].data.decode("utf-8")) == [
-        {"system": {"configuration": {"save": {}}}}
+        {"parse": "system configuration save"}
     ]
 
 
@@ -539,23 +593,7 @@ def test_ensure_route_posts_single_managed_command(router_config) -> None:
 
     assert len(opener.requests) == 1
     assert json.loads(opener.requests[0].data.decode("utf-8")) == [
-        {
-            "set": {
-                "dns-proxy": {
-                    "route": {
-                        "object-group": {
-                            "svc-telegram": {
-                                "type": "gateway",
-                                "target": "10.1.111.12",
-                                "interface": "Wireguard0",
-                                "auto": True,
-                                "reject": True,
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        {"parse": "dns-proxy route object-group svc-telegram 10.1.111.12 Wireguard0 auto reject"}
     ]
 
 
@@ -579,6 +617,69 @@ def test_write_operations_wrap_http_errors_as_runtime_errors(router_config) -> N
         match=r"Router 'router-1' add_entries\(svc-telegram\) failed: authentication failed",
     ):
         client.add_entries("svc-telegram", ["a.example"])
+
+
+def test_request_retries_transient_transport_failures(router_config) -> None:
+    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
+    opener = _FlakyTransportOpener(
+        failures_before_success=2,
+        payload=[{"show": {"dns-proxy": {"proxy-status": True}}}],
+    )
+    client._opener = opener  # type: ignore[attr-defined]
+
+    status = client.get_dns_proxy_status()
+
+    assert status.enabled is True
+    assert len(opener.requests) == 3
+    assert opener.timeouts == [15, 15, 15]
+
+
+def test_request_reports_transport_failure_after_three_attempts(router_config) -> None:
+    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
+    opener = _FlakyTransportOpener(
+        failures_before_success=3,
+        payload=[{"show": {"dns-proxy": {"proxy-status": True}}}],
+    )
+    client._opener = opener  # type: ignore[attr-defined]
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"Router 'router-1' get_dns_proxy_status failed: "
+            r"transport failed after 3 attempts: temporary TLS failure"
+        ),
+    ):
+        client.get_dns_proxy_status()
+
+    assert len(opener.requests) == 3
+    assert opener.timeouts == [15, 15, 15]
+
+
+def test_write_operations_raise_runtime_error_for_rci_status_errors(router_config) -> None:
+    payload = [
+        {
+            "parse": {
+                "status": [
+                    {
+                        "status": "error",
+                        "code": "1179781",
+                        "ident": "Core::Configurator",
+                        "message": "not found: command.",
+                    }
+                ]
+            }
+        }
+    ]
+    client, _ = _make_client(router_config, payload)
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"Router 'router-1' ensure_object_group\(svc-telegram\) failed: "
+            r"Core::Configurator - 1179781 - not found: command\."
+        ),
+    ):
+        client.ensure_object_group("svc-telegram")
 
 
 @pytest.fixture
