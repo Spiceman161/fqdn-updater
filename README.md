@@ -27,6 +27,9 @@ fqdn-updater sync --config config.json
 fqdn-updater status --config config.json
 ```
 
+Для VPS deployment есть минимальный Docker Compose runtime и примеры systemd unit/timer.
+Операторский сценарий описан в `docs/USER_QUICKSTART.md`.
+
 ## Verification
 
 Единый локальный и CI verification entrypoint:
