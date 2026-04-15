@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S17",
+  "current_slice_id": "S18",
   "updated_at": "2026-04-15T00:00:00Z",
   "slices": [
     {
@@ -273,7 +273,7 @@
     {
       "id": "S18",
       "title": "Packaging And Scheduled Execution",
-      "status": "ready",
+      "status": "done",
       "goal": "Package the tool for repeatable VPS execution through Docker and systemd.",
       "summary": "Add a minimal container entrypoint and example systemd service/timer assets that run the sync command as a one-shot scheduled job, plus concise operator documentation for deployment.",
       "acceptance": [
@@ -283,7 +283,7 @@
         "Deployment documentation explains config, secrets, artifacts, and logs."
       ],
       "depends_on": ["S13", "S15"],
-      "notes": "Brings the repository up to the PRD’s intended VPS batch-job operation."
+      "notes": "Completed with green verification on 2026-04-15."
     }
   ]
 }
