@@ -40,3 +40,4 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 | S16 | done | Status And Preconditions Diagnostics | Add user-facing status diagnostics for local config checks and remote Keenetic preconditions. |
 | S17 | pending | Config Management CLI | Provide first-class CLI workflows for router and mapping management without manual JSON editing. |
 | S18 | done | Packaging And Scheduled Execution | Package the tool for repeatable VPS execution through Docker and systemd. |
+| S19 | pending | Mixed Domain And Subnet Source Groups | Allow one managed Keenetic object-group to be synchronized from mixed domain, IPv4 CIDR, and IPv6 CIDR sources. |

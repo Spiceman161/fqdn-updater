@@ -284,6 +284,25 @@
       ],
       "depends_on": ["S13", "S15"],
       "notes": "Completed with green verification on 2026-04-15."
+    },
+    {
+      "id": "S19",
+      "title": "Mixed Domain And Subnet Source Groups",
+      "status": "pending",
+      "goal": "Allow one managed Keenetic object-group to be synchronized from mixed domain, IPv4 CIDR, and IPv6 CIDR sources.",
+      "summary": "Implement variant 2 for services such as Telegram and Meta/WhatsApp: merge service domain lists with matching IPv4 and IPv6 subnet lists into a single desired entry set per service, then compare that mixed desired set against the mixed current object-group state read from Keenetic.",
+      "acceptance": [
+        "Service definitions can express mixed source groups that include domain lists, IPv4 CIDR lists, and IPv6 CIDR lists for one logical service.",
+        "Source loading produces a deterministic merged desired entry set without losing entry type information needed for validation and diagnostics.",
+        "Keenetic object-group reads classify existing entries as domains, IPv4 networks, or IPv6 networks before diffing.",
+        "Diff planning correctly compares mixed desired entries against mixed actual router entries without confusing domains, IPv4 CIDR, and IPv6 CIDR values.",
+        "Sync remains managed-only and read-before-write for mixed object-groups and does not create duplicate mappings for the same object_group_name.",
+        "Telegram and Meta/WhatsApp can be represented as single mixed object-groups using upstream Services plus Subnets/IPv4 and Subnets/IPv6 lists.",
+        "Dry-run output and JSON artifacts make mixed additions/removals auditable enough to review before apply.",
+        "./scripts/verify.sh passes with tests covering mixed source normalization, Keenetic read parsing, diff behavior, and apply planning."
+      ],
+      "depends_on": ["S7", "S8", "S10", "S13", "S14"],
+      "notes": "Requested after real-router validation showed Keenetic object-groups can hold FQDN entries and IP subnets in the same list. Do not implement as separate IPv4/IPv6 mappings unless the plan is explicitly changed; this slice is for the single mixed object-group variant."
     }
   ]
 }
