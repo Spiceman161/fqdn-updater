@@ -1,0 +1,10 @@
+[Unit]
+Description=Run FQDN-updater sync on a schedule
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+Unit=fqdn-updater.service
+
+[Install]
+WantedBy=timers.target

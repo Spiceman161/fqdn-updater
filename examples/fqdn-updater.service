@@ -1,0 +1,9 @@
+[Unit]
+Description=FQDN-updater one-shot sync
+Requires=docker.service network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fqdn-updater
+ExecStart=/usr/bin/docker compose run --rm fqdn-updater sync --config /work/config.json

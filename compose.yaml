@@ -1,0 +1,18 @@
+services:
+  fqdn-updater:
+    image: fqdn-updater:local
+    build:
+      context: .
+    env_file:
+      - path: ./.env
+        required: false
+    volumes:
+      - type: bind
+        source: ./config.json
+        target: /work/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./data:/work/data
+      - ./secrets:/run/secrets/fqdn-updater:ro
+    command: ["sync", "--config", "/work/config.json"]
