@@ -1,8 +1,8 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S16",
-  "updated_at": "2026-04-09T00:00:00Z",
+  "current_slice_id": "S17",
+  "updated_at": "2026-04-15T00:00:00Z",
   "slices": [
     {
       "id": "S0",
@@ -258,7 +258,7 @@
     {
       "id": "S17",
       "title": "Config Management CLI",
-      "status": "pending",
+      "status": "done",
       "goal": "Provide first-class CLI workflows for router and mapping management without manual JSON editing.",
       "summary": "Add focused config subcommands for listing and editing routers and mappings while preserving atomic config writes and existing schema validation.",
       "acceptance": [
@@ -268,12 +268,12 @@
         "User-facing validation errors remain actionable and deterministic."
       ],
       "depends_on": ["S13"],
-      "notes": "Improves operator UX after the core sync path exists."
+      "notes": "Completed with green local verification on 2026-04-15."
     },
     {
       "id": "S18",
       "title": "Packaging And Scheduled Execution",
-      "status": "pending",
+      "status": "ready",
       "goal": "Package the tool for repeatable VPS execution through Docker and systemd.",
       "summary": "Add a minimal container entrypoint and example systemd service/timer assets that run the sync command as a one-shot scheduled job, plus concise operator documentation for deployment.",
       "acceptance": [

@@ -13,9 +13,9 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 
 ## Current State
 
-- Current slice: `S16` — Status And Preconditions Diagnostics
-- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation; `S11` — CLI Dry-Run Entry Point; `S12` — Managed Object-Group Apply Core; `S13` — Apply Orchestration And Sync CLI; `S14` — Route Binding Read And Apply; `S15` — Run Logging And Rich Failure Artifacts; `S16` — Status And Preconditions Diagnostics
-- Next ready slice: `S17` — Config Management CLI
+- Current slice: `S17` — Config Management CLI
+- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation; `S11` — CLI Dry-Run Entry Point; `S12` — Managed Object-Group Apply Core; `S13` — Apply Orchestration And Sync CLI; `S14` — Route Binding Read And Apply; `S15` — Run Logging And Rich Failure Artifacts; `S16` — Status And Preconditions Diagnostics; `S17` — Config Management CLI
+- Next ready slice: `S18` — Packaging And Scheduled Execution
 
 ## Backlog
 

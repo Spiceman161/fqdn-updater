@@ -49,9 +49,271 @@ def test_root_help_shows_expected_commands() -> None:
     assert result.exit_code == 0
     assert "init" in result.stdout
     assert "config" in result.stdout
+    assert "router" in result.stdout
+    assert "mapping" in result.stdout
     assert "dry-run" in result.stdout
     assert "sync" in result.stdout
     assert "status" in result.stdout
+
+
+def test_router_add_writes_valid_router_and_leaves_file_unchanged_on_validation_failures(
+    tmp_path,
+) -> None:
+    config_path = tmp_path / "config.json"
+    _write_management_config(config_path)
+
+    success = runner.invoke(
+        app,
+        [
+            "router",
+            "add",
+            "--config",
+            str(config_path),
+            "--id",
+            "router-1",
+            "--name",
+            "Router 1",
+            "--rci-url",
+            "https://router-1.example/rci/",
+            "--username",
+            "api-user",
+            "--password-env",
+            "ROUTER_ONE_SECRET",
+        ],
+    )
+
+    assert success.exit_code == 0
+    assert "Router added: id=router-1" in success.stdout
+    valid_contents = config_path.read_text(encoding="utf-8")
+    valid_payload = json.loads(valid_contents)
+    assert [router["id"] for router in valid_payload["routers"]] == ["router-1"]
+    assert valid_payload["routers"][0]["auth_method"] == "digest"
+    assert valid_payload["routers"][0]["password_env"] == "ROUTER_ONE_SECRET"
+    assert valid_payload["routers"][0]["password_file"] is None
+
+    duplicate = runner.invoke(
+        app,
+        [
+            "router",
+            "add",
+            "--config",
+            str(config_path),
+            "--id",
+            "router-1",
+            "--name",
+            "Router 1 duplicate",
+            "--rci-url",
+            "https://router-1-duplicate.example/rci/",
+            "--username",
+            "api-user",
+            "--password-env",
+            "ROUTER_ONE_DUPLICATE_SECRET",
+        ],
+    )
+
+    assert duplicate.exit_code == 1
+    assert "duplicate router id 'router-1'" in duplicate.stderr
+    assert config_path.read_text(encoding="utf-8") == valid_contents
+
+    secret_validation = runner.invoke(
+        app,
+        [
+            "router",
+            "add",
+            "--config",
+            str(config_path),
+            "--id",
+            "router-2",
+            "--name",
+            "Router 2",
+            "--rci-url",
+            "https://router-2.example/rci/",
+            "--username",
+            "api-user",
+        ],
+    )
+
+    assert secret_validation.exit_code == 1
+    assert "must define exactly one of password_env or password_file" in secret_validation.stderr
+    assert config_path.read_text(encoding="utf-8") == valid_contents
+
+
+def test_router_list_outputs_are_deterministic_in_human_and_json(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    _write_management_config(config_path)
+
+    for router_id, name, secret in [
+        ("router-1", "Router 1", "ROUTER_ONE_SECRET"),
+        ("router-2", "Router 2", "ROUTER_TWO_SECRET"),
+    ]:
+        result = runner.invoke(
+            app,
+            [
+                "router",
+                "add",
+                "--config",
+                str(config_path),
+                "--id",
+                router_id,
+                "--name",
+                name,
+                "--rci-url",
+                f"https://{router_id}.example/rci/",
+                "--username",
+                "api-user",
+                "--password-env",
+                secret,
+            ],
+        )
+        assert result.exit_code == 0
+
+    human = runner.invoke(app, ["router", "list", "--config", str(config_path)])
+    json_result = runner.invoke(
+        app,
+        ["router", "list", "--config", str(config_path), "--output", "json"],
+    )
+
+    assert human.exit_code == 0
+    assert human.stdout.strip().splitlines() == [
+        "Routers: count=2",
+        "Router router-1: enabled=yes rci_url=https://router-1.example/rci/ username=api-user",
+        "Router router-2: enabled=yes rci_url=https://router-2.example/rci/ username=api-user",
+    ]
+    assert json_result.exit_code == 0
+    assert [router["id"] for router in json.loads(json_result.stdout)] == ["router-1", "router-2"]
+    assert (
+        json.loads(json_result.stdout)
+        == json.loads(config_path.read_text(encoding="utf-8"))["routers"]
+    )
+
+
+def test_router_list_works_for_readable_only_config(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    _write_management_config(
+        config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+    config_path.chmod(0o444)
+
+    result = runner.invoke(app, ["router", "list", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert "Routers: count=1" in result.stdout
+    assert (
+        "Router router-1: enabled=yes rci_url=https://router-1.example/rci/ username=api-user"
+        in result.stdout
+    )
+
+
+def test_mapping_set_appends_and_upserts_in_place_and_list_is_deterministic(
+    tmp_path,
+) -> None:
+    config_path = tmp_path / "config.json"
+    _write_management_config(
+        config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+
+    for args in [
+        [
+            "mapping",
+            "set",
+            "--config",
+            str(config_path),
+            "--router-id",
+            "router-1",
+            "--service-key",
+            "telegram",
+            "--object-group-name",
+            "svc-telegram",
+            "--route-target-type",
+            "gateway",
+            "--route-target-value",
+            "10.0.0.1",
+        ],
+        [
+            "mapping",
+            "set",
+            "--config",
+            str(config_path),
+            "--router-id",
+            "router-1",
+            "--service-key",
+            "youtube",
+            "--object-group-name",
+            "svc-youtube",
+            "--route-target-type",
+            "gateway",
+            "--route-target-value",
+            "10.0.0.3",
+            "--no-auto",
+        ],
+        [
+            "mapping",
+            "set",
+            "--config",
+            str(config_path),
+            "--router-id",
+            "router-1",
+            "--service-key",
+            "telegram",
+            "--object-group-name",
+            "svc-telegram",
+            "--route-target-type",
+            "gateway",
+            "--route-target-value",
+            "10.0.0.2",
+            "--exclusive",
+        ],
+    ]:
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert [mapping["service_key"] for mapping in payload["mappings"]] == [
+        "telegram",
+        "youtube",
+    ]
+    assert payload["mappings"][0]["route_target_value"] == "10.0.0.2"
+    assert payload["mappings"][0]["exclusive"] is True
+    assert payload["mappings"][0]["auto"] is True
+    assert payload["mappings"][1]["route_target_value"] == "10.0.0.3"
+    assert payload["mappings"][1]["auto"] is False
+
+    human = runner.invoke(app, ["mapping", "list", "--config", str(config_path)])
+    json_result = runner.invoke(
+        app,
+        ["mapping", "list", "--config", str(config_path), "--output", "json"],
+    )
+
+    assert human.exit_code == 0
+    assert human.stdout.strip().splitlines() == [
+        "Mappings: count=2",
+        "Mapping router_id=router-1 service_key=telegram object_group_name=svc-telegram "
+        "route_target_type=gateway route_target_value=10.0.0.2",
+        "Mapping router_id=router-1 service_key=youtube object_group_name=svc-youtube "
+        "route_target_type=gateway route_target_value=10.0.0.3",
+    ]
+    assert json_result.exit_code == 0
+    assert json.loads(json_result.stdout) == payload["mappings"]
 
 
 def test_init_creates_scaffold_config(tmp_path) -> None:
@@ -1016,4 +1278,36 @@ def _config() -> AppConfig:
             ],
             "runtime": {"artifacts_dir": "data/artifacts", "logs_dir": "data/logs"},
         }
+    )
+
+
+def _write_management_config(
+    path: Path,
+    *,
+    routers: list[dict[str, object]] | None = None,
+    mappings: list[dict[str, object]] | None = None,
+) -> None:
+    config = AppConfig.model_validate(
+        {
+            "routers": routers or [],
+            "services": [
+                {
+                    "key": "telegram",
+                    "source_urls": ["https://example.com/telegram.lst"],
+                    "format": "raw_domain_list",
+                    "enabled": True,
+                },
+                {
+                    "key": "youtube",
+                    "source_urls": ["https://example.com/youtube.lst"],
+                    "format": "raw_domain_list",
+                    "enabled": True,
+                },
+            ],
+            "mappings": mappings or [],
+        }
+    )
+    path.write_text(
+        json.dumps(config.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )

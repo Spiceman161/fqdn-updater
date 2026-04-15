@@ -21,6 +21,9 @@ class ConfigRepository:
         except OSError as exc:
             raise RuntimeError(f"Failed to read config file {path}: {exc}") from exc
 
+        return self.validate_payload(path=path, payload=payload)
+
+    def validate_payload(self, path: Path, payload: dict[str, Any]) -> AppConfig:
         try:
             return AppConfig.model_validate(payload)
         except ValidationError as exc:
@@ -29,6 +32,11 @@ class ConfigRepository:
     def write_new(self, path: Path, config: AppConfig) -> None:
         if path.exists():
             raise RuntimeError(f"Config file already exists: {path}")
+        self._atomic_write(path=path, payload=config.model_dump(mode="json"))
+
+    def overwrite(self, path: Path, config: AppConfig) -> None:
+        if not path.exists():
+            raise RuntimeError(f"Config file does not exist: {path}")
         self._atomic_write(path=path, payload=config.model_dump(mode="json"))
 
     def _atomic_write(self, path: Path, payload: dict[str, Any]) -> None:
