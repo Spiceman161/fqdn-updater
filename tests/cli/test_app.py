@@ -33,6 +33,7 @@ from fqdn_updater.domain.run_artifact import (
     ServiceRunResult,
 )
 from fqdn_updater.domain.source_loading import NormalizedServiceSource, SourceLoadReport
+from fqdn_updater.domain.static_route_diff import StaticRouteSpec, StaticRouteState
 from fqdn_updater.domain.status_diagnostics import (
     OverallDiagnosticStatus,
     RouterDiagnosticStatus,
@@ -281,7 +282,7 @@ def test_mapping_set_appends_and_upserts_in_place_and_list_is_deterministic(
             "gateway",
             "--route-target-value",
             "10.0.0.2",
-            "--exclusive",
+            "--no-exclusive",
         ],
     ]:
         result = runner.invoke(app, args)
@@ -293,10 +294,11 @@ def test_mapping_set_appends_and_upserts_in_place_and_list_is_deterministic(
         "youtube",
     ]
     assert payload["mappings"][0]["route_target_value"] == "10.0.0.2"
-    assert payload["mappings"][0]["exclusive"] is True
+    assert payload["mappings"][0]["exclusive"] is False
     assert payload["mappings"][0]["auto"] is True
     assert payload["mappings"][1]["route_target_value"] == "10.0.0.3"
     assert payload["mappings"][1]["auto"] is False
+    assert payload["mappings"][1]["exclusive"] is True
 
     human = runner.invoke(app, ["mapping", "list", "--config", str(config_path)])
     json_result = runner.invoke(
@@ -995,9 +997,11 @@ class RecordingClient(KeeneticClient):
         self,
         states: dict[str, ObjectGroupState],
         route_bindings: dict[str, RouteBindingState],
+        static_routes: tuple[StaticRouteState, ...] = (),
     ) -> None:
         self._states = states
         self._route_bindings = route_bindings
+        self._static_routes = static_routes
         self.read_calls: list[str] = []
         self.write_calls: list[str] = []
 
@@ -1011,6 +1015,10 @@ class RecordingClient(KeeneticClient):
             object_group_name,
             RouteBindingState(object_group_name=object_group_name, exists=False),
         )
+
+    def get_static_routes(self) -> tuple[StaticRouteState, ...]:
+        self.read_calls.append("static_routes")
+        return self._static_routes
 
     def ensure_object_group(self, name: str) -> None:
         self.write_calls.append(f"ensure_object_group:{name}")
@@ -1030,6 +1038,12 @@ class RecordingClient(KeeneticClient):
     def remove_route(self, binding: RouteBindingState) -> None:
         self.write_calls.append(f"remove_route:{binding.object_group_name}")
 
+    def ensure_static_route(self, route: StaticRouteSpec) -> None:
+        self.write_calls.append(f"ensure_static_route:{route.network}")
+
+    def remove_static_route(self, route: StaticRouteState) -> None:
+        self.write_calls.append(f"remove_static_route:{route.network}")
+
     def save_config(self) -> None:
         self.write_calls.append("save_config")
 
@@ -1042,9 +1056,11 @@ class RecordingClientFactory(KeeneticClientFactory):
         self,
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
+        static_routes: dict[str, tuple[StaticRouteState, ...]] | None = None,
     ) -> None:
         self._states = states
         self._route_bindings = route_bindings
+        self._static_routes = static_routes or {}
         self.clients: dict[str, RecordingClient] = {}
 
     def create(self, router: RouterConfig, password: str) -> KeeneticClient:
@@ -1058,7 +1074,11 @@ class RecordingClientFactory(KeeneticClientFactory):
             for (router_id, group_name), state in self._route_bindings.items()
             if router_id == router.id
         }
-        client = RecordingClient(states=router_states, route_bindings=router_route_bindings)
+        client = RecordingClient(
+            states=router_states,
+            route_bindings=router_route_bindings,
+            static_routes=self._static_routes.get(router.id, ()),
+        )
         self.clients[router.id] = client
         return client
 

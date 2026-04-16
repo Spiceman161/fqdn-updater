@@ -8,6 +8,7 @@ import pytest
 
 from fqdn_updater.domain.keenetic import RouteBindingSpec, RouteBindingState
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
+from fqdn_updater.domain.static_route_diff import StaticRouteSpec, StaticRouteState
 from fqdn_updater.infrastructure.keenetic_rci_client import (
     KeeneticRciClient,
     KeeneticRciClientFactory,
@@ -626,6 +627,118 @@ def test_save_config_posts_dedicated_save_command(router_config) -> None:
     ]
 
 
+def test_get_static_routes_parses_list_payload_with_comments(router_config) -> None:
+    payload = (
+        [
+            {
+                "show": {
+                    "sc": {
+                        "ip": {
+                            "route": [
+                                {
+                                    "network": "149.154.160.0",
+                                    "mask": "255.255.240.0",
+                                    "interface": "Wireguard0",
+                                    "auto": True,
+                                    "reject": True,
+                                    "comment": "fqdn-updater:telegram Telegram",
+                                },
+                                {
+                                    "network": "203.0.113.0",
+                                    "mask": "255.255.255.0",
+                                    "interface": "ISP",
+                                },
+                            ]
+                        }
+                    }
+                }
+            }
+        ],
+        [
+            {
+                "show": {
+                    "sc": {
+                        "ipv6": {
+                            "route": [
+                                {
+                                    "prefix": "2001:67c:4e8::/48",
+                                    "interface": "Wireguard0",
+                                    "comment": "fqdn-updater:telegram Telegram",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        ],
+    )
+    client, opener = _make_client(router_config, payload)
+
+    routes = client.get_static_routes()
+
+    assert [json.loads(request.data.decode("utf-8")) for request in opener.requests] == [
+        [{"show": {"sc": {"ip": {"route": {}}}}}],
+        [{"show": {"sc": {"ipv6": {"route": {}}}}}],
+    ]
+    assert routes == (
+        StaticRouteState(
+            network="149.154.160.0/20",
+            route_target_type="interface",
+            route_target_value="Wireguard0",
+            auto=True,
+            exclusive=True,
+            comment="fqdn-updater:telegram Telegram",
+        ),
+        StaticRouteState(
+            network="203.0.113.0/24",
+            route_target_type="interface",
+            route_target_value="ISP",
+        ),
+        StaticRouteState(
+            network="2001:67c:4e8::/48",
+            route_target_type="interface",
+            route_target_value="Wireguard0",
+            comment="fqdn-updater:telegram Telegram",
+        ),
+    )
+
+
+def test_get_static_routes_parses_config_payload_with_comments(router_config) -> None:
+    payload = (
+        [
+            {
+                "show": {
+                    "sc": {
+                        "ip": {
+                            "route": {
+                                "telegram": {
+                                    "network": "149.154.160.0",
+                                    "mask": "255.255.240.0",
+                                    "interface": "Wireguard0",
+                                    "comment": "fqdn-updater:telegram Telegram",
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ],
+        [{"show": {"sc": {"ipv6": {}}}}],
+    )
+    client, _ = _make_client(router_config, payload)
+
+    routes = client.get_static_routes()
+
+    assert routes == (
+        StaticRouteState(
+            network="149.154.160.0/20",
+            route_target_type="interface",
+            route_target_value="Wireguard0",
+            comment="fqdn-updater:telegram Telegram",
+        ),
+    )
+
+
 def test_ensure_route_posts_single_managed_command(router_config) -> None:
     client, opener = _make_client(router_config, {})
 
@@ -690,6 +803,165 @@ def test_remove_route_treats_missing_route_as_noop(router_config) -> None:
     )
 
     assert len(opener.requests) == 1
+
+
+def test_ensure_static_route_posts_structured_ipv4_payload_with_comment_and_flags(
+    router_config,
+) -> None:
+    client, opener = _make_client(router_config, {})
+
+    client.ensure_static_route(
+        StaticRouteSpec(
+            service_key="telegram",
+            network="149.154.160.0/20",
+            route_target_type="gateway",
+            route_target_value="10.1.111.12",
+            route_interface="Wireguard0",
+            auto=True,
+            exclusive=True,
+            comment="fqdn-updater:telegram Telegram",
+        )
+    )
+
+    assert len(opener.requests) == 1
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {
+            "ip": {
+                "route": {
+                    "network": "149.154.160.0",
+                    "mask": "255.255.240.0",
+                    "gateway": "10.1.111.12",
+                    "interface": "Wireguard0",
+                    "auto": True,
+                    "reject": True,
+                    "comment": "fqdn-updater:telegram Telegram",
+                }
+            }
+        }
+    ]
+
+
+def test_remove_static_route_posts_structured_ipv4_payload_without_auto_or_reject(
+    router_config,
+) -> None:
+    client, opener = _make_client(router_config, {})
+
+    client.remove_static_route(
+        StaticRouteState(
+            network="149.154.160.0/20",
+            route_target_type="gateway",
+            route_target_value="10.1.111.12",
+            route_interface="Wireguard0",
+            comment="fqdn-updater:telegram Telegram",
+        )
+    )
+
+    assert len(opener.requests) == 1
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {
+            "ip": {
+                "route": {
+                    "network": "149.154.160.0",
+                    "mask": "255.255.240.0",
+                    "gateway": "10.1.111.12",
+                    "interface": "Wireguard0",
+                    "comment": "fqdn-updater:telegram Telegram",
+                    "no": True,
+                }
+            }
+        }
+    ]
+
+
+def test_ensure_static_route_posts_structured_ipv6_payload_with_comment_and_flags(
+    router_config,
+) -> None:
+    client, opener = _make_client(router_config, {})
+
+    client.ensure_static_route(
+        StaticRouteSpec(
+            service_key="telegram",
+            network="2001:67c:4e8::/48",
+            route_target_type="interface",
+            route_target_value="Wireguard0",
+            auto=True,
+            exclusive=True,
+            comment="fqdn-updater:telegram Telegram",
+        )
+    )
+
+    assert len(opener.requests) == 1
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {
+            "ipv6": {
+                "route": {
+                    "prefix": "2001:67c:4e8::/48",
+                    "interface": "Wireguard0",
+                    "auto": True,
+                    "reject": True,
+                    "comment": "fqdn-updater:telegram Telegram",
+                }
+            }
+        }
+    ]
+
+
+def test_remove_static_route_posts_structured_ipv6_payload_with_prefix(
+    router_config,
+) -> None:
+    client, opener = _make_client(router_config, {})
+
+    client.remove_static_route(
+        StaticRouteState(
+            network="2001:67c:4e8::/48",
+            route_target_type="interface",
+            route_target_value="Wireguard0",
+            comment="fqdn-updater:telegram Telegram",
+        )
+    )
+
+    assert len(opener.requests) == 1
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {
+            "ipv6": {
+                "route": {
+                    "prefix": "2001:67c:4e8::/48",
+                    "interface": "Wireguard0",
+                    "comment": "fqdn-updater:telegram Telegram",
+                    "no": True,
+                }
+            }
+        }
+    ]
+
+
+def test_get_static_routes_refuses_malformed_managed_static_route_payloads(
+    router_config,
+) -> None:
+    payload = (
+        [
+            {
+                "show": {
+                    "sc": {
+                        "ip": {
+                            "route": {
+                                "telegram": {
+                                    "network": "149.154.160.0",
+                                    "mask": "255.255.240.0",
+                                    "comment": "fqdn-updater:telegram Telegram",
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ],
+        [{"show": {"sc": {"ipv6": {}}}}],
+    )
+    client, _ = _make_client(router_config, payload)
+
+    with pytest.raises(RuntimeError, match="managed static route is not parseable"):
+        client.get_static_routes()
 
 
 def test_write_operations_wrap_http_errors_as_runtime_errors(router_config) -> None:

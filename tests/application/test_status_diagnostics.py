@@ -10,6 +10,7 @@ from fqdn_updater.domain.keenetic import (
     RouteBindingState,
 )
 from fqdn_updater.domain.run_artifact import RunStep
+from fqdn_updater.domain.static_route_diff import StaticRouteSpec, StaticRouteState
 from fqdn_updater.domain.status_diagnostics import (
     OverallDiagnosticStatus,
     RouterDiagnosticStatus,
@@ -165,6 +166,12 @@ class RecordingClient(KeeneticClient):
     def remove_route(self, binding: RouteBindingState) -> None:
         self.write_calls.append(f"remove_route:{binding.object_group_name}")
 
+    def ensure_static_route(self, route: StaticRouteSpec) -> None:
+        self.write_calls.append(f"ensure_static_route:{route.network}")
+
+    def remove_static_route(self, route: StaticRouteState) -> None:
+        self.write_calls.append(f"remove_static_route:{route.network}")
+
     def save_config(self) -> None:
         self.write_calls.append("save_config")
 
@@ -174,6 +181,10 @@ class RecordingClient(KeeneticClient):
             raise RuntimeError(self._dns_error)
         assert self._dns_proxy_enabled is not None
         return DnsProxyStatus(enabled=self._dns_proxy_enabled)
+
+    def get_static_routes(self) -> tuple[StaticRouteState, ...]:
+        self.read_calls.append("static_routes")
+        return ()
 
 
 class RecordingClientFactory(KeeneticClientFactory):

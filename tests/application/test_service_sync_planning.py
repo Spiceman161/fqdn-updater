@@ -7,6 +7,7 @@ from fqdn_updater.domain.config_schema import RouterServiceMappingConfig
 from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.object_group_sharding import managed_shard_names
+from fqdn_updater.domain.static_route_diff import StaticRouteState
 
 
 def _mapping(*, managed: bool = True) -> RouterServiceMappingConfig:
@@ -290,11 +291,7 @@ def test_service_sync_planner_handles_mixed_typed_entries() -> None:
     planner = ServiceSyncPlanner()
     actual_state = ObjectGroupState(
         name="svc-telegram",
-        typed_entries=(
-            ObjectGroupEntry.from_domain("keep.example"),
-            ObjectGroupEntry.from_network("10.0.1.1/24"),
-            ObjectGroupEntry.from_network("2001:db8:1::1/64"),
-        ),
+        typed_entries=(ObjectGroupEntry.from_domain("keep.example"),),
         exists=True,
     )
 
@@ -310,17 +307,110 @@ def test_service_sync_planner_handles_mixed_typed_entries() -> None:
             object_group_name="svc-telegram",
             exists=False,
         ),
+        actual_static_routes=(
+            StaticRouteState(
+                network="10.0.0.0/24",
+                route_target_type="gateway",
+                route_target_value="10.0.0.1",
+                route_interface="Wireguard0",
+                auto=False,
+                exclusive=True,
+                comment="fqdn-updater:telegram",
+            ),
+            StaticRouteState(
+                network="2001:db8:1::/64",
+                route_target_type="gateway",
+                route_target_value="10.0.0.1",
+                route_interface="Wireguard0",
+                auto=False,
+                exclusive=True,
+                comment="fqdn-updater:telegram",
+            ),
+        ),
     )
 
-    assert plan.object_group_diff.to_add == ("10.0.0.0/24", "2001:db8::/64")
-    assert plan.object_group_diff.to_remove == ("10.0.1.0/24", "2001:db8:1::/64")
-    assert [(entry.kind, entry.value) for entry in plan.object_group_diff.typed_to_add] == [
-        ("ipv4_network", "10.0.0.0/24"),
-        ("ipv6_network", "2001:db8::/64"),
-    ]
-    assert [(entry.kind, entry.value) for entry in plan.object_group_diff.typed_to_remove] == [
-        ("ipv4_network", "10.0.1.0/24"),
-        ("ipv6_network", "2001:db8:1::/64"),
-    ]
+    assert plan.object_group_diff.to_add == ()
+    assert plan.object_group_diff.to_remove == ()
     assert plan.object_group_diff.typed_unchanged == (ObjectGroupEntry.from_domain("keep.example"),)
+    assert [route.network for route in plan.static_route_diff.to_add] == ["2001:db8::/64"]
+    assert [route.network for route in plan.static_route_diff.to_remove] == ["2001:db8:1::/64"]
+    assert [route.network for route in plan.static_route_diff.unchanged] == ["10.0.0.0/24"]
+    assert plan.has_changes is True
+
+
+def test_service_sync_planner_skips_route_binding_for_subnet_only_services() -> None:
+    planner = ServiceSyncPlanner()
+    actual_state = ObjectGroupState(name="svc-telegram", entries=(), exists=False)
+
+    plan = planner.plan(
+        mapping=_mapping(),
+        desired_entries=(ObjectGroupEntry.from_network("10.0.0.1/24"),),
+        actual_state=actual_state,
+        actual_route_binding=RouteBindingState(
+            object_group_name="svc-telegram",
+            exists=True,
+            route_target_type="interface",
+            route_target_value="Wireguard0",
+            auto=True,
+            exclusive=True,
+        ),
+        actual_static_routes=(),
+    )
+
+    assert plan.object_group_diff.has_changes is False
+    assert plan.desired_route_binding is None
+    assert plan.route_binding_diff.desired_binding is None
+    assert plan.remove_route is True
+    assert plan.static_route_diff.to_add[0].network == "10.0.0.0/24"
+    assert plan.has_changes is True
+
+
+def test_service_sync_planner_removes_stale_static_routes_when_subnets_disappear() -> None:
+    planner = ServiceSyncPlanner()
+    actual_state = ObjectGroupState(
+        name="svc-telegram",
+        entries=("keep.example",),
+        exists=True,
+    )
+
+    plan = planner.plan(
+        mapping=_mapping(),
+        desired_entries=("keep.example",),
+        actual_state=actual_state,
+        actual_route_binding=RouteBindingState(
+            object_group_name="svc-telegram",
+            exists=True,
+            route_target_type="gateway",
+            route_target_value="10.0.0.1",
+            route_interface="Wireguard0",
+            auto=False,
+            exclusive=True,
+        ),
+        actual_static_routes=(
+            StaticRouteState(
+                network="2001:db8:1::/64",
+                route_target_type="gateway",
+                route_target_value="10.0.0.1",
+                route_interface="Wireguard0",
+                auto=False,
+                exclusive=True,
+                comment="fqdn-updater:telegram",
+            ),
+        ),
+    )
+
+    assert plan.desired_route_binding is not None
+    assert plan.route_binding_diff.has_changes is False
+    assert plan.static_route_diff.to_remove == (
+        StaticRouteState(
+            network="2001:db8:1::/64",
+            route_target_type="gateway",
+            route_target_value="10.0.0.1",
+            route_interface="Wireguard0",
+            auto=False,
+            exclusive=True,
+            comment="fqdn-updater:telegram",
+        ),
+    )
+    assert plan.static_route_diff.to_add == ()
     assert plan.has_changes is True

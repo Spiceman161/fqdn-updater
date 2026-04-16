@@ -18,6 +18,7 @@ from fqdn_updater.domain.source_loading import (
     ServiceSourceFailure,
     SourceLoadReport,
 )
+from fqdn_updater.domain.static_route_diff import StaticRouteState
 
 
 def test_dry_run_orchestrator_builds_plans_and_artifact_deterministically() -> None:
@@ -192,7 +193,7 @@ def test_dry_run_orchestrator_skips_disabled_and_unmanaged_mappings() -> None:
                 route_target_type="interface",
                 route_target_value="Wireguard0",
                 auto=True,
-                exclusive=False,
+                exclusive=True,
             )
         },
     )
@@ -253,7 +254,7 @@ def test_dry_run_orchestrator_marks_source_failures_per_service_and_keeps_other_
                 route_target_type="interface",
                 route_target_value="Wireguard0",
                 auto=True,
-                exclusive=False,
+                exclusive=True,
             )
         },
     )
@@ -291,6 +292,82 @@ def test_dry_run_orchestrator_marks_source_failures_per_service_and_keeps_other_
     ]
     assert result.artifact.router_results[0].status is RouterResultStatus.PARTIAL
     assert result.artifact.status is RunStatus.PARTIAL
+
+
+def test_dry_run_orchestrator_tracks_mixed_service_static_routes_in_plans() -> None:
+    config = _config()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(
+                    service_key="telegram",
+                    entries=("keep.example", "10.0.0.1/24", "2001:db8::1/64"),
+                ),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={
+            ("router-1", "svc-telegram"): ObjectGroupState(
+                name="svc-telegram",
+                entries=("keep.example",),
+                exists=True,
+            )
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=True,
+            )
+        },
+        static_routes={
+            "router-1": (
+                StaticRouteState(
+                    network="10.0.0.0/24",
+                    route_target_type="interface",
+                    route_target_value="Wireguard0",
+                    auto=True,
+                    exclusive=True,
+                    comment="fqdn-updater:telegram",
+                ),
+                StaticRouteState(
+                    network="2001:db8:1::/64",
+                    route_target_type="interface",
+                    route_target_value="Wireguard0",
+                    comment="fqdn-updater:telegram",
+                ),
+            )
+        },
+    )
+    orchestrator = DryRunOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
+                datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+            ]
+        ),
+        run_id_factory=lambda: "run-001-mixed",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    assert client.read_calls[-1] == "static_routes"
+    plan = result.plans[0]
+    assert plan.object_group_diff.has_changes is False
+    assert [route.network for route in plan.static_route_diff.to_add] == ["2001:db8::/64"]
+    assert [route.network for route in plan.static_route_diff.to_remove] == ["2001:db8:1::/64"]
+    assert [route.network for route in plan.static_route_diff.unchanged] == ["10.0.0.0/24"]
+    assert result.artifact.router_results[0].service_results[0].route_changed is True
 
 
 def test_dry_run_orchestrator_marks_router_secret_failure_for_all_services() -> None:
@@ -355,7 +432,7 @@ def test_dry_run_orchestrator_marks_read_failures_partial_and_preserves_order() 
                 route_target_type="interface",
                 route_target_value="Wireguard0",
                 auto=True,
-                exclusive=False,
+                exclusive=True,
             )
         },
         errors={("router-1", "svc-youtube"): "read failed"},
@@ -480,10 +557,12 @@ class RecordingClientFactory:
         *,
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
+        static_routes: dict[str, tuple[StaticRouteState, ...]] | None = None,
         errors: dict[tuple[str, str], str] | None = None,
     ) -> None:
         self.states = states
         self.route_bindings = route_bindings
+        self.static_routes = static_routes or {}
         self.errors = errors or {}
         self.created_passwords: list[tuple[str, str]] = []
         self.clients: dict[str, RecordingClient] = {}
@@ -494,6 +573,7 @@ class RecordingClientFactory:
             router_id=router.id,
             states=self.states,
             route_bindings=self.route_bindings,
+            static_routes=self.static_routes.get(router.id, ()),
             errors=self.errors,
         )
         self.clients[router.id] = client
@@ -507,11 +587,13 @@ class RecordingClient:
         router_id: str,
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
+        static_routes: tuple[StaticRouteState, ...],
         errors: dict[tuple[str, str], str],
     ) -> None:
         self.router_id = router_id
         self.states = states
         self.route_bindings = route_bindings
+        self.static_routes = static_routes
         self.errors = errors
         self.read_calls: list[str] = []
 
@@ -531,6 +613,10 @@ class RecordingClient:
             key,
             RouteBindingState(object_group_name=object_group_name, exists=False),
         )
+
+    def get_static_routes(self) -> tuple[StaticRouteState, ...]:
+        self.read_calls.append("static_routes")
+        return self.static_routes
 
 
 class RecordingArtifactWriter:

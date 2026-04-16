@@ -18,6 +18,7 @@ from fqdn_updater.domain.source_loading import (
     ServiceSourceFailure,
     SourceLoadReport,
 )
+from fqdn_updater.domain.static_route_diff import StaticRouteSpec, StaticRouteState
 
 
 def test_sync_orchestrator_applies_changes_and_saves_once_per_router() -> None:
@@ -65,6 +66,16 @@ def test_sync_orchestrator_applies_changes_and_saves_once_per_router() -> None:
     result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
 
     client = client_factory.clients["router-1"]
+    assert client.read_calls == [
+        "svc-telegram",
+        "svc-telegram-2",
+        "svc-telegram-3",
+        "svc-telegram-4",
+        "route:svc-telegram",
+        "route:svc-telegram-2",
+        "route:svc-telegram-3",
+        "route:svc-telegram-4",
+    ]
     assert client.write_calls == [
         "ensure_object_group:svc-telegram",
         "add_entries:svc-telegram:new.example",
@@ -112,6 +123,16 @@ def test_sync_orchestrator_applies_sharded_large_service() -> None:
     result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
 
     client = client_factory.clients["router-1"]
+    assert client.read_calls == [
+        "svc-telegram",
+        "svc-telegram-2",
+        "svc-telegram-3",
+        "svc-telegram-4",
+        "route:svc-telegram",
+        "route:svc-telegram-2",
+        "route:svc-telegram-3",
+        "route:svc-telegram-4",
+    ]
     assert client.write_calls[0] == "ensure_object_group:svc-telegram"
     assert client.write_calls[1].startswith("add_entries:svc-telegram:host-000.example")
     assert "host-299.example" in client.write_calls[1]
@@ -165,7 +186,7 @@ def test_sync_orchestrator_cleans_stale_shard_route_when_service_shrinks() -> No
                 route_target_type="interface",
                 route_target_value="Wireguard0",
                 auto=True,
-                exclusive=False,
+                exclusive=True,
             ),
             ("router-1", "svc-telegram-2"): RouteBindingState(
                 object_group_name="svc-telegram-2",
@@ -173,7 +194,7 @@ def test_sync_orchestrator_cleans_stale_shard_route_when_service_shrinks() -> No
                 route_target_type="interface",
                 route_target_value="Wireguard0",
                 auto=True,
-                exclusive=False,
+                exclusive=True,
             ),
         },
     )
@@ -236,7 +257,7 @@ def test_sync_orchestrator_skips_writes_and_save_when_diff_is_empty() -> None:
                 route_target_type="interface",
                 route_target_value="Wireguard0",
                 auto=True,
-                exclusive=False,
+                exclusive=True,
             )
         },
     )
@@ -264,6 +285,86 @@ def test_sync_orchestrator_skips_writes_and_save_when_diff_is_empty() -> None:
         result.artifact.router_results[0].service_results[0].status
         is ServiceResultStatus.NO_CHANGES
     )
+
+
+def test_sync_orchestrator_applies_mixed_service_static_routes_and_saves_once() -> None:
+    config = _config()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(
+                    service_key="telegram",
+                    entries=("keep.example", "10.0.0.1/24", "2001:db8::1/64"),
+                ),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={
+            ("router-1", "svc-telegram"): ObjectGroupState(
+                name="svc-telegram",
+                entries=("keep.example",),
+                exists=True,
+            )
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=True,
+            )
+        },
+        static_routes={
+            "router-1": (
+                StaticRouteState(
+                    network="10.0.0.0/24",
+                    route_target_type="interface",
+                    route_target_value="Wireguard0",
+                    auto=True,
+                    exclusive=True,
+                    comment="fqdn-updater:telegram",
+                ),
+                StaticRouteState(
+                    network="2001:db8:1::/64",
+                    route_target_type="interface",
+                    route_target_value="Wireguard0",
+                    comment="fqdn-updater:telegram",
+                ),
+            )
+        },
+    )
+    orchestrator = SyncOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            ]
+        ),
+        run_id_factory=lambda: "run-107",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    assert client.read_calls[-1] == "static_routes"
+    assert client.write_calls == [
+        "remove_static_route:2001:db8:1::/64",
+        "ensure_static_route:2001:db8::/64",
+        "save_config",
+    ]
+    service_result = result.artifact.router_results[0].service_results[0]
+    assert service_result.status is ServiceResultStatus.UPDATED
+    assert service_result.route_changed is True
+    assert service_result.added_count == 1
+    assert service_result.removed_count == 1
 
 
 def test_sync_orchestrator_stops_current_router_after_write_failure_and_skips_remaining() -> None:
@@ -300,7 +401,7 @@ def test_sync_orchestrator_stops_current_router_after_write_failure_and_skips_re
                 route_target_type="interface",
                 route_target_value="Wireguard0",
                 auto=True,
-                exclusive=False,
+                exclusive=True,
             ),
         },
         write_errors={("router-1", "remove_entries", "svc-telegram"): "delete failed"},
@@ -370,7 +471,7 @@ def test_sync_orchestrator_continues_other_routers_after_partial_failures() -> N
                 route_target_type="interface",
                 route_target_value="Wireguard0",
                 auto=True,
-                exclusive=False,
+                exclusive=True,
             ),
             ("router-2", "svc-telegram"): RouteBindingState(
                 object_group_name="svc-telegram",
@@ -378,7 +479,7 @@ def test_sync_orchestrator_continues_other_routers_after_partial_failures() -> N
                 route_target_type="interface",
                 route_target_value="Wireguard0",
                 auto=True,
-                exclusive=False,
+                exclusive=True,
             ),
         },
     )
@@ -613,12 +714,14 @@ class RecordingClientFactory:
         *,
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
+        static_routes: dict[str, tuple[StaticRouteState, ...]] | None = None,
         read_errors: dict[tuple[str, str], str] | None = None,
         write_errors: dict[tuple[str, str, str], str] | None = None,
         save_errors: dict[str, str] | None = None,
     ) -> None:
         self.states = states
         self.route_bindings = route_bindings
+        self.static_routes = static_routes or {}
         self.read_errors = read_errors or {}
         self.write_errors = write_errors or {}
         self.save_errors = save_errors or {}
@@ -629,6 +732,7 @@ class RecordingClientFactory:
             router_id=router.id,
             states=self.states,
             route_bindings=self.route_bindings,
+            static_routes=self.static_routes.get(router.id, ()),
             read_errors=self.read_errors,
             write_errors=self.write_errors,
             save_errors=self.save_errors,
@@ -644,6 +748,7 @@ class RecordingClient:
         router_id: str,
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
+        static_routes: tuple[StaticRouteState, ...],
         read_errors: dict[tuple[str, str], str],
         write_errors: dict[tuple[str, str, str], str],
         save_errors: dict[str, str],
@@ -651,18 +756,22 @@ class RecordingClient:
         self.router_id = router_id
         self.states = states
         self.route_bindings = route_bindings
+        self.static_routes = static_routes
         self.read_errors = read_errors
         self.write_errors = write_errors
         self.save_errors = save_errors
+        self.read_calls: list[str] = []
         self.write_calls: list[str] = []
 
     def get_object_group(self, name: str) -> ObjectGroupState:
+        self.read_calls.append(name)
         key = (self.router_id, name)
         if key in self.read_errors:
             raise RuntimeError(self.read_errors[key])
         return self.states.get(key, ObjectGroupState(name=name, entries=(), exists=False))
 
     def get_route_binding(self, object_group_name: str) -> RouteBindingState:
+        self.read_calls.append(f"route:{object_group_name}")
         key = (self.router_id, object_group_name)
         if key in self.read_errors:
             raise RuntimeError(self.read_errors[key])
@@ -670,6 +779,10 @@ class RecordingClient:
             key,
             RouteBindingState(object_group_name=object_group_name, exists=False),
         )
+
+    def get_static_routes(self) -> tuple[StaticRouteState, ...]:
+        self.read_calls.append("static_routes")
+        return self.static_routes
 
     def ensure_object_group(self, name: str) -> None:
         self.write_calls.append(f"ensure_object_group:{name}")
@@ -694,6 +807,14 @@ class RecordingClient:
     def remove_route(self, binding) -> None:
         self.write_calls.append(f"remove_route:{binding.object_group_name}")
         self._raise_write_error("remove_route", binding.object_group_name)
+
+    def ensure_static_route(self, route: StaticRouteSpec) -> None:
+        self.write_calls.append(f"ensure_static_route:{route.network}")
+        self._raise_write_error("ensure_static_route", route.network)
+
+    def remove_static_route(self, route: StaticRouteState) -> None:
+        self.write_calls.append(f"remove_static_route:{route.network}")
+        self._raise_write_error("remove_static_route", route.network)
 
     def save_config(self) -> None:
         self.write_calls.append("save_config")
