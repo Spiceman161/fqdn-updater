@@ -11,5 +11,6 @@ __pycache__/
 /.env
 /.env.*
 /secrets/
+.codex/
 data/*
 !data/.gitkeep
