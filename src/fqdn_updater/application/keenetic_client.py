@@ -26,6 +26,10 @@ class KeeneticClient(ABC):
         """Ensure that an object-group exists."""
 
     @abstractmethod
+    def remove_object_group(self, name: str) -> None:
+        """Remove an object-group."""
+
+    @abstractmethod
     def add_entries(self, name: str, items: Sequence[str]) -> None:
         """Add entries to an object-group."""
 
@@ -36,6 +40,10 @@ class KeeneticClient(ABC):
     @abstractmethod
     def ensure_route(self, binding: RouteBindingSpec) -> None:
         """Ensure that a route binding matches the desired shape."""
+
+    @abstractmethod
+    def remove_route(self, binding: RouteBindingState) -> None:
+        """Remove a DNS route binding for an object-group."""
 
     @abstractmethod
     def save_config(self) -> None:

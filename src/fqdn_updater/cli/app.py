@@ -462,9 +462,12 @@ def _render_operation_human(
             lines.append(
                 f"    route_current: {_format_route_binding_state(route_diff.current_binding)}"
             )
-            lines.append(
-                f"    route_desired: {_format_route_binding_spec(route_diff.desired_binding)}"
+            route_desired = (
+                "absent"
+                if route_diff.desired_binding is None
+                else _format_route_binding_spec(route_diff.desired_binding)
             )
+            lines.append(f"    route_desired: {route_desired}")
 
     return "\n".join(lines)
 
@@ -570,8 +573,14 @@ def _serialize_service_sync_plan(plan: ServiceSyncPlan) -> dict[str, object]:
         "router_id": plan.router_id,
         "object_group_name": plan.object_group_name,
         "object_group_diff": plan.object_group_diff.model_dump(mode="json"),
-        "desired_route_binding": plan.desired_route_binding.model_dump(mode="json"),
+        "desired_route_binding": (
+            None
+            if plan.desired_route_binding is None
+            else plan.desired_route_binding.model_dump(mode="json")
+        ),
         "route_binding_diff": plan.route_binding_diff.model_dump(mode="json"),
+        "remove_route": plan.remove_route,
+        "remove_object_group": plan.remove_object_group,
         "has_changes": plan.has_changes,
     }
 

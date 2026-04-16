@@ -14,6 +14,15 @@ def test_normalize_entries_for_domains_trims_lowercases_and_sorts() -> None:
     assert normalized_entries == ("a.example.com", "b.example.com")
 
 
+def test_normalize_entries_for_domains_skips_unsupported_single_label_domains() -> None:
+    normalized_entries = normalize_entries(
+        raw_text="\n.ua\nua\ncom.\nexample.com\n",
+        source_format="raw_domain_list",
+    )
+
+    assert normalized_entries == ("example.com",)
+
+
 def test_normalize_entries_for_cidr_canonicalizes_networks() -> None:
     normalized_entries = normalize_entries(
         raw_text="10.0.0.1/24\n10.0.0.0/24\n2001:db8::1/64\n",
@@ -38,7 +47,7 @@ def test_normalize_typed_entries_for_mixed_preserves_entry_kinds() -> None:
 
 def test_normalize_entries_for_mixed_accepts_domains_and_cidrs() -> None:
     normalized_entries = normalize_entries(
-        raw_text="Example.com\n10.0.0.1/24\n",
+        raw_text="Example.com\n.ua\n10.0.0.1/24\n",
         source_format="mixed",
     )
 

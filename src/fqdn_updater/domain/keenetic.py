@@ -171,7 +171,7 @@ class RouteBindingDiff(BaseModel):
 
     object_group_name: str
     current_binding: RouteBindingState
-    desired_binding: RouteBindingSpec
+    desired_binding: RouteBindingSpec | None = None
     has_changes: bool
 
     @field_validator("object_group_name", mode="before")
@@ -183,7 +183,10 @@ class RouteBindingDiff(BaseModel):
     def _validate_object_group_match(self) -> RouteBindingDiff:
         if self.current_binding.object_group_name != self.object_group_name:
             raise ValueError("current_binding object_group_name must match object_group_name")
-        if self.desired_binding.object_group_name != self.object_group_name:
+        if (
+            self.desired_binding is not None
+            and self.desired_binding.object_group_name != self.object_group_name
+        ):
             raise ValueError("desired_binding object_group_name must match object_group_name")
         return self
 

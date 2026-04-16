@@ -6,7 +6,7 @@ from urllib import error, request
 
 import pytest
 
-from fqdn_updater.domain.keenetic import RouteBindingSpec
+from fqdn_updater.domain.keenetic import RouteBindingSpec, RouteBindingState
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.infrastructure.keenetic_rci_client import (
     KeeneticRciClient,
@@ -224,6 +224,31 @@ def test_get_object_group_parses_config_style_payload_with_single_include_object
     assert state.name == "svc-telegram"
     assert state.exists is True
     assert state.entries == ("a.example",)
+
+
+def test_get_object_group_parses_config_style_payload_with_missing_include_as_empty(
+    router_config,
+) -> None:
+    payload = [
+        {
+            "show": {
+                "sc": {
+                    "object-group": {
+                        "fqdn": {
+                            "svc-telegram": {},
+                        }
+                    }
+                }
+            }
+        }
+    ]
+    client, _ = _make_client(router_config, payload)
+
+    state = client.get_object_group("svc-telegram")
+
+    assert state.name == "svc-telegram"
+    assert state.exists is True
+    assert state.entries == ()
 
 
 def test_get_object_group_parses_config_style_payload_for_group_named_group(
@@ -538,6 +563,17 @@ def test_ensure_object_group_posts_single_create_command(router_config) -> None:
     ]
 
 
+def test_remove_object_group_posts_single_delete_command(router_config) -> None:
+    client, opener = _make_client(router_config, {})
+
+    client.remove_object_group("svc-telegram-2")
+
+    assert len(opener.requests) == 1
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {"parse": "no object-group fqdn svc-telegram-2"}
+    ]
+
+
 def test_add_entries_skips_request_for_empty_normalized_input(router_config) -> None:
     client, opener = _make_client(router_config, {})
 
@@ -608,6 +644,52 @@ def test_ensure_route_posts_single_managed_command(router_config) -> None:
     assert json.loads(opener.requests[0].data.decode("utf-8")) == [
         {"parse": "dns-proxy route object-group svc-telegram 10.1.111.12 Wireguard0 auto reject"}
     ]
+
+
+def test_remove_route_posts_single_managed_command(router_config) -> None:
+    client, opener = _make_client(router_config, {})
+
+    client.remove_route(
+        RouteBindingState(
+            object_group_name="svc-telegram-2",
+            exists=True,
+            route_target_type="interface",
+            route_target_value="Wireguard1",
+            auto=True,
+            exclusive=True,
+        )
+    )
+
+    assert len(opener.requests) == 1
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [
+        {"parse": "no dns-proxy route object-group svc-telegram-2 Wireguard1"}
+    ]
+
+
+def test_remove_route_treats_missing_route_as_noop(router_config) -> None:
+    client, opener = _make_client(
+        router_config,
+        [
+            {
+                "status": [
+                    {"status": "error", "message": 'unable to find a route to "svc-telegram-2"'}
+                ]
+            }
+        ],
+    )
+
+    client.remove_route(
+        RouteBindingState(
+            object_group_name="svc-telegram-2",
+            exists=True,
+            route_target_type="interface",
+            route_target_value="Wireguard1",
+            auto=True,
+            exclusive=True,
+        )
+    )
+
+    assert len(opener.requests) == 1
 
 
 def test_write_operations_wrap_http_errors_as_runtime_errors(router_config) -> None:

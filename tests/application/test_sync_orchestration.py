@@ -81,6 +81,134 @@ def test_sync_orchestrator_applies_changes_and_saves_once_per_router() -> None:
     assert result.artifact.router_results[0].service_results[0].removed_count == 0
 
 
+def test_sync_orchestrator_applies_sharded_large_service() -> None:
+    config = _config()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(
+                    service_key="telegram",
+                    entries=tuple(f"host-{index:03d}.example" for index in range(301)),
+                ),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(states={}, route_bindings={})
+    orchestrator = SyncOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            ]
+        ),
+        run_id_factory=lambda: "run-101-sharded",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    assert client.write_calls[0] == "ensure_object_group:svc-telegram"
+    assert client.write_calls[1].startswith("add_entries:svc-telegram:host-000.example")
+    assert "host-299.example" in client.write_calls[1]
+    assert "host-300.example" not in client.write_calls[1]
+    assert client.write_calls[2] == "ensure_route:svc-telegram"
+    assert client.write_calls[3] == "ensure_object_group:svc-telegram-2"
+    assert client.write_calls[4] == "add_entries:svc-telegram-2:host-300.example"
+    assert client.write_calls[5] == "ensure_route:svc-telegram-2"
+    assert client.write_calls[6] == "save_config"
+    assert [plan.object_group_name for plan in result.plans] == [
+        "svc-telegram",
+        "svc-telegram-2",
+    ]
+    assert [
+        service.object_group_name for service in result.artifact.router_results[0].service_results
+    ] == [
+        "svc-telegram",
+        "svc-telegram-2",
+    ]
+
+
+def test_sync_orchestrator_cleans_stale_shard_route_when_service_shrinks() -> None:
+    config = _config()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(
+                    service_key="telegram",
+                    entries=("keep.example",),
+                ),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={
+            ("router-1", "svc-telegram"): ObjectGroupState(
+                name="svc-telegram",
+                entries=("keep.example",),
+                exists=True,
+            ),
+            ("router-1", "svc-telegram-2"): ObjectGroupState(
+                name="svc-telegram-2",
+                entries=("old.example",),
+                exists=True,
+            ),
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=False,
+            ),
+            ("router-1", "svc-telegram-2"): RouteBindingState(
+                object_group_name="svc-telegram-2",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=False,
+            ),
+        },
+    )
+    orchestrator = SyncOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            ]
+        ),
+        run_id_factory=lambda: "run-101-cleanup",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    assert client.write_calls == [
+        "remove_entries:svc-telegram-2:old.example",
+        "remove_route:svc-telegram-2",
+        "remove_object_group:svc-telegram-2",
+        "save_config",
+    ]
+    service_results = result.artifact.router_results[0].service_results
+    assert [service.status for service in service_results] == [
+        ServiceResultStatus.NO_CHANGES,
+        ServiceResultStatus.UPDATED,
+    ]
+    assert service_results[1].route_changed is True
+
+
 def test_sync_orchestrator_skips_writes_and_save_when_diff_is_empty() -> None:
     config = _config()
     source_loader = StubSourceLoader(
@@ -409,6 +537,52 @@ def test_sync_orchestrator_applies_route_only_changes_and_saves() -> None:
     assert service_result.removed_count == 0
 
 
+def test_sync_orchestrator_rejects_router_total_above_keenetic_fqdn_limit_before_writes() -> None:
+    config = _config_with_four_services_one_router()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=tuple(
+                NormalizedServiceSource(
+                    service_key=f"service-{service_index}",
+                    entries=tuple(
+                        f"host-{service_index}-{entry_index:03d}.example"
+                        for entry_index in range(260)
+                    ),
+                )
+                for service_index in range(4)
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(states={}, route_bindings={})
+    orchestrator = SyncOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            ]
+        ),
+        run_id_factory=lambda: "run-107",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    router_result = result.artifact.router_results[0]
+    assert router_result.status is RouterResultStatus.FAILED
+    assert "exceeding Keenetic total FQDN section limit 1024" in (router_result.error_message or "")
+    assert [service.status for service in router_result.service_results] == [
+        ServiceResultStatus.FAILED,
+        ServiceResultStatus.FAILED,
+        ServiceResultStatus.FAILED,
+        ServiceResultStatus.FAILED,
+    ]
+    assert client_factory.clients["router-1"].write_calls == []
+
+
 class StubSourceLoader:
     def __init__(self, report: SourceLoadReport) -> None:
         self.report = report
@@ -486,17 +660,24 @@ class RecordingClient:
         key = (self.router_id, name)
         if key in self.read_errors:
             raise RuntimeError(self.read_errors[key])
-        return self.states[key]
+        return self.states.get(key, ObjectGroupState(name=name, entries=(), exists=False))
 
     def get_route_binding(self, object_group_name: str) -> RouteBindingState:
         key = (self.router_id, object_group_name)
         if key in self.read_errors:
             raise RuntimeError(self.read_errors[key])
-        return self.route_bindings[key]
+        return self.route_bindings.get(
+            key,
+            RouteBindingState(object_group_name=object_group_name, exists=False),
+        )
 
     def ensure_object_group(self, name: str) -> None:
         self.write_calls.append(f"ensure_object_group:{name}")
         self._raise_write_error("ensure_object_group", name)
+
+    def remove_object_group(self, name: str) -> None:
+        self.write_calls.append(f"remove_object_group:{name}")
+        self._raise_write_error("remove_object_group", name)
 
     def add_entries(self, name: str, items: tuple[str, ...]) -> None:
         self.write_calls.append(f"add_entries:{name}:{','.join(items)}")
@@ -509,6 +690,10 @@ class RecordingClient:
     def ensure_route(self, binding) -> None:
         self.write_calls.append(f"ensure_route:{binding.object_group_name}")
         self._raise_write_error("ensure_route", binding.object_group_name)
+
+    def remove_route(self, binding) -> None:
+        self.write_calls.append(f"remove_route:{binding.object_group_name}")
+        self._raise_write_error("remove_route", binding.object_group_name)
 
     def save_config(self) -> None:
         self.write_calls.append("save_config")
@@ -619,6 +804,43 @@ def _config_with_two_services_one_router() -> AppConfig:
                     "route_target_value": "Wireguard0",
                     "managed": True,
                 },
+            ],
+        }
+    )
+
+
+def _config_with_four_services_one_router() -> AppConfig:
+    return AppConfig.model_validate(
+        {
+            "routers": [
+                {
+                    "id": "router-1",
+                    "name": "Router 1",
+                    "rci_url": "https://router-1.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_ONE_PASSWORD",
+                    "enabled": True,
+                },
+            ],
+            "services": [
+                {
+                    "key": f"service-{index}",
+                    "source_urls": [f"https://example.com/service-{index}.lst"],
+                    "format": "raw_domain_list",
+                    "enabled": True,
+                }
+                for index in range(4)
+            ],
+            "mappings": [
+                {
+                    "router_id": "router-1",
+                    "service_key": f"service-{index}",
+                    "object_group_name": f"svc-service-{index}",
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard0",
+                    "managed": True,
+                }
+                for index in range(4)
             ],
         }
     )

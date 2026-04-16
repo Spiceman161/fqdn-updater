@@ -47,9 +47,11 @@ class RunStep(StrEnum):
     READ_DNS_PROXY_STATUS = "read_dns_proxy_status"
     PLAN_SERVICE = "plan_service"
     ENSURE_OBJECT_GROUP = "ensure_object_group"
+    REMOVE_OBJECT_GROUP = "remove_object_group"
     REMOVE_ENTRIES = "remove_entries"
     ADD_ENTRIES = "add_entries"
     ENSURE_ROUTE = "ensure_route"
+    REMOVE_ROUTE = "remove_route"
     SAVE_CONFIG = "save_config"
 
 

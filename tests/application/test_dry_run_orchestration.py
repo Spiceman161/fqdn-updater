@@ -69,7 +69,13 @@ def test_dry_run_orchestrator_builds_plans_and_artifact_deterministically() -> N
     assert client_factory.created_passwords == [("router-1", "secret-1")]
     assert client_factory.clients["router-1"].read_calls == [
         "svc-telegram",
+        "svc-telegram-2",
+        "svc-telegram-3",
+        "svc-telegram-4",
         "route:svc-telegram",
+        "route:svc-telegram-2",
+        "route:svc-telegram-3",
+        "route:svc-telegram-4",
     ]
     assert artifact_writer.last_path == Path("data/artifacts/run-001.json")
     assert result.artifact_path == Path("data/artifacts/run-001.json")
@@ -275,7 +281,13 @@ def test_dry_run_orchestrator_marks_source_failures_per_service_and_keeps_other_
     assert "timeout" in service_results[1].error_message
     assert client_factory.clients["router-1"].read_calls == [
         "svc-telegram",
+        "svc-telegram-2",
+        "svc-telegram-3",
+        "svc-telegram-4",
         "route:svc-telegram",
+        "route:svc-telegram-2",
+        "route:svc-telegram-3",
+        "route:svc-telegram-4",
     ]
     assert result.artifact.router_results[0].status is RouterResultStatus.PARTIAL
     assert result.artifact.status is RunStatus.PARTIAL
@@ -508,14 +520,17 @@ class RecordingClient:
         key = (self.router_id, name)
         if key in self.errors:
             raise RuntimeError(self.errors[key])
-        return self.states[key]
+        return self.states.get(key, ObjectGroupState(name=name, entries=(), exists=False))
 
     def get_route_binding(self, object_group_name: str) -> RouteBindingState:
         self.read_calls.append(f"route:{object_group_name}")
         key = (self.router_id, object_group_name)
         if key in self.errors:
             raise RuntimeError(self.errors[key])
-        return self.route_bindings[key]
+        return self.route_bindings.get(
+            key,
+            RouteBindingState(object_group_name=object_group_name, exists=False),
+        )
 
 
 class RecordingArtifactWriter:

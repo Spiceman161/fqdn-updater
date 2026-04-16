@@ -16,10 +16,13 @@ from fqdn_updater.application.run_support import (
     build_failure_detail,
     eligible_mappings,
     group_source_failures,
+    validate_router_desired_fqdn_total,
 )
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
+from fqdn_updater.domain.object_group_sharding import managed_shard_names
 from fqdn_updater.domain.run_artifact import (
     FailureDetail,
     RouterResultStatus,
@@ -192,6 +195,23 @@ class DryRunOrchestrator:
                 message=str(exc),
             )
 
+        try:
+            validate_router_desired_fqdn_total(
+                router_id=router.id,
+                mappings=mappings,
+                desired_entries_by_service=desired_entries_by_service,
+                source_failures_by_service=source_failures_by_service,
+            )
+        except Exception as exc:
+            return self._failed_router_result(
+                logger=logger,
+                router=router,
+                mappings=mappings,
+                plans=plans,
+                step=RunStep.PLAN_SERVICE,
+                message=str(exc),
+            )
+
         for mapping in mappings:
             failure_message = source_failures_by_service.get(mapping.service_key)
             if failure_message is not None:
@@ -217,32 +237,32 @@ class DryRunOrchestrator:
                 )
                 continue
 
-            actual_state = self._read_object_group(
+            actual_states = self._read_object_group_shards(
                 logger=logger,
                 client=client,
                 router=router,
                 mapping=mapping,
                 service_results=service_results,
             )
-            if actual_state is None:
+            if actual_states is None:
                 continue
 
-            actual_route_binding = self._read_route_binding(
+            actual_route_bindings = self._read_route_binding_shards(
                 logger=logger,
                 client=client,
                 router=router,
                 mapping=mapping,
                 service_results=service_results,
             )
-            if actual_route_binding is None:
+            if actual_route_bindings is None:
                 continue
 
             try:
-                plan = self._planner.plan(
+                mapping_plans = self._planner.plan_mapping(
                     mapping=mapping,
                     desired_entries=desired_entries,
-                    actual_state=actual_state,
-                    actual_route_binding=actual_route_binding,
+                    actual_states=actual_states,
+                    actual_route_bindings=actual_route_bindings,
                 )
             except Exception as exc:
                 self._append_service_failure(
@@ -255,21 +275,22 @@ class DryRunOrchestrator:
                 )
                 continue
 
-            plans.append(plan)
-            service_result = _build_service_result_from_plan(plan=plan)
-            service_results.append(service_result)
-            logger.event(
-                "service_planned",
-                router_id=router.id,
-                service_key=mapping.service_key,
-                object_group_name=mapping.object_group_name,
-                status=service_result.status.value,
-                message=(
-                    f"added={service_result.added_count} "
-                    f"removed={service_result.removed_count} "
-                    f"route_changed={str(service_result.route_changed).lower()}"
-                ),
-            )
+            plans.extend(mapping_plans)
+            for plan in mapping_plans:
+                service_result = _build_service_result_from_plan(plan=plan)
+                service_results.append(service_result)
+                logger.event(
+                    "service_planned",
+                    router_id=router.id,
+                    service_key=mapping.service_key,
+                    object_group_name=plan.object_group_name,
+                    status=service_result.status.value,
+                    message=(
+                        f"added={service_result.added_count} "
+                        f"removed={service_result.removed_count} "
+                        f"route_changed={str(service_result.route_changed).lower()}"
+                    ),
+                )
 
         router_status = aggregate_router_status(service_results)
         logger.event("router_finished", router_id=router.id, status=router_status.value)
@@ -317,7 +338,7 @@ class DryRunOrchestrator:
             plans,
         )
 
-    def _read_object_group(
+    def _read_object_group_shards(
         self,
         *,
         logger: RunLogger,
@@ -325,21 +346,25 @@ class DryRunOrchestrator:
         router: RouterConfig,
         mapping: RouterServiceMappingConfig,
         service_results: list[ServiceRunResult],
-    ):
-        try:
-            return client.get_object_group(mapping.object_group_name)
-        except Exception as exc:
-            self._append_service_failure(
-                logger=logger,
-                router=router,
-                mapping=mapping,
-                step=RunStep.READ_OBJECT_GROUP,
-                message=str(exc),
-                service_results=service_results,
-            )
-            return None
+    ) -> dict[str, ObjectGroupState] | None:
+        actual_states: dict[str, ObjectGroupState] = {}
+        for object_group_name in managed_shard_names(mapping.object_group_name):
+            try:
+                actual_states[object_group_name] = client.get_object_group(object_group_name)
+            except Exception as exc:
+                self._append_service_failure(
+                    logger=logger,
+                    router=router,
+                    mapping=mapping,
+                    step=RunStep.READ_OBJECT_GROUP,
+                    message=str(exc),
+                    service_results=service_results,
+                    object_group_name=object_group_name,
+                )
+                return None
+        return actual_states
 
-    def _read_route_binding(
+    def _read_route_binding_shards(
         self,
         *,
         logger: RunLogger,
@@ -347,19 +372,25 @@ class DryRunOrchestrator:
         router: RouterConfig,
         mapping: RouterServiceMappingConfig,
         service_results: list[ServiceRunResult],
-    ):
-        try:
-            return client.get_route_binding(mapping.object_group_name)
-        except Exception as exc:
-            self._append_service_failure(
-                logger=logger,
-                router=router,
-                mapping=mapping,
-                step=RunStep.READ_ROUTE_BINDING,
-                message=str(exc),
-                service_results=service_results,
-            )
-            return None
+    ) -> dict[str, RouteBindingState] | None:
+        actual_route_bindings: dict[str, RouteBindingState] = {}
+        for object_group_name in managed_shard_names(mapping.object_group_name):
+            try:
+                actual_route_bindings[object_group_name] = client.get_route_binding(
+                    object_group_name
+                )
+            except Exception as exc:
+                self._append_service_failure(
+                    logger=logger,
+                    router=router,
+                    mapping=mapping,
+                    step=RunStep.READ_ROUTE_BINDING,
+                    message=str(exc),
+                    service_results=service_results,
+                    object_group_name=object_group_name,
+                )
+                return None
+        return actual_route_bindings
 
     def _append_service_failure(
         self,
@@ -370,12 +401,14 @@ class DryRunOrchestrator:
         step: RunStep,
         message: str,
         service_results: list[ServiceRunResult],
+        object_group_name: str | None = None,
     ) -> None:
         failure_detail = self._failure_detail(step=step, message=message)
         service_results.append(
             build_failed_service_result(
                 mapping=mapping,
                 failure_detail=failure_detail,
+                object_group_name=object_group_name,
             )
         )
         logger.event(
@@ -383,7 +416,7 @@ class DryRunOrchestrator:
             step=step,
             router_id=router.id,
             service_key=mapping.service_key,
-            object_group_name=mapping.object_group_name,
+            object_group_name=object_group_name or mapping.object_group_name,
             status="failed",
             message=message,
         )

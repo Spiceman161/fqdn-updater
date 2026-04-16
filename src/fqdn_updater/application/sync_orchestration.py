@@ -16,10 +16,13 @@ from fqdn_updater.application.run_support import (
     build_failure_detail,
     eligible_mappings,
     group_source_failures,
+    validate_router_desired_fqdn_total,
 )
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
+from fqdn_updater.domain.object_group_sharding import managed_shard_names
 from fqdn_updater.domain.run_artifact import (
     FailureDetail,
     RouterRunResult,
@@ -192,6 +195,23 @@ class SyncOrchestrator:
                 message=str(exc),
             )
 
+        try:
+            validate_router_desired_fqdn_total(
+                router_id=router.id,
+                mappings=mappings,
+                desired_entries_by_service=desired_entries_by_service,
+                source_failures_by_service=source_failures_by_service,
+            )
+        except Exception as exc:
+            return self._failed_router_result(
+                logger=logger,
+                router=router,
+                mappings=mappings,
+                plans=plans,
+                step=RunStep.PLAN_SERVICE,
+                message=str(exc),
+            )
+
         router_failure_detail: FailureDetail | None = None
 
         for index, mapping in enumerate(mappings):
@@ -236,38 +256,32 @@ class SyncOrchestrator:
                 )
                 continue
 
-            try:
-                actual_state = client.get_object_group(mapping.object_group_name)
-            except Exception as exc:
-                self._append_service_failure(
-                    logger=logger,
-                    router=router,
-                    mapping=mapping,
-                    step=RunStep.READ_OBJECT_GROUP,
-                    message=str(exc),
-                    service_results=service_results,
-                )
+            actual_states = self._read_object_group_shards(
+                logger=logger,
+                client=client,
+                router=router,
+                mapping=mapping,
+                service_results=service_results,
+            )
+            if actual_states is None:
+                continue
+
+            actual_route_bindings = self._read_route_binding_shards(
+                logger=logger,
+                client=client,
+                router=router,
+                mapping=mapping,
+                service_results=service_results,
+            )
+            if actual_route_bindings is None:
                 continue
 
             try:
-                actual_route_binding = client.get_route_binding(mapping.object_group_name)
-            except Exception as exc:
-                self._append_service_failure(
-                    logger=logger,
-                    router=router,
-                    mapping=mapping,
-                    step=RunStep.READ_ROUTE_BINDING,
-                    message=str(exc),
-                    service_results=service_results,
-                )
-                continue
-
-            try:
-                plan = self._planner.plan(
+                mapping_plans = self._planner.plan_mapping(
                     mapping=mapping,
                     desired_entries=desired_entries,
-                    actual_state=actual_state,
-                    actual_route_binding=actual_route_binding,
+                    actual_states=actual_states,
+                    actual_route_bindings=actual_route_bindings,
                 )
             except Exception as exc:
                 self._append_service_failure(
@@ -280,75 +294,80 @@ class SyncOrchestrator:
                 )
                 continue
 
-            plans.append(plan)
-            if not plan.has_changes:
-                service_result = _build_no_changes_service_result(plan=plan)
-                service_results.append(service_result)
-                logger.event(
-                    "service_planned",
-                    router_id=router.id,
-                    service_key=mapping.service_key,
-                    object_group_name=mapping.object_group_name,
-                    status=service_result.status.value,
-                    message="no changes",
-                )
-                continue
-
-            router_failure_detail = self._apply_plan(
-                logger=logger,
-                client=client,
-                router=router,
-                mapping=mapping,
-                plan=plan,
-            )
-            if router_failure_detail is not None:
-                service_results.append(
-                    build_failed_service_result(
-                        mapping=mapping,
-                        failure_detail=router_failure_detail,
-                    )
-                )
-                logger.event(
-                    "service_failed",
-                    step=router_failure_detail.step,
-                    router_id=router.id,
-                    service_key=mapping.service_key,
-                    object_group_name=mapping.object_group_name,
-                    status="failed",
-                    message=router_failure_detail.message,
-                )
-                for remaining_mapping in mappings[index + 1 :]:
-                    skipped_result = _build_skipped_service_result(
-                        mapping=remaining_mapping,
-                        failure_detail=router_failure_detail,
-                    )
-                    service_results.append(skipped_result)
+            plans.extend(mapping_plans)
+            for plan in mapping_plans:
+                if not plan.has_changes:
+                    service_result = _build_no_changes_service_result(plan=plan)
+                    service_results.append(service_result)
                     logger.event(
-                        "service_skipped",
+                        "service_planned",
+                        router_id=router.id,
+                        service_key=mapping.service_key,
+                        object_group_name=plan.object_group_name,
+                        status=service_result.status.value,
+                        message="no changes",
+                    )
+                    continue
+
+                router_failure_detail = self._apply_plan(
+                    logger=logger,
+                    client=client,
+                    router=router,
+                    mapping=mapping,
+                    plan=plan,
+                )
+                if router_failure_detail is not None:
+                    service_results.append(
+                        build_failed_service_result(
+                            mapping=mapping,
+                            failure_detail=router_failure_detail,
+                            object_group_name=plan.object_group_name,
+                        )
+                    )
+                    logger.event(
+                        "service_failed",
                         step=router_failure_detail.step,
                         router_id=router.id,
-                        service_key=remaining_mapping.service_key,
-                        object_group_name=remaining_mapping.object_group_name,
-                        status=skipped_result.status.value,
-                        message=skipped_result.error_message,
+                        service_key=mapping.service_key,
+                        object_group_name=plan.object_group_name,
+                        status="failed",
+                        message=router_failure_detail.message,
                     )
-                break
+                    for remaining_mapping in mappings[index + 1 :]:
+                        skipped_result = _build_skipped_service_result(
+                            mapping=remaining_mapping,
+                            failure_detail=router_failure_detail,
+                        )
+                        service_results.append(skipped_result)
+                        logger.event(
+                            "service_skipped",
+                            step=router_failure_detail.step,
+                            router_id=router.id,
+                            service_key=remaining_mapping.service_key,
+                            object_group_name=remaining_mapping.object_group_name,
+                            status=skipped_result.status.value,
+                            message=skipped_result.error_message,
+                        )
+                    break
 
-            changed_service_indexes.append(len(service_results))
-            service_result = _build_updated_service_result(plan=plan)
-            service_results.append(service_result)
-            logger.event(
-                "service_applied",
-                router_id=router.id,
-                service_key=mapping.service_key,
-                object_group_name=mapping.object_group_name,
-                status=service_result.status.value,
-                message=(
-                    f"added={service_result.added_count} "
-                    f"removed={service_result.removed_count} "
-                    f"route_changed={str(service_result.route_changed).lower()}"
-                ),
-            )
+                changed_service_indexes.append(len(service_results))
+                service_result = _build_updated_service_result(plan=plan)
+                service_results.append(service_result)
+                logger.event(
+                    "service_applied",
+                    router_id=router.id,
+                    service_key=mapping.service_key,
+                    object_group_name=plan.object_group_name,
+                    status=service_result.status.value,
+                    message=(
+                        f"added={service_result.added_count} "
+                        f"removed={service_result.removed_count} "
+                        f"route_changed={str(service_result.route_changed).lower()}"
+                    ),
+                )
+
+            if router_failure_detail is not None:
+                break
 
         router_error_message: str | None = (
             router_failure_detail.message if router_failure_detail else None
@@ -400,6 +419,60 @@ class SyncOrchestrator:
             plans,
         )
 
+    def _read_object_group_shards(
+        self,
+        *,
+        logger: RunLogger,
+        client: KeeneticClient,
+        router: RouterConfig,
+        mapping: RouterServiceMappingConfig,
+        service_results: list[ServiceRunResult],
+    ) -> dict[str, ObjectGroupState] | None:
+        actual_states: dict[str, ObjectGroupState] = {}
+        for object_group_name in managed_shard_names(mapping.object_group_name):
+            try:
+                actual_states[object_group_name] = client.get_object_group(object_group_name)
+            except Exception as exc:
+                self._append_service_failure(
+                    logger=logger,
+                    router=router,
+                    mapping=mapping,
+                    step=RunStep.READ_OBJECT_GROUP,
+                    message=str(exc),
+                    service_results=service_results,
+                    object_group_name=object_group_name,
+                )
+                return None
+        return actual_states
+
+    def _read_route_binding_shards(
+        self,
+        *,
+        logger: RunLogger,
+        client: KeeneticClient,
+        router: RouterConfig,
+        mapping: RouterServiceMappingConfig,
+        service_results: list[ServiceRunResult],
+    ) -> dict[str, RouteBindingState] | None:
+        actual_route_bindings: dict[str, RouteBindingState] = {}
+        for object_group_name in managed_shard_names(mapping.object_group_name):
+            try:
+                actual_route_bindings[object_group_name] = client.get_route_binding(
+                    object_group_name
+                )
+            except Exception as exc:
+                self._append_service_failure(
+                    logger=logger,
+                    router=router,
+                    mapping=mapping,
+                    step=RunStep.READ_ROUTE_BINDING,
+                    message=str(exc),
+                    service_results=service_results,
+                    object_group_name=object_group_name,
+                )
+                return None
+        return actual_route_bindings
+
     def _failed_router_result(
         self,
         *,
@@ -445,12 +518,14 @@ class SyncOrchestrator:
         step: RunStep,
         message: str,
         service_results: list[ServiceRunResult],
+        object_group_name: str | None = None,
     ) -> None:
         failure_detail = self._failure_detail(step=step, message=message)
         service_results.append(
             build_failed_service_result(
                 mapping=mapping,
                 failure_detail=failure_detail,
+                object_group_name=object_group_name,
             )
         )
         logger.event(
@@ -458,7 +533,7 @@ class SyncOrchestrator:
             step=step,
             router_id=router.id,
             service_key=mapping.service_key,
-            object_group_name=mapping.object_group_name,
+            object_group_name=object_group_name or mapping.object_group_name,
             status="failed",
             message=message,
         )
@@ -507,10 +582,23 @@ class SyncOrchestrator:
 
         if route_diff.has_changes:
             try:
-                client.ensure_route(plan.desired_route_binding)
+                if plan.remove_route:
+                    client.remove_route(route_diff.current_binding)
+                elif plan.desired_route_binding is not None:
+                    client.ensure_route(plan.desired_route_binding)
             except Exception as exc:
                 return self._write_failure(
-                    step=RunStep.ENSURE_ROUTE,
+                    step=RunStep.REMOVE_ROUTE if plan.remove_route else RunStep.ENSURE_ROUTE,
+                    mapping=mapping,
+                    exc=exc,
+                )
+
+        if plan.remove_object_group:
+            try:
+                client.remove_object_group(plan.object_group_name)
+            except Exception as exc:
+                return self._write_failure(
+                    step=RunStep.REMOVE_OBJECT_GROUP,
                     mapping=mapping,
                     exc=exc,
                 )
@@ -519,7 +607,7 @@ class SyncOrchestrator:
             "service_write_completed",
             router_id=router.id,
             service_key=mapping.service_key,
-            object_group_name=mapping.object_group_name,
+            object_group_name=plan.object_group_name,
             status="applied",
         )
         return None

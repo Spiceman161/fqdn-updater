@@ -31,18 +31,21 @@ def normalize_typed_entries(
         if not stripped_line or stripped_line.startswith("#"):
             continue
 
-        normalized_entries.add(
-            _normalize_entry(
-                entry=stripped_line,
-                source_format=source_format,
-                line_number=line_number,
-            )
+        normalized_entry = _normalize_entry(
+            entry=stripped_line,
+            source_format=source_format,
+            line_number=line_number,
         )
+        if normalized_entry is None:
+            continue
+        normalized_entries.add(normalized_entry)
 
     return sort_object_group_entries(normalized_entries)
 
 
-def _normalize_entry(entry: str, source_format: SourceFormat, line_number: int) -> ObjectGroupEntry:
+def _normalize_entry(
+    entry: str, source_format: SourceFormat, line_number: int
+) -> ObjectGroupEntry | None:
     if source_format == "raw_domain_list":
         return _normalize_domain(entry=entry, line_number=line_number)
     if source_format == "raw_cidr_list":
@@ -50,7 +53,7 @@ def _normalize_entry(entry: str, source_format: SourceFormat, line_number: int) 
     return _normalize_mixed_entry(entry=entry, line_number=line_number)
 
 
-def _normalize_mixed_entry(entry: str, line_number: int) -> ObjectGroupEntry:
+def _normalize_mixed_entry(entry: str, line_number: int) -> ObjectGroupEntry | None:
     try:
         return _normalize_network(entry=entry, line_number=line_number)
     except ValueError:
@@ -65,8 +68,26 @@ def _normalize_network(entry: str, line_number: int) -> ObjectGroupEntry:
     return ObjectGroupEntry.from_network(str(network))
 
 
-def _normalize_domain(entry: str, line_number: int) -> ObjectGroupEntry:
+def _normalize_domain(entry: str, line_number: int) -> ObjectGroupEntry | None:
+    if _is_unsupported_single_label_domain(entry):
+        return None
     try:
         return ObjectGroupEntry.from_domain(canonicalize_domain(entry))
     except ValueError as exc:
         raise ValueError(f"line {line_number}: {exc}") from exc
+
+
+def _is_unsupported_single_label_domain(entry: str) -> bool:
+    normalized_entry = entry.strip().lower()
+    if "/" in normalized_entry or any(character.isspace() for character in normalized_entry):
+        return False
+
+    normalized_entry = normalized_entry.strip(".")
+    if not normalized_entry or "." in normalized_entry:
+        return False
+
+    try:
+        canonicalize_domain(f"{normalized_entry}.example")
+    except ValueError:
+        return False
+    return True

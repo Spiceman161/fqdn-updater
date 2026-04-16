@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+from fqdn_updater.domain.object_group_sharding import managed_shard_names
 from fqdn_updater.domain.source_normalizer import SourceFormat
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -257,16 +258,17 @@ class AppConfig(BaseModel):
                 mapping_pairs[mapping_pair] = index
 
             if mapping.managed:
-                managed_object_group = (mapping.router_id, mapping.object_group_name)
-                previous_group_index = managed_object_groups.get(managed_object_group)
-                if previous_group_index is not None:
-                    errors.append(
-                        f"mappings[{index}] reuses managed object_group_name "
-                        f"'{mapping.object_group_name}' already defined in "
-                        f"mappings[{previous_group_index}] for router '{mapping.router_id}'"
-                    )
-                else:
-                    managed_object_groups[managed_object_group] = index
+                for object_group_name in managed_shard_names(mapping.object_group_name):
+                    managed_object_group = (mapping.router_id, object_group_name)
+                    previous_group_index = managed_object_groups.get(managed_object_group)
+                    if previous_group_index is not None:
+                        errors.append(
+                            f"mappings[{index}] reuses managed object_group_name "
+                            f"'{object_group_name}' already reserved by "
+                            f"mappings[{previous_group_index}] for router '{mapping.router_id}'"
+                        )
+                    else:
+                        managed_object_groups[managed_object_group] = index
 
         if errors:
             raise ValueError("; ".join(errors))

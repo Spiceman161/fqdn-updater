@@ -150,6 +150,9 @@ class RecordingClient(KeeneticClient):
     def ensure_object_group(self, name: str) -> None:
         self.write_calls.append(f"ensure_object_group:{name}")
 
+    def remove_object_group(self, name: str) -> None:
+        self.write_calls.append(f"remove_object_group:{name}")
+
     def add_entries(self, name: str, items) -> None:
         self.write_calls.append(f"add_entries:{name}")
 
@@ -158,6 +161,9 @@ class RecordingClient(KeeneticClient):
 
     def ensure_route(self, binding: RouteBindingSpec) -> None:
         self.write_calls.append(f"ensure_route:{binding.object_group_name}")
+
+    def remove_route(self, binding: RouteBindingState) -> None:
+        self.write_calls.append(f"remove_route:{binding.object_group_name}")
 
     def save_config(self) -> None:
         self.write_calls.append("save_config")

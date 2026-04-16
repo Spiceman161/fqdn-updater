@@ -4,6 +4,8 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from fqdn_updater.domain.config_schema import AppConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.keenetic_limits import validate_total_fqdn_entry_count
+from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.run_artifact import (
     FailureDetail,
     RouterResultStatus,
@@ -39,14 +41,34 @@ def group_source_failures(report: SourceLoadReport) -> dict[str, str]:
     }
 
 
+def validate_router_desired_fqdn_total(
+    *,
+    router_id: str,
+    mappings: Sequence[RouterServiceMappingConfig],
+    desired_entries_by_service: dict[str, tuple[ObjectGroupEntry, ...]],
+    source_failures_by_service: dict[str, str],
+) -> None:
+    total_entry_count = 0
+    for mapping in mappings:
+        if mapping.service_key in source_failures_by_service:
+            continue
+        desired_entries = desired_entries_by_service.get(mapping.service_key)
+        if desired_entries is None:
+            continue
+        total_entry_count += len(desired_entries)
+
+    validate_total_fqdn_entry_count(router_id=router_id, entry_count=total_entry_count)
+
+
 def build_failed_service_result(
     *,
     mapping: RouterServiceMappingConfig,
     failure_detail: FailureDetail,
+    object_group_name: str | None = None,
 ) -> ServiceRunResult:
     return ServiceRunResult(
         service_key=mapping.service_key,
-        object_group_name=mapping.object_group_name,
+        object_group_name=object_group_name or mapping.object_group_name,
         status=ServiceResultStatus.FAILED,
         error_message=failure_detail.message,
         failure_detail=failure_detail,

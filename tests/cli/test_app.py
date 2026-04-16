@@ -327,19 +327,28 @@ def test_init_creates_scaffold_config(tmp_path) -> None:
     assert payload["routers"] == []
     assert [service["key"] for service in payload["services"]] == [
         "news",
+        "cloudflare",
+        "cloudfront",
+        "digitalocean",
+        "discord",
+        "google_ai",
+        "google_meet",
+        "google_play",
         "hdrezka",
+        "hetzner",
         "meta",
+        "ovh",
+        "roblox",
+        "telegram",
         "tiktok",
         "twitter",
         "youtube",
-        "discord",
-        "cloudflare",
-        "telegram",
-        "google_meet",
-        "google_ai",
     ]
-    assert payload["services"][-1]["source_urls"] == [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/google_ai.lst"
+    assert payload["services"][-1]["sources"] == [
+        {
+            "format": "raw_domain_list",
+            "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/youtube.lst",
+        }
     ]
     assert payload["mappings"] == []
 
@@ -527,6 +536,8 @@ def test_dry_run_returns_thirty_for_changes_and_json_output(monkeypatch) -> None
                 "unchanged": ["keep.example"],
             },
             "object_group_name": "svc-telegram",
+            "remove_object_group": False,
+            "remove_route": False,
             "router_id": "router-1",
             "route_binding_diff": {
                 "current_binding": {
@@ -917,7 +928,13 @@ def test_dry_run_never_calls_write_methods(monkeypatch, tmp_path) -> None:
     assert artifact_writer.last_artifact is not None
     assert client_factory.clients["router-1"].read_calls == [
         "svc-telegram",
+        "svc-telegram-2",
+        "svc-telegram-3",
+        "svc-telegram-4",
         "route:svc-telegram",
+        "route:svc-telegram-2",
+        "route:svc-telegram-3",
+        "route:svc-telegram-4",
     ]
     assert client_factory.clients["router-1"].write_calls == []
 
@@ -986,14 +1003,20 @@ class RecordingClient(KeeneticClient):
 
     def get_object_group(self, name: str) -> ObjectGroupState:
         self.read_calls.append(name)
-        return self._states[name]
+        return self._states.get(name, ObjectGroupState(name=name, entries=(), exists=False))
 
     def get_route_binding(self, object_group_name: str) -> RouteBindingState:
         self.read_calls.append(f"route:{object_group_name}")
-        return self._route_bindings[object_group_name]
+        return self._route_bindings.get(
+            object_group_name,
+            RouteBindingState(object_group_name=object_group_name, exists=False),
+        )
 
     def ensure_object_group(self, name: str) -> None:
         self.write_calls.append(f"ensure_object_group:{name}")
+
+    def remove_object_group(self, name: str) -> None:
+        self.write_calls.append(f"remove_object_group:{name}")
 
     def add_entries(self, name: str, items: object) -> None:
         self.write_calls.append(f"add_entries:{name}")
@@ -1003,6 +1026,9 @@ class RecordingClient(KeeneticClient):
 
     def ensure_route(self, binding: RouteBindingSpec) -> None:
         self.write_calls.append(f"ensure_route:{binding.object_group_name}")
+
+    def remove_route(self, binding: RouteBindingState) -> None:
+        self.write_calls.append(f"remove_route:{binding.object_group_name}")
 
     def save_config(self) -> None:
         self.write_calls.append("save_config")

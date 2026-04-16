@@ -102,6 +102,13 @@ class KeeneticRciClient(KeeneticClient):
             commands=[self._build_ensure_object_group_command(normalized_name)],
         )
 
+    def remove_object_group(self, name: str) -> None:
+        normalized_name = _require_non_blank(name, "name")
+        self._post_commands(
+            operation=f"remove_object_group({normalized_name})",
+            commands=[self._build_remove_object_group_command(normalized_name)],
+        )
+
     def add_entries(self, name: str, items: Sequence[str]) -> None:
         normalized_name = _require_non_blank(name, "name")
         normalized_items = self._normalize_items(items, field_name="items")
@@ -129,6 +136,17 @@ class KeeneticRciClient(KeeneticClient):
             operation=f"ensure_route({binding.object_group_name})",
             commands=[self._build_ensure_route_command(binding)],
         )
+
+    def remove_route(self, binding: RouteBindingState) -> None:
+        try:
+            self._post_commands(
+                operation=f"remove_route({binding.object_group_name})",
+                commands=[self._build_remove_route_command(binding)],
+            )
+        except RuntimeError as exc:
+            if self._is_missing_route_error(exc, object_group_name=binding.object_group_name):
+                return
+            raise
 
     def save_config(self) -> None:
         self._post_commands(
@@ -258,6 +276,9 @@ class KeeneticRciClient(KeeneticClient):
     def _build_ensure_object_group_command(self, name: str) -> dict[str, Any]:
         return {"parse": f"object-group fqdn {self._format_cli_argument(name, 'name')}"}
 
+    def _build_remove_object_group_command(self, name: str) -> dict[str, Any]:
+        return {"parse": f"no object-group fqdn {self._format_cli_argument(name, 'name')}"}
+
     def _build_add_entry_command(self, name: str, item: str) -> dict[str, Any]:
         return {
             "parse": (
@@ -294,6 +315,30 @@ class KeeneticRciClient(KeeneticClient):
             route_parts.append("reject")
 
         return {"parse": " ".join(route_parts)}
+
+    def _build_remove_route_command(self, binding: RouteBindingState) -> dict[str, Any]:
+        if not binding.exists:
+            raise ValueError("binding must exist to remove route")
+        if binding.route_target_value is None:
+            raise ValueError("binding route_target_value must be set to remove route")
+
+        route_parts = [
+            "no",
+            "dns-proxy",
+            "route",
+            "object-group",
+            self._format_cli_argument(binding.object_group_name, "object_group_name"),
+            self._format_cli_argument(binding.route_target_value, "route_target_value"),
+        ]
+        if binding.route_interface is not None:
+            route_parts.append(
+                self._format_cli_argument(binding.route_interface, "route_interface")
+            )
+        return {"parse": " ".join(route_parts)}
+
+    def _is_missing_route_error(self, exc: RuntimeError, *, object_group_name: str) -> bool:
+        message = str(exc)
+        return "unable to find a route to" in message and f'"{object_group_name}"' in message
 
     def _format_cli_argument(self, value: str, field_name: str) -> str:
         normalized_value = _require_non_blank(value, field_name)
@@ -406,7 +451,7 @@ class KeeneticRciClient(KeeneticClient):
                 f"group '{name}' payload must be an object, got {type(group_payload).__name__}",
             )
 
-        include_payload = group_payload.get("include", ())
+        include_payload = group_payload.get("include")
         if include_payload is None:
             include_items: list[Any] = []
         elif isinstance(include_payload, dict):

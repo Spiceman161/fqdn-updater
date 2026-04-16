@@ -244,6 +244,28 @@ def test_duplicate_managed_object_group_name_within_router_is_rejected() -> None
         AppConfig.model_validate(payload)
 
 
+def test_generated_shard_object_group_name_collision_within_router_is_rejected() -> None:
+    payload = _config_payload(
+        services=[
+            _service(),
+            _service(
+                key="youtube",
+                source_urls=["https://example.com/youtube.lst"],
+            ),
+        ],
+        mappings=[
+            _mapping(),
+            _mapping(service_key="youtube", object_group_name="svc-telegram-2"),
+        ],
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="reuses managed object_group_name 'svc-telegram-2'",
+    ):
+        AppConfig.model_validate(payload)
+
+
 def test_route_interface_is_rejected_for_interface_target() -> None:
     payload = _config_payload(
         mappings=[
