@@ -61,6 +61,81 @@ def test_app_config_accepts_valid_runtime_ready_payload() -> None:
     assert config.routers[0].id == "router-1"
     assert config.services[0].key == "telegram"
     assert config.mappings[0].object_group_name == "svc-telegram"
+    assert str(config.services[0].resolved_sources[0].url) == "https://example.com/telegram.lst"
+    assert config.services[0].resolved_sources[0].format == "raw_domain_list"
+
+
+def test_service_definition_accepts_per_source_mixed_sources() -> None:
+    payload = _config_payload(
+        services=[
+            {
+                "key": "telegram",
+                "sources": [
+                    {
+                        "url": "https://example.com/telegram.lst",
+                        "format": "raw_domain_list",
+                    },
+                    {
+                        "url": "https://example.com/telegram-v4.lst",
+                        "format": "raw_cidr_list",
+                    },
+                    {
+                        "url": "https://example.com/telegram-v6.lst",
+                        "format": "raw_cidr_list",
+                    },
+                ],
+                "enabled": True,
+            }
+        ]
+    )
+
+    config = AppConfig.model_validate(payload)
+
+    assert [str(source.url) for source in config.services[0].resolved_sources] == [
+        "https://example.com/telegram.lst",
+        "https://example.com/telegram-v4.lst",
+        "https://example.com/telegram-v6.lst",
+    ]
+    assert [source.format for source in config.services[0].resolved_sources] == [
+        "raw_domain_list",
+        "raw_cidr_list",
+        "raw_cidr_list",
+    ]
+
+
+def test_service_definition_rejects_sources_and_source_urls_together() -> None:
+    payload = _config_payload(
+        services=[
+            _service(
+                sources=[
+                    {
+                        "url": "https://example.com/telegram.lst",
+                        "format": "raw_domain_list",
+                    }
+                ]
+            )
+        ]
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="service must define either sources or source_urls/format, not both",
+    ):
+        AppConfig.model_validate(payload)
+
+
+def test_service_definition_rejects_missing_source_definitions() -> None:
+    payload = _config_payload(
+        services=[
+            {
+                "key": "telegram",
+                "enabled": True,
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError, match="source_urls must contain at least one URL"):
+        AppConfig.model_validate(payload)
 
 
 @pytest.mark.parametrize(

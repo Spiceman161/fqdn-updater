@@ -16,6 +16,10 @@ def test_normalized_service_source_sorts_and_deduplicates_entries() -> None:
     )
 
     assert source.entries == ("a.example", "b.example")
+    assert [(entry.kind, entry.value) for entry in source.typed_entries] == [
+        ("domain", "a.example"),
+        ("domain", "b.example"),
+    ]
 
 
 def test_service_source_failure_requires_non_blank_fields() -> None:

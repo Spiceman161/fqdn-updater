@@ -5,6 +5,7 @@ import pytest
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import RouterServiceMappingConfig
 from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
+from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 
 
 def _mapping(*, managed: bool = True) -> RouterServiceMappingConfig:
@@ -111,4 +112,44 @@ def test_service_sync_planner_marks_route_only_changes() -> None:
 
     assert plan.object_group_diff.has_changes is False
     assert plan.route_binding_diff.has_changes is True
+    assert plan.has_changes is True
+
+
+def test_service_sync_planner_handles_mixed_typed_entries() -> None:
+    planner = ServiceSyncPlanner()
+    actual_state = ObjectGroupState(
+        name="svc-telegram",
+        typed_entries=(
+            ObjectGroupEntry.from_domain("keep.example"),
+            ObjectGroupEntry.from_network("10.0.1.1/24"),
+            ObjectGroupEntry.from_network("2001:db8:1::1/64"),
+        ),
+        exists=True,
+    )
+
+    plan = planner.plan(
+        mapping=_mapping(),
+        desired_entries=(
+            ObjectGroupEntry.from_domain("keep.example"),
+            ObjectGroupEntry.from_network("10.0.0.1/24"),
+            ObjectGroupEntry.from_network("2001:db8::1/64"),
+        ),
+        actual_state=actual_state,
+        actual_route_binding=RouteBindingState(
+            object_group_name="svc-telegram",
+            exists=False,
+        ),
+    )
+
+    assert plan.object_group_diff.to_add == ("10.0.0.0/24", "2001:db8::/64")
+    assert plan.object_group_diff.to_remove == ("10.0.1.0/24", "2001:db8:1::/64")
+    assert [(entry.kind, entry.value) for entry in plan.object_group_diff.typed_to_add] == [
+        ("ipv4_network", "10.0.0.0/24"),
+        ("ipv6_network", "2001:db8::/64"),
+    ]
+    assert [(entry.kind, entry.value) for entry in plan.object_group_diff.typed_to_remove] == [
+        ("ipv4_network", "10.0.1.0/24"),
+        ("ipv6_network", "2001:db8:1::/64"),
+    ]
+    assert plan.object_group_diff.typed_unchanged == (ObjectGroupEntry.from_domain("keep.example"),)
     assert plan.has_changes is True

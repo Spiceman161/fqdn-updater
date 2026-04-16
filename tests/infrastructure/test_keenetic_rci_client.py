@@ -7,6 +7,7 @@ from urllib import error, request
 import pytest
 
 from fqdn_updater.domain.keenetic import RouteBindingSpec
+from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.infrastructure.keenetic_rci_client import (
     KeeneticRciClient,
     KeeneticRciClientFactory,
@@ -132,8 +133,9 @@ def test_get_object_group_parses_cli_style_payload_and_ignores_runtime_entries(
                                     "group-name": "svc-telegram",
                                     "entry": [
                                         {"type": "runtime", "fqdn": "runtime.example"},
-                                        {"type": "config", "fqdn": "b.example"},
-                                        {"type": "config", "address": "a.example"},
+                                        {"type": "config", "address": "2001:db8::1/64"},
+                                        {"type": "config", "fqdn": "B.Example.com."},
+                                        {"type": "config", "address": "10.0.0.1/24"},
                                     ],
                                 },
                             ]
@@ -149,7 +151,12 @@ def test_get_object_group_parses_cli_style_payload_and_ignores_runtime_entries(
 
     assert state.name == "svc-telegram"
     assert state.exists is True
-    assert state.entries == ("a.example", "b.example")
+    assert state.entries == ("10.0.0.1/24", "2001:db8::1/64", "B.Example.com.")
+    assert state.typed_entries == (
+        ObjectGroupEntry.from_domain("b.example.com"),
+        ObjectGroupEntry.from_network("10.0.0.0/24"),
+        ObjectGroupEntry.from_network("2001:db8::/64"),
+    )
     assert len(opener.requests) == 1
     assert opener.timeouts == [15]
     assert json.loads(opener.requests[0].data.decode("utf-8")) == [
@@ -166,8 +173,9 @@ def test_get_object_group_parses_config_style_payload(router_config) -> None:
                         "fqdn": {
                             "svc-telegram": {
                                 "include": [
-                                    {"address": "b.example"},
-                                    {"address": "a.example"},
+                                    {"address": "2001:db8::1/64"},
+                                    {"fqdn": "B.Example.com."},
+                                    {"address": "10.0.0.1/24"},
                                 ]
                             }
                         }
@@ -182,7 +190,12 @@ def test_get_object_group_parses_config_style_payload(router_config) -> None:
 
     assert state.name == "svc-telegram"
     assert state.exists is True
-    assert state.entries == ("a.example", "b.example")
+    assert state.entries == ("10.0.0.1/24", "2001:db8::1/64", "B.Example.com.")
+    assert state.typed_entries == (
+        ObjectGroupEntry.from_domain("b.example.com"),
+        ObjectGroupEntry.from_network("10.0.0.0/24"),
+        ObjectGroupEntry.from_network("2001:db8::/64"),
+    )
     assert len(opener.requests) == 1
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from fqdn_updater.domain.source_normalizer import normalize_entries
+from fqdn_updater.domain.source_normalizer import normalize_entries, normalize_typed_entries
 
 
 def test_normalize_entries_for_domains_trims_lowercases_and_sorts() -> None:
@@ -21,6 +21,19 @@ def test_normalize_entries_for_cidr_canonicalizes_networks() -> None:
     )
 
     assert normalized_entries == ("10.0.0.0/24", "2001:db8::/64")
+
+
+def test_normalize_typed_entries_for_mixed_preserves_entry_kinds() -> None:
+    typed_entries = normalize_typed_entries(
+        raw_text="\n2001:DB8::1/64\nB.Example.com.\n10.0.0.1/24\n",
+        source_format="mixed",
+    )
+
+    assert [(entry.kind, entry.value) for entry in typed_entries] == [
+        ("domain", "b.example.com"),
+        ("ipv4_network", "10.0.0.0/24"),
+        ("ipv6_network", "2001:db8::/64"),
+    ]
 
 
 def test_normalize_entries_for_mixed_accepts_domains_and_cidrs() -> None:
