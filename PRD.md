@@ -58,7 +58,6 @@ FQDN-updater — это CLI-инструмент для централизова
 ### Out of Scope (future versions)
 - Web UI / dashboard.
 - Система уведомлений (Telegram/email/webhook).
-- Автоматическое шардирование больших aggregate-списков (`russia-inside`, `hodca` и т.п.).
 - Поддержка не-Keenetic устройств.
 - Self-hosted API-сервис поверх CLI.
 - Автоматическое обнаружение роутеров в сети.
@@ -210,10 +209,25 @@ FQDN-updater — это CLI-инструмент для централизова
 
 - **ServiceDefinition**
   - `key` (string, unique) — e.g. `telegram`, `youtube`, `google_ai`
-  - `source_urls` (array[string])
-  - `format` (enum: raw_domain_list/raw_cidr_list/mixed)
+  - `source_urls` (array[string]) and `format` for legacy single-format sources
+  - `sources` (array[object]) for per-source mixed domain/CIDR lists
+    - `url` (string)
+    - `format` (enum: raw_domain_list/raw_cidr_list/mixed)
   - `enabled` (boolean)
   - `description` (string, optional)
+
+### 8.1 Keenetic FQDN limits and sharding
+
+Confirmed operational limits for managed `object-group fqdn` planning:
+
+- one FQDN object-group must not contain more than 300 entries;
+- the total number of entries across the router FQDN section must not exceed 1024.
+
+The updater must automatically shard a managed service list above 300 entries into deterministic
+managed object-groups. The first shard keeps the configured `object_group_name`; following shards
+use `-2`, `-3`, `-4` suffixes. A managed router plan above 1024 FQDN entries must still be rejected
+before any router write. If a previously needed shard becomes stale after an upstream list shrinks,
+the updater must remove its entries and remove its route binding.
 
 - **RouterServiceMapping**
   - `router_id` (string, foreign key -> Router.id)
@@ -312,7 +326,6 @@ FQDN-updater — это CLI-инструмент для централизова
 
 ### Phase 3 — Extended Routing
 - [ ] Поддержка aggregate-списков
-- [ ] Автоматическое шардирование больших списков
 - [ ] Дополнительные источники списков
 - [ ] Selective notification hooks
 - [ ] `doctor` режим для проверки обязательных условий на роутере
@@ -326,12 +339,11 @@ FQDN-updater — это CLI-инструмент для централизова
 | Ошибка diff logic удалит валидные домены | Low | High | Обязательный `dry-run`, integration tests, режим managed-only, backup в следующей фазе |
 | Параллельные или overlapping запуски повредят state/logs | Medium | Medium | Добавить file lock / run lock уже в early hardening |
 | RCI endpoint через KeenDNS окажется публично доступен и станет целью брутфорса | Medium | High | Использовать отдельного low-privilege пользователя, длинный пароль, IP whitelist по VPS и аудит неудачных попыток |
-| Список Cloudflare или другие большие сервисные группы окажутся слишком объёмными для одного object-group | Medium | High | На этапе MVP ограничиться тем, что влезает; вынести шардирование в отдельную roadmap phase |
+| Список Cloudflare или другие большие сервисные группы окажутся слишком объёмными для одного object-group | Medium | High | Автоматически шардировать managed mapping по 300 записей на группу и отклонять план выше общего лимита 1024 записей на роутер |
 | DNS-based routes на роутере настроены формально, но не работают из-за `Default policy`, стороннего DNS или выключенного `service dns-proxy` | High | High | Явно документировать обязательные условия и позднее добавить режим `doctor` для диагностики |
 | Большой apply через RCI превысит безопасный размер одного POST-батча | Medium | Medium | Чанковать команды и сохранять конфигурацию после успешных apply-этапов |
 
 ## 13. Open Questions
-- [ ] Каков точный подтверждённый лимит Keenetic на число записей в одном FQDN object-group?
 - [ ] Нужно ли в v1 хранить snapshot текущего состояния роутера перед apply для rollback/manual audit?
 - [ ] Должен ли `Cloudflare` реально идти как доменный список, если часть сценариев лучше решается через subnet/IP routing?
 - [ ] Нужен ли отдельный naming convention validator для object-group имён на Keenetic?
@@ -339,7 +351,7 @@ FQDN-updater — это CLI-инструмент для централизова
 - [ ] Должен ли проект в v1 поддерживать смешанные object-group (FQDN + CIDR), что особенно полезно для Meta/WhatsApp-подобных сервисов?
 
 ## 14. Future Possibilities (v2+)
-- Автоматическое шардирование `russia-inside` и других больших списков
+- Расширенная поддержка aggregate-списков вроде `russia-inside`
 - Уведомления о неуспешных прогонах в Telegram/OpenClaw
 - Автообнаружение конфигурационных drift’ов на роутерах
 - История изменений по каждой группе

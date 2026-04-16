@@ -3,6 +3,12 @@ set -euo pipefail
 
 SESSION=${1:-fqdn-updater-dev}
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+AGENTS_FILE="$ROOT/AGENTS.md"
+
+if [ ! -s "$AGENTS_FILE" ]; then
+  echo "Missing project instructions: $AGENTS_FILE" >&2
+  exit 1
+fi
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "Session already exists: $SESSION"
@@ -13,7 +19,15 @@ fi
 TMUX_CMD=$(cat <<INNER
 export PATH="$HOME/.local/bin:$HOME/.pub-cache/bin:\$PATH" && \
 cd "$ROOT" && \
-exec codex --dangerously-bypass-approvals-and-sandbox
+codex \
+  --cd "$ROOT" \
+  -c project_doc_max_bytes=65536 \
+  --dangerously-bypass-approvals-and-sandbox; \
+rc=\$?; \
+echo; \
+echo "[tmux-start-codex] codex exited with code \$rc"; \
+echo "[tmux-start-codex] press Enter or run commands manually"; \
+exec bash
 INNER
 )
 

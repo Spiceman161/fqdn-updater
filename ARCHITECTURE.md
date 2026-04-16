@@ -139,22 +139,30 @@ Responsibilities:
 ### 5.3 Source Registry
 Хранит mapping между логическими сервисами и upstream-URL.
 
-Примеры сервисов v1:
+Встроенные сервисы v1:
 - `news`
+- `cloudflare`
+- `cloudfront`
+- `digitalocean`
+- `discord`
+- `google_ai`
+- `google_meet`
+- `google_play`
 - `hdrezka`
+- `hetzner`
 - `meta`
+- `ovh`
+- `roblox`
+- `telegram`
 - `tiktok`
 - `twitter`
 - `youtube`
-- `discord`
-- `cloudflare`
-- `telegram`
-- `google_meet`
-- `google_ai`
 
 Responsibilities:
 - знать source URL;
 - знать source format;
+- объединять `Services/<service>.lst` с соответствующими `Subnets/IPv4/<service>.lst` и
+  `Subnets/IPv6/<service>.lst`, если subnet-файлы есть для этого сервиса;
 - вернуть unified service definition.
 
 ### 5.4 Source Fetcher
@@ -242,6 +250,10 @@ Responsibilities:
 - детерминированный diff;
 - отсутствие ложных изменений;
 - возможность сериализовать diff в JSON и human output.
+- валидация лимитов Keenetic до apply: максимум 300 записей в одном `object-group fqdn` и
+  максимум 1024 записи в управляемом FQDN-плане роутера.
+- автоматическое разбиение desired state на managed shard-группы по 300 записей с именами
+  `base`, `base-2`, `base-3`, `base-4`.
 
 ### 5.9 Apply Engine
 Применяет diff к роутеру.
@@ -259,10 +271,14 @@ Responsibilities:
 4. удалить устаревшие записи;
 5. добавить новые записи;
 6. проверить/обновить route binding;
-7. если используется RCI и были изменения — сохранить конфигурацию;
-8. записать результат.
+7. для stale shard-групп удалить route binding;
+8. если используется RCI и были изменения — сохранить конфигурацию;
+9. записать результат.
 
 Для RCI-пути нужно предусмотреть chunking больших apply-пакетов, чтобы не отправлять чрезмерно большие POST batch.
+Apply не должен начинаться, если desired state нарушает общий лимит Keenetic FQDN:
+1024 записи суммарно по управляемым FQDN-группам роутера. Списки больше 300 записей должны
+разбиваться на shard-группы до apply.
 
 ### 5.10 Logging and Artifact Writer
 Записывает лог и итоговые JSON-отчёты.
@@ -723,11 +739,10 @@ Host-level:
 - point sync by router/service.
 
 ### 17.2 Large-list support
-Для `russia-inside` и подобных списков позже потребуется:
-- automatic sharding;
-- naming convention for shard groups;
+Для `russia-inside` и подобных aggregate-списков позже потребуется:
 - aggregate reporting;
-- route binding на группу шардов.
+- дополнительные source policy для очень больших списков;
+- UX для ручного аудита shard-групп.
 
 ### 17.3 Notification layer
 Отдельным модулем можно позже добавить:
@@ -750,7 +765,7 @@ Host-level:
 - только sequential processing;
 - без UI;
 - без notifications;
-- без sharding.
+- без динамического runtime-сервиса поверх batch job.
 
 Это даст быстрый путь к работающему инструменту.
 

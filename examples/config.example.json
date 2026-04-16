@@ -1,6 +1,11 @@
 {
-  "version": 1,
+  "mappings": [],
   "routers": [],
+  "runtime": {
+    "artifacts_dir": "data/artifacts",
+    "log_format": "text",
+    "logs_dir": "data/logs"
+  },
   "services": [
     {
       "description": "Blocked news domains from itdoginfo/allow-domains.",
@@ -12,100 +17,269 @@
       ]
     },
     {
-      "description": "HDRezka domains from itdoginfo/allow-domains.",
+      "description": "Cloudflare domains and subnets from itdoginfo/allow-domains.",
       "enabled": true,
-      "format": "raw_domain_list",
-      "key": "hdrezka",
-      "source_urls": [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/hdrezka.lst"
-      ]
-    },
-    {
-      "description": "Meta family domains from itdoginfo/allow-domains.",
-      "enabled": true,
-      "format": "raw_domain_list",
-      "key": "meta",
-      "source_urls": [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/meta.lst"
-      ]
-    },
-    {
-      "description": "TikTok domains from itdoginfo/allow-domains.",
-      "enabled": true,
-      "format": "raw_domain_list",
-      "key": "tiktok",
-      "source_urls": [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/tiktok.lst"
-      ]
-    },
-    {
-      "description": "Twitter and X domains from itdoginfo/allow-domains.",
-      "enabled": true,
-      "format": "raw_domain_list",
-      "key": "twitter",
-      "source_urls": [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/twitter.lst"
-      ]
-    },
-    {
-      "description": "YouTube domains from itdoginfo/allow-domains.",
-      "enabled": true,
-      "format": "raw_domain_list",
-      "key": "youtube",
-      "source_urls": [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/youtube.lst"
-      ]
-    },
-    {
-      "description": "Discord domains from itdoginfo/allow-domains.",
-      "enabled": true,
-      "format": "raw_domain_list",
-      "key": "discord",
-      "source_urls": [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/discord.lst"
-      ]
-    },
-    {
-      "description": "Cloudflare IPv4 ranges from itdoginfo/allow-domains.",
-      "enabled": true,
-      "format": "raw_cidr_list",
       "key": "cloudflare",
-      "source_urls": [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/cloudflare.lst"
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/cloudflare.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/cloudflare.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/cloudflare.lst"
+        }
       ]
     },
     {
-      "description": "Telegram domains from itdoginfo/allow-domains.",
+      "description": "CloudFront domains and subnets from itdoginfo/allow-domains.",
       "enabled": true,
-      "format": "raw_domain_list",
-      "key": "telegram",
-      "source_urls": [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/telegram.lst"
+      "key": "cloudfront",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/cloudfront.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/cloudfront.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/cloudfront.lst"
+        }
       ]
     },
     {
-      "description": "Google Meet IPv4 ranges from itdoginfo/allow-domains.",
+      "description": "DigitalOcean domains and subnets from itdoginfo/allow-domains.",
       "enabled": true,
-      "format": "raw_cidr_list",
-      "key": "google_meet",
-      "source_urls": [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/google_meet.lst"
+      "key": "digitalocean",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/digitalocean.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/digitalocean.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/digitalocean.lst"
+        }
+      ]
+    },
+    {
+      "description": "Discord domains and subnets from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "discord",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/discord.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/discord.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/discord.lst"
+        }
       ]
     },
     {
       "description": "Dedicated Google AI domains from itdoginfo/allow-domains.",
       "enabled": true,
-      "format": "raw_domain_list",
       "key": "google_ai",
-      "source_urls": [
-        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/google_ai.lst"
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/google_ai.lst"
+        }
+      ]
+    },
+    {
+      "description": "Google Meet domains and subnets from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "google_meet",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/google_meet.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/google_meet.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/google_meet.lst"
+        }
+      ]
+    },
+    {
+      "description": "Google Play domains from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "google_play",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/google_play.lst"
+        }
+      ]
+    },
+    {
+      "description": "HDRezka domains from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "hdrezka",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/hdrezka.lst"
+        }
+      ]
+    },
+    {
+      "description": "Hetzner domains and subnets from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "hetzner",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/hetzner.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/hetzner.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/hetzner.lst"
+        }
+      ]
+    },
+    {
+      "description": "Meta family domains and subnets from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "meta",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/meta.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/meta.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/meta.lst"
+        }
+      ]
+    },
+    {
+      "description": "OVH domains and subnets from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "ovh",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/ovh.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/ovh.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/ovh.lst"
+        }
+      ]
+    },
+    {
+      "description": "Roblox domains and subnets from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "roblox",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/roblox.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/roblox.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/roblox.lst"
+        }
+      ]
+    },
+    {
+      "description": "Telegram domains and subnets from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "telegram",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/telegram.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/telegram.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/telegram.lst"
+        }
+      ]
+    },
+    {
+      "description": "TikTok domains from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "tiktok",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/tiktok.lst"
+        }
+      ]
+    },
+    {
+      "description": "Twitter and X domains and subnets from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "twitter",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/twitter.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/twitter.lst"
+        },
+        {
+          "format": "raw_cidr_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/twitter.lst"
+        }
+      ]
+    },
+    {
+      "description": "YouTube domains from itdoginfo/allow-domains.",
+      "enabled": true,
+      "key": "youtube",
+      "sources": [
+        {
+          "format": "raw_domain_list",
+          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/youtube.lst"
+        }
       ]
     }
   ],
-  "mappings": [],
-  "runtime": {
-    "artifacts_dir": "data/artifacts",
-    "logs_dir": "data/logs",
-    "log_format": "text"
-  }
+  "version": 1
 }

@@ -58,3 +58,15 @@ chmod +x scripts/tmux-start-codex.sh scripts/tmux-codex.sh
 cd /home/moltuser/clawd/artifacts/fqdn-updater
 codex
 ```
+
+## Keenetic FQDN limits
+
+Перед `dry-run`/`sync` план проверяется по подтверждённым ограничениям Keenetic:
+
+- не больше 300 записей в одном `object-group fqdn`;
+- не больше 1024 записей суммарно в управляемом FQDN-плане роутера.
+
+Если список для одного mapping содержит больше 300 записей, updater автоматически делит его на
+managed shard-группы: базовая группа сохраняет имя из `object_group_name`, следующие получают
+суффиксы `-2`, `-3`, `-4`. Лишние shard-группы после уменьшения upstream-списка очищаются, а их
+route binding удаляется.
