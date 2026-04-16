@@ -1,8 +1,8 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S18",
-  "updated_at": "2026-04-15T00:00:00Z",
+  "current_slice_id": "S19",
+  "updated_at": "2026-04-16T00:00:00Z",
   "slices": [
     {
       "id": "S0",
@@ -288,7 +288,7 @@
     {
       "id": "S19",
       "title": "Mixed Domain And Subnet Source Groups",
-      "status": "pending",
+      "status": "done",
       "goal": "Allow one managed Keenetic object-group to be synchronized from mixed domain, IPv4 CIDR, and IPv6 CIDR sources.",
       "summary": "Implement variant 2 for services such as Telegram and Meta/WhatsApp: merge service domain lists with matching IPv4 and IPv6 subnet lists into a single desired entry set per service, then compare that mixed desired set against the mixed current object-group state read from Keenetic.",
       "acceptance": [
@@ -302,7 +302,7 @@
         "./scripts/verify.sh passes with tests covering mixed source normalization, Keenetic read parsing, diff behavior, and apply planning."
       ],
       "depends_on": ["S7", "S8", "S10", "S13", "S14"],
-      "notes": "Requested after real-router validation showed Keenetic object-groups can hold FQDN entries and IP subnets in the same list. Do not implement as separate IPv4/IPv6 mappings unless the plan is explicitly changed; this slice is for the single mixed object-group variant."
+      "notes": "Requested after real-router validation showed Keenetic object-groups can hold FQDN entries and IP subnets in the same list. Completed with green verification on 2026-04-16."
     }
   ]
 }
