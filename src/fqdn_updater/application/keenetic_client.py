@@ -10,6 +10,7 @@ from fqdn_updater.domain.keenetic import (
     RouteBindingSpec,
     RouteBindingState,
 )
+from fqdn_updater.domain.static_route_diff import StaticRouteSpec, StaticRouteState
 
 
 class KeeneticClient(ABC):
@@ -20,6 +21,10 @@ class KeeneticClient(ABC):
     @abstractmethod
     def get_route_binding(self, object_group_name: str) -> RouteBindingState:
         """Read the current DNS route binding for an object-group."""
+
+    @abstractmethod
+    def get_static_routes(self) -> tuple[StaticRouteState, ...]:
+        """Read current static routes from the router."""
 
     @abstractmethod
     def ensure_object_group(self, name: str) -> None:
@@ -44,6 +49,14 @@ class KeeneticClient(ABC):
     @abstractmethod
     def remove_route(self, binding: RouteBindingState) -> None:
         """Remove a DNS route binding for an object-group."""
+
+    @abstractmethod
+    def ensure_static_route(self, route: StaticRouteSpec) -> None:
+        """Ensure that a managed static route exists."""
+
+    @abstractmethod
+    def remove_static_route(self, route: StaticRouteState) -> None:
+        """Remove a managed static route."""
 
     @abstractmethod
     def save_config(self) -> None:

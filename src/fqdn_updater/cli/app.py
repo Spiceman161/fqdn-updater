@@ -260,7 +260,7 @@ def mapping_set_command(
     ),
     auto: bool = typer.Option(True, "--auto/--no-auto", help="Set route auto flag."),
     exclusive: bool = typer.Option(
-        False,
+        True,
         "--exclusive/--no-exclusive",
         help="Set route exclusive flag.",
     ),

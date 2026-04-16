@@ -44,6 +44,7 @@ class RunStep(StrEnum):
     CLIENT_CREATE = "client_create"
     READ_OBJECT_GROUP = "read_object_group"
     READ_ROUTE_BINDING = "read_route_binding"
+    READ_STATIC_ROUTES = "read_static_routes"
     READ_DNS_PROXY_STATUS = "read_dns_proxy_status"
     PLAN_SERVICE = "plan_service"
     ENSURE_OBJECT_GROUP = "ensure_object_group"
@@ -52,6 +53,8 @@ class RunStep(StrEnum):
     ADD_ENTRIES = "add_entries"
     ENSURE_ROUTE = "ensure_route"
     REMOVE_ROUTE = "remove_route"
+    ENSURE_STATIC_ROUTE = "ensure_static_route"
+    REMOVE_STATIC_ROUTE = "remove_static_route"
     SAVE_CONFIG = "save_config"
 
 

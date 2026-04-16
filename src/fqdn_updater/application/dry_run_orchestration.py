@@ -16,6 +16,8 @@ from fqdn_updater.application.run_support import (
     build_failure_detail,
     eligible_mappings,
     group_source_failures,
+    has_static_route_entries,
+    static_route_capable_service_keys,
     validate_router_desired_fqdn_total,
 )
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
@@ -35,6 +37,7 @@ from fqdn_updater.domain.run_artifact import (
     ServiceRunResult,
 )
 from fqdn_updater.domain.source_loading import SourceLoadReport
+from fqdn_updater.domain.static_route_diff import StaticRouteState
 
 
 class SourceLoader(Protocol):
@@ -112,6 +115,7 @@ class DryRunOrchestrator:
                 source.service_key: source.typed_entries for source in loaded_sources.loaded
             }
             source_failures_by_service = group_source_failures(report=loaded_sources)
+            static_route_service_keys = static_route_capable_service_keys(config)
 
             router_results: list[RouterRunResult] = []
             plans: list[ServiceSyncPlan] = []
@@ -129,6 +133,7 @@ class DryRunOrchestrator:
                     mappings=router_mappings,
                     desired_entries_by_service=desired_entries_by_service,
                     source_failures_by_service=source_failures_by_service,
+                    static_route_service_keys=static_route_service_keys,
                 )
                 router_results.append(router_result)
                 plans.extend(router_plans)
@@ -166,6 +171,7 @@ class DryRunOrchestrator:
         mappings: Sequence[RouterServiceMappingConfig],
         desired_entries_by_service: dict[str, tuple[ObjectGroupEntry, ...]],
         source_failures_by_service: dict[str, str],
+        static_route_service_keys: set[str],
     ) -> tuple[RouterRunResult, list[ServiceSyncPlan]]:
         service_results: list[ServiceRunResult] = []
         plans: list[ServiceSyncPlan] = []
@@ -257,12 +263,28 @@ class DryRunOrchestrator:
             if actual_route_bindings is None:
                 continue
 
+            actual_static_routes: tuple[StaticRouteState, ...] = ()
+            if mapping.service_key in static_route_service_keys or has_static_route_entries(
+                desired_entries
+            ):
+                maybe_actual_static_routes = self._read_static_routes(
+                    logger=logger,
+                    client=client,
+                    router=router,
+                    mapping=mapping,
+                    service_results=service_results,
+                )
+                if maybe_actual_static_routes is None:
+                    continue
+                actual_static_routes = maybe_actual_static_routes
+
             try:
                 mapping_plans = self._planner.plan_mapping(
                     mapping=mapping,
                     desired_entries=desired_entries,
                     actual_states=actual_states,
                     actual_route_bindings=actual_route_bindings,
+                    actual_static_routes=actual_static_routes,
                 )
             except Exception as exc:
                 self._append_service_failure(
@@ -392,6 +414,28 @@ class DryRunOrchestrator:
                 return None
         return actual_route_bindings
 
+    def _read_static_routes(
+        self,
+        *,
+        logger: RunLogger,
+        client: KeeneticClient,
+        router: RouterConfig,
+        mapping: RouterServiceMappingConfig,
+        service_results: list[ServiceRunResult],
+    ) -> tuple[StaticRouteState, ...] | None:
+        try:
+            return client.get_static_routes()
+        except Exception as exc:
+            self._append_service_failure(
+                logger=logger,
+                router=router,
+                mapping=mapping,
+                step=RunStep.READ_STATIC_ROUTES,
+                message=str(exc),
+                service_results=service_results,
+            )
+            return None
+
     def _append_service_failure(
         self,
         *,
@@ -447,14 +491,16 @@ class DryRunOrchestrator:
 
 def _build_service_result_from_plan(plan: ServiceSyncPlan) -> ServiceRunResult:
     diff = plan.object_group_diff
+    static_diff = plan.static_route_diff
     return ServiceRunResult(
         service_key=plan.service_key,
         object_group_name=plan.object_group_name,
         status=ServiceResultStatus.UPDATED if plan.has_changes else ServiceResultStatus.NO_CHANGES,
-        added_count=len(diff.to_add),
-        removed_count=len(diff.to_remove),
-        unchanged_count=len(diff.unchanged),
-        route_changed=plan.route_binding_diff.has_changes,
+        added_count=len(diff.to_add) + (len(static_diff.to_add) if static_diff else 0),
+        removed_count=len(diff.to_remove) + (len(static_diff.to_remove) if static_diff else 0),
+        unchanged_count=len(diff.unchanged) + (len(static_diff.unchanged) if static_diff else 0),
+        route_changed=plan.route_binding_diff.has_changes
+        or (static_diff.has_changes if static_diff else False),
     )
 
 

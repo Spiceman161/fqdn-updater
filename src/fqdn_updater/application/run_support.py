@@ -41,6 +41,19 @@ def group_source_failures(report: SourceLoadReport) -> dict[str, str]:
     }
 
 
+def static_route_capable_service_keys(config: AppConfig) -> set[str]:
+    return {
+        service.key
+        for service in config.services
+        if service.enabled
+        and any(source.format in {"raw_cidr_list", "mixed"} for source in service.resolved_sources)
+    }
+
+
+def has_static_route_entries(entries: tuple[ObjectGroupEntry, ...]) -> bool:
+    return any(entry.kind in {"ipv4_network", "ipv6_network"} for entry in entries)
+
+
 def validate_router_desired_fqdn_total(
     *,
     router_id: str,
@@ -55,7 +68,7 @@ def validate_router_desired_fqdn_total(
         desired_entries = desired_entries_by_service.get(mapping.service_key)
         if desired_entries is None:
             continue
-        total_entry_count += len(desired_entries)
+        total_entry_count += sum(1 for entry in desired_entries if entry.kind == "domain")
 
     validate_total_fqdn_entry_count(router_id=router_id, entry_count=total_entry_count)
 

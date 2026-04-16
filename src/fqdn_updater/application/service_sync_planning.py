@@ -14,12 +14,18 @@ from fqdn_updater.domain.keenetic import (
 )
 from fqdn_updater.domain.keenetic_limits import validate_fqdn_object_group_entry_count
 from fqdn_updater.domain.object_group_diff import ObjectGroupDiff, build_object_group_diff
-from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
+from fqdn_updater.domain.object_group_entry import ObjectGroupEntry, normalize_object_group_entries
 from fqdn_updater.domain.object_group_sharding import (
     managed_shard_names,
     shard_object_group_entries,
 )
 from fqdn_updater.domain.route_binding_diff import build_route_binding_diff
+from fqdn_updater.domain.static_route_diff import (
+    StaticRouteDiff,
+    StaticRouteState,
+    build_static_route_diff,
+    build_static_route_specs,
+)
 
 
 def _require_non_blank(value: str, field_name: str) -> str:
@@ -38,6 +44,7 @@ class ServiceSyncPlan(BaseModel):
     object_group_diff: ObjectGroupDiff
     desired_route_binding: RouteBindingSpec | None = None
     route_binding_diff: RouteBindingDiff
+    static_route_diff: StaticRouteDiff | None = None
     remove_route: bool = False
     remove_object_group: bool = False
 
@@ -51,6 +58,7 @@ class ServiceSyncPlan(BaseModel):
         return (
             self.object_group_diff.has_changes
             or self.route_binding_diff.has_changes
+            or (self.static_route_diff is not None and self.static_route_diff.has_changes)
             or self.remove_route
             or self.remove_object_group
         )
@@ -63,12 +71,28 @@ class ServiceSyncPlanner:
         desired_entries: Iterable[str | ObjectGroupEntry],
         actual_states: Mapping[str, ObjectGroupState],
         actual_route_bindings: Mapping[str, RouteBindingState],
+        actual_static_routes: Iterable[StaticRouteState] = (),
     ) -> tuple[ServiceSyncPlan, ...]:
         self._validate_mapping(mapping)
+        normalized_desired_entries = normalize_object_group_entries(
+            desired_entries, field_name="desired_entries"
+        )
+        desired_domain_entries = tuple(
+            entry for entry in normalized_desired_entries if entry.kind == "domain"
+        )
+        desired_static_route_specs = build_static_route_specs(
+            mapping=mapping,
+            desired_entries=normalized_desired_entries,
+        )
+        static_route_diff = build_static_route_diff(
+            service_key=mapping.service_key,
+            desired_routes=desired_static_route_specs,
+            actual_routes=actual_static_routes,
+        )
 
         desired_shards = shard_object_group_entries(
             base_name=mapping.object_group_name,
-            entries=desired_entries,
+            entries=desired_domain_entries,
         )
         desired_entries_by_group = {shard.name: shard.entries for shard in desired_shards}
 
@@ -101,6 +125,7 @@ class ServiceSyncPlanner:
                     actual_state=actual_state,
                     actual_route_binding=actual_route_binding,
                     ensure_route=bool(shard_desired_entries),
+                    static_route_diff=static_route_diff if index == 0 else None,
                     remove_object_group=index > 0
                     and not shard_desired_entries
                     and actual_state.exists,
@@ -115,15 +140,31 @@ class ServiceSyncPlanner:
         desired_entries: Iterable[str | ObjectGroupEntry],
         actual_state: ObjectGroupState,
         actual_route_binding: RouteBindingState,
+        actual_static_routes: Iterable[StaticRouteState] = (),
     ) -> ServiceSyncPlan:
         self._validate_mapping(mapping)
+        normalized_desired_entries = normalize_object_group_entries(
+            desired_entries, field_name="desired_entries"
+        )
+        desired_domain_entries = tuple(
+            entry for entry in normalized_desired_entries if entry.kind == "domain"
+        )
+        static_route_specs = build_static_route_specs(
+            mapping=mapping,
+            desired_entries=normalized_desired_entries,
+        )
         return self._build_plan(
             mapping=mapping,
             object_group_name=mapping.object_group_name,
-            desired_entries=desired_entries,
+            desired_entries=desired_domain_entries,
             actual_state=actual_state,
             actual_route_binding=actual_route_binding,
-            ensure_route=True,
+            ensure_route=bool(desired_domain_entries),
+            static_route_diff=build_static_route_diff(
+                service_key=mapping.service_key,
+                desired_routes=static_route_specs,
+                actual_routes=actual_static_routes,
+            ),
             remove_object_group=False,
         )
 
@@ -143,6 +184,7 @@ class ServiceSyncPlanner:
         actual_state: ObjectGroupState,
         actual_route_binding: RouteBindingState,
         ensure_route: bool,
+        static_route_diff: StaticRouteDiff | None,
         remove_object_group: bool,
     ) -> ServiceSyncPlan:
         if actual_state.name != object_group_name:
@@ -198,6 +240,7 @@ class ServiceSyncPlanner:
             object_group_diff=object_group_diff,
             desired_route_binding=desired_route_binding,
             route_binding_diff=route_binding_diff,
+            static_route_diff=static_route_diff,
             remove_route=desired_route_binding is None and actual_route_binding.exists,
             remove_object_group=remove_object_group,
         )

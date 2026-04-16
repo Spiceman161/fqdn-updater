@@ -171,7 +171,7 @@ class RouterServiceMappingConfig(BaseModel):
     route_target_type: Literal["interface", "gateway"]
     route_target_value: str
     route_interface: str | None = None
-    exclusive: bool = False
+    exclusive: bool = True
     auto: bool = True
     managed: bool = True
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 from collections.abc import Sequence
 from typing import Any
@@ -14,6 +15,11 @@ from fqdn_updater.domain.keenetic import (
     ObjectGroupState,
     RouteBindingSpec,
     RouteBindingState,
+)
+from fqdn_updater.domain.static_route_diff import (
+    MANAGED_STATIC_ROUTE_COMMENT_PREFIX,
+    StaticRouteSpec,
+    StaticRouteState,
 )
 
 _MAX_COMMANDS_PER_BATCH = 200
@@ -95,6 +101,55 @@ class KeeneticRciClient(KeeneticClient):
             object_group_name=normalized_name,
         )
 
+    def get_static_routes(self) -> tuple[StaticRouteState, ...]:
+        ip_response_payload = self._post_commands(
+            operation="get_static_routes(ip)",
+            commands=[{"show": {"sc": {"ip": {"route": {}}}}}],
+        )
+        ip_payload = self._unwrap_response_path(
+            ip_response_payload,
+            operation="get_static_routes(ip)",
+            path=("show", "sc", "ip"),
+        )
+        if not isinstance(ip_payload, dict):
+            raise self._runtime_error(
+                "get_static_routes(ip)",
+                f"ip payload must be an object, got {type(ip_payload).__name__}",
+            )
+        ip_route_payload = ip_payload.get("route", {})
+
+        ipv6_response_payload = self._post_commands(
+            operation="get_static_routes(ipv6)",
+            commands=[{"show": {"sc": {"ipv6": {"route": {}}}}}],
+        )
+        ipv6_payload = self._unwrap_response_path(
+            ipv6_response_payload,
+            operation="get_static_routes(ipv6)",
+            path=("show", "sc", "ipv6"),
+        )
+        if not isinstance(ipv6_payload, dict):
+            raise self._runtime_error(
+                "get_static_routes(ipv6)",
+                f"ipv6 payload must be an object, got {type(ipv6_payload).__name__}",
+            )
+        ipv6_route_payload = ipv6_payload.get("route", {})
+
+        return tuple(
+            sorted(
+                (
+                    *self._parse_static_routes(
+                        route_payload=ip_route_payload,
+                        operation="get_static_routes(ip)",
+                    ),
+                    *self._parse_static_routes(
+                        route_payload=ipv6_route_payload,
+                        operation="get_static_routes(ipv6)",
+                    ),
+                ),
+                key=lambda route: route.sort_key,
+            )
+        )
+
     def ensure_object_group(self, name: str) -> None:
         normalized_name = _require_non_blank(name, "name")
         self._post_commands(
@@ -147,6 +202,18 @@ class KeeneticRciClient(KeeneticClient):
             if self._is_missing_route_error(exc, object_group_name=binding.object_group_name):
                 return
             raise
+
+    def ensure_static_route(self, route: StaticRouteSpec) -> None:
+        self._post_commands(
+            operation=f"ensure_static_route({route.network})",
+            commands=[self._build_ensure_static_route_command(route)],
+        )
+
+    def remove_static_route(self, route: StaticRouteState) -> None:
+        self._post_commands(
+            operation=f"remove_static_route({route.network})",
+            commands=[self._build_remove_static_route_command(route)],
+        )
 
     def save_config(self) -> None:
         self._post_commands(
@@ -335,6 +402,44 @@ class KeeneticRciClient(KeeneticClient):
                 self._format_cli_argument(binding.route_interface, "route_interface")
             )
         return {"parse": " ".join(route_parts)}
+
+    def _build_ensure_static_route_command(self, route: StaticRouteSpec) -> dict[str, Any]:
+        namespace = "ip" if route.version == 4 else "ipv6"
+        return {namespace: {"route": self._build_static_route_payload(route=route, remove=False)}}
+
+    def _build_remove_static_route_command(self, route: StaticRouteState) -> dict[str, Any]:
+        network = ipaddress.ip_network(route.network, strict=False)
+        namespace = "ip" if network.version == 4 else "ipv6"
+        return {namespace: {"route": self._build_static_route_payload(route=route, remove=True)}}
+
+    def _build_static_route_payload(
+        self,
+        *,
+        route: StaticRouteSpec | StaticRouteState,
+        remove: bool,
+    ) -> dict[str, Any]:
+        network = ipaddress.ip_network(route.network, strict=False)
+        if network.version == 4:
+            payload: dict[str, Any] = {"network": str(network.network_address)}
+            payload["mask"] = str(network.netmask)
+        else:
+            payload = {"prefix": str(network)}
+
+        if route.route_target_type == "gateway":
+            payload["gateway"] = route.route_target_value
+            if route.route_interface is not None:
+                payload["interface"] = route.route_interface
+        else:
+            payload["interface"] = route.route_target_value
+
+        if route.comment is not None:
+            payload["comment"] = route.comment
+        if not remove:
+            payload["auto"] = route.auto
+            payload["reject"] = route.exclusive
+        if remove:
+            payload["no"] = True
+        return payload
 
     def _is_missing_route_error(self, exc: RuntimeError, *, object_group_name: str) -> bool:
         message = str(exc)
@@ -562,6 +667,229 @@ class KeeneticRciClient(KeeneticClient):
                 )
 
         return ObjectGroupState(name=name, exists=True, entries=tuple(entries))
+
+    def _parse_static_routes(
+        self,
+        *,
+        route_payload: Any,
+        operation: str,
+    ) -> tuple[StaticRouteState, ...]:
+        raw_routes = self._extract_static_route_items(
+            route_payload,
+            operation=operation,
+        )
+        parsed_routes: list[StaticRouteState] = []
+        for raw_route in raw_routes:
+            try:
+                parsed_route = self._parse_static_route_item(
+                    raw_route=raw_route,
+                    operation=operation,
+                )
+            except ValueError as exc:
+                if self._contains_managed_route_marker(raw_route):
+                    raise self._runtime_error(
+                        operation,
+                        f"managed static route is not parseable: {exc}",
+                    ) from exc
+                continue
+            parsed_routes.append(parsed_route)
+        return tuple(sorted(parsed_routes, key=lambda route: route.sort_key))
+
+    def _extract_static_route_items(
+        self,
+        route_payload: Any,
+        *,
+        operation: str,
+    ) -> tuple[dict[str, Any], ...]:
+        if route_payload is None:
+            return ()
+        if isinstance(route_payload, list):
+            return tuple(item for item in route_payload if isinstance(item, dict))
+        if not isinstance(route_payload, dict):
+            raise self._runtime_error(
+                operation,
+                f"route payload must be an object or list, got {type(route_payload).__name__}",
+            )
+
+        for container_field in ("route", "routes", "entry", "entries"):
+            nested_payload = route_payload.get(container_field)
+            if nested_payload is not None:
+                return self._extract_static_route_items(
+                    nested_payload,
+                    operation=operation,
+                )
+
+        if self._is_static_route_item_candidate(route_payload):
+            return (route_payload,)
+
+        items: list[dict[str, Any]] = []
+        for value in route_payload.values():
+            if isinstance(value, dict):
+                if self._is_static_route_item_candidate(value):
+                    items.append(value)
+                else:
+                    items.extend(
+                        self._extract_static_route_items(
+                            value,
+                            operation=operation,
+                        )
+                    )
+            elif isinstance(value, list):
+                items.extend(
+                    self._extract_static_route_items(
+                        value,
+                        operation=operation,
+                    )
+                )
+        return tuple(items)
+
+    def _looks_like_static_route_item(self, payload: dict[str, Any]) -> bool:
+        destination_fields = {"network", "prefix", "ip", "host", "destination", "target"}
+        target_fields = {"gateway", "interface"}
+        return bool(destination_fields & payload.keys()) and bool(target_fields & payload.keys())
+
+    def _is_static_route_item_candidate(self, payload: dict[str, Any]) -> bool:
+        if self._looks_like_static_route_item(payload):
+            return True
+
+        route_fields = {
+            "auto",
+            "comment",
+            "description",
+            "destination",
+            "exclusive",
+            "gateway",
+            "host",
+            "interface",
+            "ip",
+            "mask",
+            "network",
+            "prefix",
+            "prefix-length",
+            "prefixlen",
+            "reject",
+            "target",
+            "type",
+        }
+        return bool(route_fields & payload.keys()) and self._contains_managed_route_marker(payload)
+
+    def _parse_static_route_item(
+        self,
+        *,
+        raw_route: dict[str, Any],
+        operation: str,
+    ) -> StaticRouteState:
+        comment = self._parse_static_route_comment(raw_route)
+
+        network = self._parse_static_route_network(raw_route)
+        route_target_type = self._parse_static_route_target_type(raw_route)
+        route_target_value = self._parse_static_route_target_value(
+            raw_route=raw_route,
+            route_target_type=route_target_type,
+        )
+        route_interface = None
+        if route_target_type == "gateway":
+            route_interface = self._parse_optional_string(
+                raw_route.get("interface"),
+                operation=operation,
+                field_name="interface",
+            )
+        auto = self._parse_optional_boolean(
+            raw_route.get("auto"),
+            operation=operation,
+            field_name="auto",
+            default=False,
+        )
+        exclusive = self._parse_optional_boolean(
+            raw_route.get("reject", raw_route.get("exclusive")),
+            operation=operation,
+            field_name="reject",
+            default=False,
+        )
+        return StaticRouteState(
+            network=network,
+            route_target_type=route_target_type,
+            route_target_value=route_target_value,
+            route_interface=route_interface,
+            auto=auto,
+            exclusive=exclusive,
+            comment=comment,
+        )
+
+    def _parse_static_route_comment(self, raw_route: dict[str, Any]) -> str | None:
+        comment = raw_route.get("comment", raw_route.get("description"))
+        if comment is None:
+            return None
+        if not isinstance(comment, str):
+            raise ValueError(f"field 'comment' must be a string, got {type(comment).__name__}")
+        return _require_non_blank(comment, "comment")
+
+    def _parse_static_route_network(self, raw_route: dict[str, Any]) -> str:
+        raw_network = (
+            raw_route.get("network")
+            or raw_route.get("prefix")
+            or raw_route.get("ip")
+            or raw_route.get("host")
+            or raw_route.get("destination")
+            or raw_route.get("target")
+        )
+        if not isinstance(raw_network, str):
+            raise ValueError("route is missing string destination field")
+
+        raw_mask = raw_route.get("mask")
+        raw_prefixlen = raw_route.get("prefixlen", raw_route.get("prefix-length"))
+        if raw_mask is not None:
+            if not isinstance(raw_mask, str):
+                raise ValueError("field 'mask' must be a string")
+            return str(ipaddress.ip_network(f"{raw_network}/{raw_mask}", strict=False))
+        if raw_prefixlen is not None:
+            return str(ipaddress.ip_network(f"{raw_network}/{int(raw_prefixlen)}", strict=False))
+        if "/" in raw_network:
+            return str(ipaddress.ip_network(raw_network, strict=False))
+
+        address = ipaddress.ip_address(raw_network)
+        prefixlen = 32 if address.version == 4 else 128
+        return str(ipaddress.ip_network(f"{raw_network}/{prefixlen}", strict=False))
+
+    def _parse_static_route_target_type(self, raw_route: dict[str, Any]) -> str:
+        explicit_type = raw_route.get("type")
+        if isinstance(explicit_type, str):
+            normalized_type = explicit_type.strip().lower()
+            if normalized_type in {"interface", "gateway"}:
+                return normalized_type
+            raise ValueError(
+                f"field 'type' must be 'interface' or 'gateway', got {explicit_type!r}"
+            )
+
+        if isinstance(raw_route.get("gateway"), str):
+            return "gateway"
+        if isinstance(raw_route.get("interface"), str):
+            return "interface"
+        raise ValueError("route is missing string gateway or interface field")
+
+    def _parse_static_route_target_value(
+        self,
+        *,
+        raw_route: dict[str, Any],
+        route_target_type: str,
+    ) -> str:
+        if route_target_type == "gateway":
+            gateway = raw_route.get("gateway")
+            if not isinstance(gateway, str):
+                raise ValueError("gateway route is missing string field 'gateway'")
+            return _require_non_blank(gateway, "gateway")
+
+        interface = raw_route.get("interface")
+        if not isinstance(interface, str):
+            raise ValueError("interface route is missing string field 'interface'")
+        return _require_non_blank(interface, "interface")
+
+    def _contains_managed_route_marker(self, raw_route: dict[str, Any]) -> bool:
+        try:
+            raw_text = json.dumps(raw_route, ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            raw_text = str(raw_route)
+        return MANAGED_STATIC_ROUTE_COMMENT_PREFIX in raw_text
 
     def _parse_dns_proxy_enabled(self, dns_proxy_payload: Any) -> bool:
         if not isinstance(dns_proxy_payload, dict):
