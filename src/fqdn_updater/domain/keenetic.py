@@ -5,6 +5,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from fqdn_updater.domain.object_group_entry import (
+    ObjectGroupEntry,
+    normalize_object_group_entries,
+)
+
 _OBJECT_GROUP_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
@@ -29,7 +34,28 @@ class ObjectGroupState(BaseModel):
 
     name: str
     entries: tuple[str, ...] = Field(default_factory=tuple)
+    typed_entries: tuple[ObjectGroupEntry, ...] = Field(default_factory=tuple)
     exists: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _populate_compatible_entries(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        if not data.get("typed_entries") and data.get("entries"):
+            data = dict(data)
+            data["typed_entries"] = normalize_object_group_entries(
+                data["entries"], field_name="entries"
+            )
+        if not data.get("entries") and data.get("typed_entries"):
+            data = dict(data)
+            typed_entries = normalize_object_group_entries(
+                data["typed_entries"], field_name="typed_entries"
+            )
+            data["typed_entries"] = typed_entries
+            data["entries"] = tuple(entry.value for entry in typed_entries)
+        return data
 
     @field_validator("name", mode="before")
     @classmethod
@@ -52,9 +78,14 @@ class ObjectGroupState(BaseModel):
             normalized_entries.append(normalized_item)
         return tuple(sorted(normalized_entries))
 
+    @field_validator("typed_entries", mode="before")
+    @classmethod
+    def _validate_typed_entries(cls, value: Any) -> tuple[ObjectGroupEntry, ...]:
+        return normalize_object_group_entries(value, field_name="typed_entries")
+
     @model_validator(mode="after")
     def _validate_absent_group_state(self) -> ObjectGroupState:
-        if not self.exists and self.entries:
+        if not self.exists and (self.entries or self.typed_entries):
             raise ValueError("entries must be empty when exists is false")
         return self
 

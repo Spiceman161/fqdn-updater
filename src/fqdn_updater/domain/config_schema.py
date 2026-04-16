@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+from fqdn_updater.domain.source_normalizer import SourceFormat
+
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
@@ -102,12 +104,20 @@ class RouterConfig(BaseModel):
         return self
 
 
+class ServiceSourceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: HttpUrl
+    format: SourceFormat
+
+
 class ServiceDefinitionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     key: str
-    source_urls: list[HttpUrl]
-    format: Literal["raw_domain_list", "raw_cidr_list", "mixed"]
+    source_urls: list[HttpUrl] = Field(default_factory=list)
+    format: SourceFormat | None = None
+    sources: list[ServiceSourceConfig] = Field(default_factory=list)
     enabled: bool = True
     description: str | None = None
 
@@ -121,9 +131,34 @@ class ServiceDefinitionConfig(BaseModel):
     @field_validator("source_urls")
     @classmethod
     def _validate_source_urls(cls, values: list[HttpUrl]) -> list[HttpUrl]:
-        if not values:
-            raise ValueError("source_urls must contain at least one URL")
         return values
+
+    @model_validator(mode="after")
+    def _validate_source_shape(self) -> ServiceDefinitionConfig:
+        has_legacy_urls = bool(self.source_urls)
+        has_legacy_format = self.format is not None
+        has_sources = bool(self.sources)
+
+        if has_sources and (has_legacy_urls or has_legacy_format):
+            raise ValueError("service must define either sources or source_urls/format, not both")
+        if has_sources:
+            return self
+        if not has_legacy_urls:
+            raise ValueError("source_urls must contain at least one URL")
+        if not has_legacy_format:
+            raise ValueError("format must be set when source_urls are used")
+        return self
+
+    @property
+    def resolved_sources(self) -> tuple[ServiceSourceConfig, ...]:
+        if self.sources:
+            return tuple(self.sources)
+        if self.format is None:
+            return ()
+        return tuple(
+            ServiceSourceConfig(url=source_url, format=self.format)
+            for source_url in self.source_urls
+        )
 
 
 class RouterServiceMappingConfig(BaseModel):

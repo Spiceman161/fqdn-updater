@@ -428,11 +428,13 @@ class KeeneticRciClient(KeeneticClient):
                     f"get_object_group({name})",
                     f"group '{name}' include item must be an object, got {type(item).__name__}",
                 )
-            address = item.get("address")
+            address = item.get("fqdn")
+            if not isinstance(address, str):
+                address = item.get("address")
             if not isinstance(address, str):
                 raise self._runtime_error(
                     f"get_object_group({name})",
-                    "group include item is missing string field 'address'",
+                    "group include item is missing string field 'fqdn' or 'address'",
                 )
             entries.append(address)
 

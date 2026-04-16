@@ -4,12 +4,13 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from fqdn_updater.domain.config_schema import ServiceDefinitionConfig
+from fqdn_updater.domain.object_group_entry import ObjectGroupEntry, sort_object_group_entries
 from fqdn_updater.domain.source_loading import (
     NormalizedServiceSource,
     ServiceSourceFailure,
     SourceLoadReport,
 )
-from fqdn_updater.domain.source_normalizer import normalize_entries
+from fqdn_updater.domain.source_normalizer import normalize_typed_entries
 
 
 class RawSourceFetcher(Protocol):
@@ -45,15 +46,15 @@ class SourceLoadingService:
         return SourceLoadReport(loaded=tuple(loaded), failed=tuple(failed))
 
     def _load_service(self, service: ServiceDefinitionConfig) -> NormalizedServiceSource:
-        merged_entries: set[str] = set()
+        merged_entries: set[ObjectGroupEntry] = set()
 
-        for source_url in service.source_urls:
-            source_url_text = str(source_url)
+        for source in service.resolved_sources:
+            source_url_text = str(source.url)
             try:
                 raw_text = self._fetcher.fetch_text(source_url_text)
-                normalized_entries = normalize_entries(
+                normalized_entries = normalize_typed_entries(
                     raw_text=raw_text,
-                    source_format=service.format,
+                    source_format=source.format,
                 )
             except Exception as exc:
                 raise _ServiceLoadFailure(
@@ -63,9 +64,11 @@ class SourceLoadingService:
 
             merged_entries.update(normalized_entries)
 
+        typed_entries = sort_object_group_entries(merged_entries)
         return NormalizedServiceSource(
             service_key=service.key,
-            entries=tuple(sorted(merged_entries)),
+            typed_entries=typed_entries,
+            entries=tuple(entry.value for entry in typed_entries),
         )
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fqdn_updater.domain.config_schema import ServiceDefinitionConfig
+from fqdn_updater.domain.config_schema import ServiceDefinitionConfig, ServiceSourceConfig
 
 _BASE_URL = "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main"
 
@@ -19,8 +19,20 @@ _BUILTIN_SERVICES: tuple[ServiceDefinitionConfig, ...] = (
     ),
     ServiceDefinitionConfig(
         key="meta",
-        source_urls=[f"{_BASE_URL}/Services/meta.lst"],
-        format="raw_domain_list",
+        sources=[
+            ServiceSourceConfig(
+                url=f"{_BASE_URL}/Services/meta.lst",
+                format="raw_domain_list",
+            ),
+            ServiceSourceConfig(
+                url=f"{_BASE_URL}/Subnets/IPv4/meta.lst",
+                format="raw_cidr_list",
+            ),
+            ServiceSourceConfig(
+                url=f"{_BASE_URL}/Subnets/IPv6/meta.lst",
+                format="raw_cidr_list",
+            ),
+        ],
         description="Meta family domains from itdoginfo/allow-domains.",
     ),
     ServiceDefinitionConfig(
@@ -55,8 +67,20 @@ _BUILTIN_SERVICES: tuple[ServiceDefinitionConfig, ...] = (
     ),
     ServiceDefinitionConfig(
         key="telegram",
-        source_urls=[f"{_BASE_URL}/Services/telegram.lst"],
-        format="raw_domain_list",
+        sources=[
+            ServiceSourceConfig(
+                url=f"{_BASE_URL}/Services/telegram.lst",
+                format="raw_domain_list",
+            ),
+            ServiceSourceConfig(
+                url=f"{_BASE_URL}/Subnets/IPv4/telegram.lst",
+                format="raw_cidr_list",
+            ),
+            ServiceSourceConfig(
+                url=f"{_BASE_URL}/Subnets/IPv6/telegram.lst",
+                format="raw_cidr_list",
+            ),
+        ],
         description="Telegram domains from itdoginfo/allow-domains.",
     ),
     ServiceDefinitionConfig(

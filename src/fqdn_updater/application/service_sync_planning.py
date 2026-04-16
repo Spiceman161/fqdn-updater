@@ -13,6 +13,7 @@ from fqdn_updater.domain.keenetic import (
     RouteBindingState,
 )
 from fqdn_updater.domain.object_group_diff import ObjectGroupDiff, build_object_group_diff
+from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.route_binding_diff import build_route_binding_diff
 
 
@@ -47,7 +48,7 @@ class ServiceSyncPlanner:
     def plan(
         self,
         mapping: RouterServiceMappingConfig,
-        desired_entries: Iterable[str],
+        desired_entries: Iterable[str | ObjectGroupEntry],
         actual_state: ObjectGroupState,
         actual_route_binding: RouteBindingState,
     ) -> ServiceSyncPlan:

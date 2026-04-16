@@ -19,6 +19,7 @@ from fqdn_updater.application.run_support import (
 )
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.run_artifact import (
     FailureDetail,
     RouterRunResult,
@@ -104,7 +105,7 @@ class SyncOrchestrator:
             managed_mappings = eligible_mappings(config=config)
             loaded_sources = self._source_loader.load_enabled_services(config.services)
             desired_entries_by_service = {
-                source.service_key: source.entries for source in loaded_sources.loaded
+                source.service_key: source.typed_entries for source in loaded_sources.loaded
             }
             source_failures_by_service = group_source_failures(report=loaded_sources)
 
@@ -159,7 +160,7 @@ class SyncOrchestrator:
         logger: RunLogger,
         router: RouterConfig,
         mappings: Sequence[RouterServiceMappingConfig],
-        desired_entries_by_service: dict[str, tuple[str, ...]],
+        desired_entries_by_service: dict[str, tuple[ObjectGroupEntry, ...]],
         source_failures_by_service: dict[str, str],
     ) -> tuple[RouterRunResult, list[ServiceSyncPlan]]:
         service_results: list[ServiceRunResult] = []
