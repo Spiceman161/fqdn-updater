@@ -14,3 +14,6 @@ __pycache__/
 .codex/
 data/*
 !data/.gitkeep
+
+# Local reference artifacts copied for study/adaptation only.
+/artifacts/gotelegram-panel-reference/

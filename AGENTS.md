@@ -84,6 +84,18 @@ Expected supporting roots:
 
 ## Existing repository conventions
 
+### Local reference artifacts
+- `artifacts/gotelegram-panel-reference/` is a local, gitignored reference copy of
+  the extracted GoTelegram terminal dashboard.
+- Use it only as a UI/layout reference for future FQDN-updater CLI work.
+- Run the preview with:
+  - `bash artifacts/gotelegram-panel-reference/panel_preview.sh`
+- The preview script must remain read-only: no package installs, no systemd,
+  no Docker, no nginx/telemt operations, and no network calls.
+- Do not import this artifact from production code. When adapting the idea,
+  implement the real panel in Python under the `cli` layer and feed it typed
+  application/domain state.
+
 ### Edit autonomy
 - Inside this repository workspace, do not ask for confirmation before non-destructive file edits that are required to complete the accepted task.
 - Ask before destructive actions, network actions that need approval, or writes outside the workspace.
