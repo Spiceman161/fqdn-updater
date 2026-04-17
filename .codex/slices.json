@@ -1,8 +1,8 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S19",
-  "updated_at": "2026-04-16T00:00:00Z",
+  "current_slice_id": "S22",
+  "updated_at": "2026-04-17T00:00:00Z",
   "slices": [
     {
       "id": "S0",
@@ -303,6 +303,110 @@
       ],
       "depends_on": ["S7", "S8", "S10", "S13", "S14"],
       "notes": "Requested after real-router validation showed Keenetic object-groups can hold FQDN entries and IP subnets in the same list. Completed with green verification on 2026-04-16."
+    },
+    {
+      "id": "S20",
+      "title": "Terminal Control Panel Skeleton",
+      "status": "done",
+      "goal": "Introduce a Rich-based terminal control panel for local router and list configuration.",
+      "summary": "Add the first interactive CLI panel with a local dashboard, router creation, generated secret storage, preset service selection, mapping creation, and list toggles while preserving CLI-first architecture.",
+      "acceptance": [
+        "A `fqdn-updater panel` command exists and renders a compact terminal dashboard.",
+        "The panel can create scaffold config when the configured file is missing.",
+        "The panel can add a router, generate a password, store it in a gitignored secrets env-file, and save only the env reference in config.",
+        "The panel can create mappings from a preset service checklist with `fqdn-<service>` object-group names.",
+        "The panel can replace router fields without deleting existing mappings.",
+        "The implementation stays in Python and uses existing application/infrastructure config boundaries.",
+        "./scripts/verify.sh passes with CLI, config, and secret env-file tests."
+      ],
+      "depends_on": ["S17", "S19"],
+      "notes": "Completed with green verification on 2026-04-17."
+    },
+    {
+      "id": "S21",
+      "title": "Panel Password Generator And Secret Rotation",
+      "status": "done",
+      "goal": "Make panel-managed RCI credential lifecycle production-grade and auditable.",
+      "summary": "Extract password generation into an explicit service, harden secrets env-file handling, and add a panel rotation flow that updates the stored secret while showing the new password exactly once.",
+      "acceptance": [
+        "Password generation policy is centralized, tested, and produces long URL-safe secrets suitable for Keenetic RCI users.",
+        "Secrets env-file writes preserve existing keys, use restrictive file permissions where supported, and never store blank values.",
+        "The panel has a rotate-password action for an existing router that preserves router mappings and updates only the secret value/reference.",
+        "The generated password is displayed once with clear Keenetic user update instructions.",
+        "Config, run artifacts, and normal logs do not contain raw router passwords.",
+        "./scripts/verify.sh passes with tests for generation, rotation, and secret redaction."
+      ],
+      "depends_on": ["S20"],
+      "notes": "Completed with green verification on 2026-04-17."
+    },
+    {
+      "id": "S22",
+      "title": "WireGuard Interface Discovery For Panel",
+      "status": "ready",
+      "goal": "Let the panel discover WireGuard interfaces from a configured Keenetic router and offer them as route targets.",
+      "summary": "Add a read-only RCI discovery path for router interfaces, expose typed route target candidates through application code, and use them in the panel with manual fallback.",
+      "acceptance": [
+        "Keenetic RCI infrastructure can read interface candidates without mutating router state.",
+        "Discovered candidates include stable interface id/name and enough status detail for operator choice when available.",
+        "Application code exposes typed route target candidates without leaking raw RCI payloads into CLI.",
+        "The panel offers discovered WireGuard interfaces for the default route target.",
+        "If `google_ai` is selected, the panel can choose a separate discovered interface for that service.",
+        "Manual interface entry remains available when discovery fails or credentials are not ready.",
+        "./scripts/verify.sh passes with tests for RCI parsing, application discovery, and panel fallback behavior."
+      ],
+      "depends_on": ["S10", "S16", "S20", "S21"],
+      "notes": "Discovery must remain read-only and behind the Keenetic infrastructure boundary."
+    },
+    {
+      "id": "S23",
+      "title": "Panel Run History And Diagnostics",
+      "status": "pending",
+      "goal": "Make the panel Runs screen useful for operators without hiding network or write side effects.",
+      "summary": "Show recent local run artifacts and add explicit panel actions for status and dry-run previews, keeping sync/apply behind a clear confirmation gate.",
+      "acceptance": [
+        "The panel lists recent run artifacts from the configured artifacts directory with status, timestamp, and router counts.",
+        "The panel can run read-only status diagnostics only after explicit user selection.",
+        "The panel can run dry-run preview only after explicit user selection and renders the same outcome semantics as the CLI.",
+        "Sync/apply is either still out of scope or requires a clear confirmation that router writes will occur.",
+        "Network failures are displayed per router/service without crashing the panel loop.",
+        "./scripts/verify.sh passes with tests for artifact reading and panel run action rendering."
+      ],
+      "depends_on": ["S11", "S15", "S16", "S20"],
+      "notes": "This slice should not make hidden network calls from the main dashboard."
+    },
+    {
+      "id": "S24",
+      "title": "Panel Router And List Maintenance",
+      "status": "pending",
+      "goal": "Complete everyday config maintenance workflows inside the terminal panel.",
+      "summary": "Add safe edit flows for enabling/disabling routers, editing route targets, removing mappings, and reviewing selected services before save.",
+      "acceptance": [
+        "The panel can enable or disable an existing router without deleting its config.",
+        "The panel can edit default route target and `google_ai` route override for an existing router.",
+        "The panel can add or remove service mappings through the checklist and validates config before writing.",
+        "The panel shows a save summary before every config mutation.",
+        "Failed validation leaves the existing config unchanged.",
+        "./scripts/verify.sh passes with tests for router maintenance and mapping update flows."
+      ],
+      "depends_on": ["S17", "S20"],
+      "notes": "Keep this focused on local config writes; router mutation still belongs to sync."
+    },
+    {
+      "id": "S25",
+      "title": "Panel Operator Documentation And Deployment UX",
+      "status": "pending",
+      "goal": "Document the panel workflow, secrets env-file behavior, and Docker/systemd operational path.",
+      "summary": "Update operator docs so a user can add a router through the panel, install the generated password on Keenetic, select lists, run validation, and then schedule sync safely.",
+      "acceptance": [
+        "User documentation explains `fqdn-updater panel --config config.json` setup from an empty workspace.",
+        "Docs explain `.env.secrets`, gitignore expectations, Docker env-file or volume considerations, and password recovery by regeneration.",
+        "Docs include the Keenetic-side steps for creating the low-privilege RCI user and applying the generated password.",
+        "Docs explain route target selection, current manual interface entry, and future WireGuard discovery behavior once available.",
+        "Docs point users to `status`, `dry-run`, and `sync` as the verification path after panel setup.",
+        "./scripts/verify.sh passes after documentation updates."
+      ],
+      "depends_on": ["S20", "S21"],
+      "notes": "Documentation should stay operator-focused and avoid promising a web UI or daemon behavior."
     }
   ]
 }

@@ -13,9 +13,9 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 
 ## Current State
 
-- Current slice: `S19` — Mixed Domain And Subnet Source Groups
-- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation; `S11` — CLI Dry-Run Entry Point; `S12` — Managed Object-Group Apply Core; `S13` — Apply Orchestration And Sync CLI; `S14` — Route Binding Read And Apply; `S15` — Run Logging And Rich Failure Artifacts; `S16` — Status And Preconditions Diagnostics; `S17` — Config Management CLI; `S18` — Packaging And Scheduled Execution; `S19` — Mixed Domain And Subnet Source Groups
-- Next ready slice: none
+- Current slice: `S22` — WireGuard Interface Discovery For Panel
+- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation; `S11` — CLI Dry-Run Entry Point; `S12` — Managed Object-Group Apply Core; `S13` — Apply Orchestration And Sync CLI; `S14` — Route Binding Read And Apply; `S15` — Run Logging And Rich Failure Artifacts; `S16` — Status And Preconditions Diagnostics; `S17` — Config Management CLI; `S18` — Packaging And Scheduled Execution; `S19` — Mixed Domain And Subnet Source Groups; `S20` — Terminal Control Panel Skeleton; `S21` — Panel Password Generator And Secret Rotation
+- Next ready slice: `S22` — WireGuard Interface Discovery For Panel
 
 ## Backlog
 
@@ -38,6 +38,12 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 | S14 | done | Route Binding Read And Apply | Implement managed route binding support for configured object-groups. |
 | S15 | done | Run Logging And Rich Failure Artifacts | Add operator-grade logging and richer artifact detail for dry-run and sync runs. |
 | S16 | done | Status And Preconditions Diagnostics | Add user-facing status diagnostics for local config checks and remote Keenetic preconditions. |
-| S17 | pending | Config Management CLI | Provide first-class CLI workflows for router and mapping management without manual JSON editing. |
+| S17 | done | Config Management CLI | Provide first-class CLI workflows for router and mapping management without manual JSON editing. |
 | S18 | done | Packaging And Scheduled Execution | Package the tool for repeatable VPS execution through Docker and systemd. |
 | S19 | done | Mixed Domain And Subnet Source Groups | Allow one managed Keenetic object-group to be synchronized from mixed domain, IPv4 CIDR, and IPv6 CIDR sources. |
+| S20 | done | Terminal Control Panel Skeleton | Introduce a Rich-based terminal control panel for local router and list configuration. |
+| S21 | done | Panel Password Generator And Secret Rotation | Make panel-managed RCI credential lifecycle production-grade and auditable. |
+| S22 | ready | WireGuard Interface Discovery For Panel | Let the panel discover WireGuard interfaces from a configured Keenetic router and offer them as route targets. |
+| S23 | pending | Panel Run History And Diagnostics | Make the panel Runs screen useful for operators without hiding network or write side effects. |
+| S24 | pending | Panel Router And List Maintenance | Complete everyday config maintenance workflows inside the terminal panel. |
+| S25 | pending | Panel Operator Documentation And Deployment UX | Document the panel workflow, secrets env-file behavior, and Docker/systemd operational path. |
