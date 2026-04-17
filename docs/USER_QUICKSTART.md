@@ -71,6 +71,18 @@ pip install -e .[dev]
 .venv/bin/python -m fqdn_updater status --config config.json
 ```
 
+## KeenDNS RCI endpoint
+
+Для RCI через KeenDNS используйте две разные настройки:
+
+- в web-интерфейсе Keenetic для web application `rci.<domain>` выберите protocol `HTTP` и порт `79`;
+- в `config.json` храните внешний endpoint как `https://rci.<domain>/rci/`.
+
+Это нормальная схема: `fqdn-updater` подключается к опубликованному KeenDNS endpoint по HTTPS,
+а KeenDNS/HTTP Proxy проксирует запрос к локальному RCI API роутера на HTTP-порт `79`.
+Если в panel или `router add --rci-url` вставить адрес, скопированный из Keenetic как
+`http://rci.<domain>`, инструмент сохранит его как `https://rci.<domain>/rci/`.
+
 ## Docker Compose runtime
 
 Контейнерный runtime использует установленный CLI entrypoint `fqdn-updater`.

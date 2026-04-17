@@ -221,6 +221,8 @@ Responsibilities:
 
 Предполагаемые реализации:
 - `KeeneticRciClient` — primary path для внешнего VPS через `https://rci.{name}.keenetic.pro/rci/` + HTTP Digest Auth.
+  В Keenetic web application для этого 4-го уровня используется HTTP upstream к локальному RCI
+  порту `79`; HTTPS относится к внешнему клиентскому соединению updater -> KeenDNS endpoint.
 - `KeeneticSshClient` — fallback path для локального/прямого доступа.
 
 Для SSH-клиента использовать актуальный синтаксис Keenetic CLI:
@@ -234,6 +236,7 @@ Responsibilities:
 
 Для RCI-клиента использовать:
 - `POST https://rci.{name}.keenetic.pro/rci/`
+- KeenDNS HTTP Proxy web application: protocol `HTTP`, upstream port `79`
 - HTTP Digest Auth
 - JSON array of RCI commands
 - явный `system configuration save` после успешного apply
@@ -375,7 +378,7 @@ fqdn-updater/
       "id": "home-spb",
       "name": "Home Keenetic",
       "rci_url": "https://rci.example.keenetic.pro",
-      "username": "api-updater",
+      "username": "api_updater",
       "auth_method": "digest",
       "password_env": "KEENETIC_PASS_HOME_SPB",
       "enabled": true,
@@ -622,11 +625,11 @@ Diff Engine result
 Предпочтительно:
 - Digest password через env var reference или mounted secret file;
 - SSH key через mounted secret file;
-- не хранить пароль `api-updater` в репозитории, примерах и логах.
+- не хранить пароль `api_updater` в репозитории, примерах и логах.
 
 ### 13.2 RCI/KeenDNS security model
 Для внешнего VPS базовый security profile должен быть таким:
-- отдельный пользователь `api-updater`;
+- отдельный пользователь `api_updater`;
 - только тег `http-proxy`;
 - без admin rights;
 - длинный случайный пароль (32+ символа);

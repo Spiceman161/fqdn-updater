@@ -342,7 +342,7 @@
     {
       "id": "S22",
       "title": "WireGuard Interface Discovery For Panel",
-      "status": "ready",
+      "status": "done",
       "goal": "Let the panel discover WireGuard interfaces from a configured Keenetic router and offer them as route targets.",
       "summary": "Add a read-only RCI discovery path for router interfaces, expose typed route target candidates through application code, and use them in the panel with manual fallback.",
       "acceptance": [
@@ -355,12 +355,12 @@
         "./scripts/verify.sh passes with tests for RCI parsing, application discovery, and panel fallback behavior."
       ],
       "depends_on": ["S10", "S16", "S20", "S21"],
-      "notes": "Discovery must remain read-only and behind the Keenetic infrastructure boundary."
+      "notes": "Completed with green verification on 2026-04-17. Discovery remains read-only and behind the Keenetic infrastructure boundary."
     },
     {
       "id": "S23",
       "title": "Panel Run History And Diagnostics",
-      "status": "pending",
+      "status": "ready",
       "goal": "Make the panel Runs screen useful for operators without hiding network or write side effects.",
       "summary": "Show recent local run artifacts and add explicit panel actions for status and dry-run previews, keeping sync/apply behind a clear confirmation gate.",
       "acceptance": [

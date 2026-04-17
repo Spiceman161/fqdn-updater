@@ -29,6 +29,8 @@ FQDN-updater — это CLI-инструмент для централизова
 - Управление конфигом через CLI-команды.
 - Загрузка доменных списков из `itdoginfo/allow-domains`.
 - Основной способ удалённого доступа к роутеру: `https://rci.{name}.keenetic.pro/rci/` через KeenDNS HTTP Proxy.
+- В настройке KeenDNS web application для RCI upstream должен использоваться `HTTP` к порту `79`;
+  внешний endpoint для updater при этом остаётся `https://rci.{name}.keenetic.pro/rci/`.
 - Аутентификация к RCI API через HTTP Digest Auth.
 - Поддержка выделенного API-пользователя с минимальными правами (`http-proxy` tag, без admin rights).
 - Опциональная рекомендация по firewall whitelist доступа к KeenDNS-публикации только с IP VPS.
@@ -170,7 +172,8 @@ FQDN-updater — это CLI-инструмент для централизова
 - Клиент должен находиться в `Default policy`.
 - Целевой интерфейс маршрута должен иметь статус `Connected`.
 - Для внешнего VPS по RCI должен быть опубликован KeenDNS endpoint `https://rci.{name}.keenetic.pro/rci/` как HTTP Proxy с обязательной авторизацией.
-- Для RCI рекомендуется отдельный пользователь `api-updater` с тегом `http-proxy` и без admin rights.
+- Для этой публикации в web UI Keenetic выбирается protocol `HTTP` и порт `79`; `HTTPS` в config относится к внешнему клиентскому соединению updater -> KeenDNS endpoint.
+- Для RCI рекомендуется отдельный пользователь `api_updater` с тегом `http-proxy` и без admin rights.
 - Рекомендуется firewall whitelist доступа к KeenDNS HTTP Proxy только с IP VPS, если IP статический.
 
 ## 6. Technical Stack
@@ -281,7 +284,7 @@ the updater must remove its entries and remove its route binding.
 ## 9. Security Considerations
 - Authentication method:
   - для внешнего VPS используется HTTP Digest Auth к KeenDNS RCI API;
-  - использовать отдельного пользователя `api-updater` с тегом `http-proxy` и без admin rights.
+  - использовать отдельного пользователя `api_updater` с тегом `http-proxy` и без admin rights.
 - Authorization model: доступ на уровне владения конфигом и контейнером; внутри самого MVP отдельной RBAC-модели нет.
 - Key risks:
   - компрометация Digest credentials;
