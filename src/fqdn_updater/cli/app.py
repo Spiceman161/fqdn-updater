@@ -193,7 +193,11 @@ def router_add_command(
     config: Path = CONFIG_MANAGEMENT_CONFIG_OPTION,
     router_id: str = typer.Option(..., "--id", help="Unique router identifier."),
     name: str = typer.Option(..., "--name", help="Human-readable router name."),
-    rci_url: str = typer.Option(..., "--rci-url", help="KeenDNS RCI HTTPS endpoint URL."),
+    rci_url: str = typer.Option(
+        ...,
+        "--rci-url",
+        help="KeenDNS RCI endpoint URL; copied http://rci... values are saved as https://.../rci/.",
+    ),
     username: str = typer.Option(..., "--username", help="Low-privilege RCI API username."),
     password_env: str | None = typer.Option(
         None,

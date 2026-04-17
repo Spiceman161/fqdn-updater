@@ -195,3 +195,20 @@ class DnsProxyStatus(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool
+
+
+class RouteTargetCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    value: str
+    display_name: str | None = None
+    status: str | None = None
+    detail: str | None = None
+    connected: bool | None = None
+
+    @field_validator("value", "display_name", "status", "detail", mode="before")
+    @classmethod
+    def _validate_text_fields(cls, value: Any, info: Any) -> str | None:
+        if value is None:
+            return None
+        return _require_non_blank(str(value), info.field_name)

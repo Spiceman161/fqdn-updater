@@ -6,7 +6,11 @@ from urllib import error, request
 
 import pytest
 
-from fqdn_updater.domain.keenetic import RouteBindingSpec, RouteBindingState
+from fqdn_updater.domain.keenetic import (
+    RouteBindingSpec,
+    RouteBindingState,
+    RouteTargetCandidate,
+)
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.static_route_diff import StaticRouteSpec, StaticRouteState
 from fqdn_updater.infrastructure.keenetic_rci_client import (
@@ -473,6 +477,163 @@ def test_get_route_binding_reports_absent_binding_when_route_is_missing(router_c
 
     assert state.object_group_name == "svc-telegram"
     assert state.exists is False
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_candidates"),
+    [
+        (
+            [
+                {
+                    "show": {
+                        "interface": {
+                            "Wireguard2": {
+                                "id": "Wireguard2",
+                                "type": "Wireguard",
+                                "description": "Backup tunnel",
+                                "interface-name": "Wireguard2",
+                                "link": "down",
+                                "connected": "no",
+                                "state": "down",
+                            },
+                            "Ethernet0": {
+                                "id": "Ethernet0",
+                                "type": "ethernet",
+                                "description": "Uplink",
+                                "interface-name": "Ethernet0",
+                                "link": "up",
+                                "connected": "yes",
+                                "state": "up",
+                            },
+                            "Wireguard0": {
+                                "id": "Wireguard0",
+                                "type": "Wireguard",
+                                "description": "Primary tunnel",
+                                "interface-name": "Wireguard0",
+                                "link": "connected",
+                                "connected": True,
+                                "state": "connected",
+                            },
+                        }
+                    }
+                }
+            ],
+            (
+                RouteTargetCandidate(
+                    value="Wireguard0",
+                    display_name="Wireguard0",
+                    status="connected",
+                    detail="type=Wireguard, Primary tunnel",
+                    connected=True,
+                ),
+                RouteTargetCandidate(
+                    value="Wireguard2",
+                    display_name="Wireguard2",
+                    status="down",
+                    detail="type=Wireguard, Backup tunnel",
+                    connected=False,
+                ),
+            ),
+        ),
+        (
+            [
+                {
+                    "show": {
+                        "interface": {
+                            "interface": [
+                                {
+                                    "id": "Wireguard3",
+                                    "type": "Wireguard",
+                                    "description": "Nested tunnel",
+                                    "interface-name": "Wireguard3",
+                                    "link": "up",
+                                    "connected": "connected",
+                                    "state": "up",
+                                },
+                                {
+                                    "id": "Other0",
+                                    "type": "ethernet",
+                                    "description": "Ignore me",
+                                    "interface-name": "Other0",
+                                    "link": "up",
+                                    "connected": "yes",
+                                    "state": "up",
+                                },
+                                {
+                                    "id": "Wireguard1",
+                                    "type": "Wireguard",
+                                    "description": "Another tunnel",
+                                    "link": "down",
+                                    "connected": False,
+                                    "state": "down",
+                                },
+                            ]
+                        }
+                    }
+                }
+            ],
+            (
+                RouteTargetCandidate(
+                    value="Wireguard1",
+                    display_name="Wireguard1",
+                    status="down",
+                    detail="type=Wireguard, Another tunnel",
+                    connected=False,
+                ),
+                RouteTargetCandidate(
+                    value="Wireguard3",
+                    display_name="Wireguard3",
+                    status="up",
+                    detail="type=Wireguard, Nested tunnel",
+                    connected=True,
+                ),
+            ),
+        ),
+        (
+            [
+                {
+                    "show": {
+                        "interface": [
+                            {
+                                "name": "Wireguard0",
+                                "class": "Wireguard",
+                                "description": "Class-shaped tunnel",
+                                "link": "up",
+                                "connected": "yes",
+                            },
+                            {
+                                "name": "Bridge0",
+                                "class": "Bridge",
+                                "description": "Local segment",
+                                "link": "up",
+                                "connected": "yes",
+                            },
+                        ]
+                    }
+                }
+            ],
+            (
+                RouteTargetCandidate(
+                    value="Wireguard0",
+                    display_name="Wireguard0",
+                    status="up",
+                    detail="class=Wireguard, Class-shaped tunnel",
+                    connected=True,
+                ),
+            ),
+        ),
+    ],
+)
+def test_discover_wireguard_route_targets_parses_wireguard_shapes_deterministically(
+    router_config, payload: object, expected_candidates: tuple[RouteTargetCandidate, ...]
+) -> None:
+    client, opener = _make_client(router_config, payload)
+
+    candidates = client.discover_wireguard_route_targets()
+
+    assert candidates == expected_candidates
+    assert len(opener.requests) == 1
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == [{"show": {"interface": {}}}]
 
 
 def test_get_object_group_raises_runtime_error_for_invalid_shape(router_config) -> None:

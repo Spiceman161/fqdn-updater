@@ -2,9 +2,36 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from fqdn_updater.domain.config_schema import RouterConfig, RouterServiceMappingConfig
 from fqdn_updater.infrastructure.config_repository import ConfigRepository
+
+
+def normalize_rci_url_input(value: str) -> str:
+    """Normalize operator-entered KeenDNS RCI URL to the external HTTPS endpoint."""
+    normalized_value = value.strip()
+    if not normalized_value:
+        return normalized_value
+
+    if "://" not in normalized_value:
+        normalized_value = f"https://{normalized_value}"
+
+    parsed_url = urlsplit(normalized_value)
+    scheme = "https" if parsed_url.scheme in {"http", "https"} else parsed_url.scheme
+    path = parsed_url.path
+    if path in {"", "/"}:
+        path = "/rci/"
+
+    return urlunsplit(
+        (
+            scheme,
+            parsed_url.netloc,
+            path,
+            parsed_url.query,
+            parsed_url.fragment,
+        )
+    )
 
 
 class ConfigManagementService:
@@ -33,7 +60,7 @@ class ConfigManagementService:
         router_payload = {
             "id": router_id,
             "name": name,
-            "rci_url": rci_url,
+            "rci_url": normalize_rci_url_input(rci_url),
             "username": username,
             "auth_method": "digest",
             "password_env": password_env,
@@ -72,7 +99,7 @@ class ConfigManagementService:
         router_payload = {
             "id": router_id,
             "name": name,
-            "rci_url": rci_url,
+            "rci_url": normalize_rci_url_input(rci_url),
             "username": username,
             "auth_method": "digest",
             "password_env": password_env,
@@ -184,7 +211,7 @@ class ConfigManagementService:
         router_payload = {
             "id": router_id,
             "name": name,
-            "rci_url": rci_url,
+            "rci_url": normalize_rci_url_input(rci_url),
             "username": username,
             "auth_method": "digest",
             "password_env": password_env,

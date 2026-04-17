@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
@@ -10,10 +11,17 @@ from rich.table import Table
 from rich.text import Text
 
 from fqdn_updater.application.config_bootstrap import ConfigBootstrapService
-from fqdn_updater.application.config_management import ConfigManagementService
+from fqdn_updater.application.config_management import (
+    ConfigManagementService,
+    normalize_rci_url_input,
+)
 from fqdn_updater.application.password_generation import RciPasswordGenerator
+from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryService
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
+from fqdn_updater.domain.keenetic import RouteTargetCandidate
 from fqdn_updater.infrastructure.config_repository import ConfigRepository
+from fqdn_updater.infrastructure.keenetic_rci_client import KeeneticRciClientFactory
+from fqdn_updater.infrastructure.router_secret_resolver import EnvironmentFileSecretResolver
 from fqdn_updater.infrastructure.secret_env_file import (
     SecretEnvFile,
     password_env_key_for_router_id,
@@ -41,6 +49,10 @@ class PanelController:
         self._repository = ConfigRepository()
         self._bootstrap_service = ConfigBootstrapService(repository=self._repository)
         self._management_service = ConfigManagementService(repository=self._repository)
+        self._route_target_discovery_service = RouteTargetDiscoveryService(
+            secret_resolver=EnvironmentFileSecretResolver(),
+            client_factory=KeeneticRciClientFactory(),
+        )
         self._password_generator = RciPasswordGenerator()
 
     def run(self) -> None:
@@ -182,9 +194,10 @@ class PanelController:
             default=str(existing_router.rci_url) if existing_router is not None else "",
             console=self._console,
         )
+        rci_url = normalize_rci_url_input(rci_url)
         username = Prompt.ask(
             "RCI username",
-            default=existing_router.username if existing_router is not None else "api-updater",
+            default=existing_router.username if existing_router is not None else "api_updater",
             console=self._console,
         )
         timeout_seconds = int(
@@ -196,18 +209,6 @@ class PanelController:
                 console=self._console,
             )
         )
-        selected_services: set[str] | None = None
-        mappings: list[dict[str, Any]] | None = None
-        if existing_router is None:
-            selected_services = self._prompt_service_selection(
-                config=config,
-                selected=DEFAULT_SELECTED_SERVICES,
-            )
-            mappings = self._build_mappings(
-                router_id=router_id, selected_services=selected_services
-            )
-
-        password = self._password_generator.generate()
         password_env = password_env_key_for_router_id(router_id)
         password_file = None
         _ensure_password_env_available(
@@ -215,6 +216,54 @@ class PanelController:
             router_id=router_id,
             password_env=password_env,
         )
+        selected_services: set[str] | None = None
+        mappings: list[dict[str, Any]] | None = None
+        if existing_router is None:
+            try:
+                draft_router = RouterConfig.model_validate(
+                    {
+                        "id": router_id,
+                        "name": name,
+                        "rci_url": rci_url,
+                        "username": username,
+                        "password_env": password_env,
+                        "password_file": password_file,
+                        "enabled": True,
+                        "tags": [],
+                        "timeout_seconds": timeout_seconds,
+                        "allowed_source_ips": [],
+                    }
+                )
+            except ValidationError as exc:
+                self._console.print(
+                    f"[yellow]Router input is invalid:[/yellow] {_format_validation_error(exc)}"
+                )
+                Prompt.ask("Press Enter to continue", default="", console=self._console)
+                return
+            selected_services = self._prompt_service_selection(
+                config=config,
+                selected=DEFAULT_SELECTED_SERVICES,
+            )
+            route_target_candidates = (
+                self._discover_route_targets(
+                    config=config,
+                    router=draft_router,
+                    missing_secret_message=(
+                        "WireGuard interface discovery skipped: save this router, "
+                        "apply the generated password on Keenetic, then reopen Lists "
+                        "for this router."
+                    ),
+                )
+                if selected_services
+                else ()
+            )
+            mappings = self._build_mappings(
+                router_id=router_id,
+                selected_services=selected_services,
+                route_target_candidates=route_target_candidates,
+            )
+
+        password = self._password_generator.generate()
         self._render_router_save_summary(
             router_id=router_id,
             name=name,
@@ -304,7 +353,20 @@ class PanelController:
                 mapping.service_key for mapping in config.mappings if mapping.router_id == router.id
             },
         )
-        mappings = self._build_mappings(router_id=router.id, selected_services=selected)
+        route_target_candidates = (
+            self._discover_route_targets(
+                config=config,
+                router=router,
+                missing_secret_message=None,
+            )
+            if selected
+            else ()
+        )
+        mappings = self._build_mappings(
+            router_id=router.id,
+            selected_services=selected,
+            route_target_candidates=route_target_candidates,
+        )
         self._console.print(
             f"Selected lists for [bold]{router.id}[/bold]: {', '.join(sorted(selected)) or 'none'}"
         )
@@ -398,15 +460,19 @@ class PanelController:
                 return normalized_selected
 
     def _build_mappings(
-        self, *, router_id: str, selected_services: set[str]
+        self,
+        *,
+        router_id: str,
+        selected_services: set[str],
+        route_target_candidates: tuple[RouteTargetCandidate, ...],
     ) -> list[dict[str, Any]]:
         if not selected_services:
             return []
 
-        default_interface = Prompt.ask(
-            "Default Keenetic route interface",
+        default_interface = self._prompt_route_interface(
+            label="Default Keenetic route interface",
+            candidates=route_target_candidates,
             default="Wireguard0",
-            console=self._console,
         )
         google_ai_interface = default_interface
         if "google_ai" in selected_services:
@@ -416,10 +482,10 @@ class PanelController:
                 console=self._console,
             )
             if separate_google_ai:
-                google_ai_interface = Prompt.ask(
-                    "google_ai route interface",
+                google_ai_interface = self._prompt_route_interface(
+                    label="google_ai route interface",
+                    candidates=route_target_candidates,
                     default=default_interface,
-                    console=self._console,
                 )
 
         mappings: list[dict[str, Any]] = []
@@ -441,6 +507,82 @@ class PanelController:
                 }
             )
         return mappings
+
+    def _discover_route_targets(
+        self,
+        *,
+        config: AppConfig,
+        router: RouterConfig | None,
+        missing_secret_message: str | None = None,
+    ) -> tuple[RouteTargetCandidate, ...]:
+        if router is None:
+            return ()
+
+        try:
+            SecretEnvFile(path=self._secrets_env_path(config=config)).load_into_environment()
+        except RuntimeError as exc:
+            self._console.print(f"[yellow]WireGuard interface discovery failed:[/yellow] {exc}")
+            return ()
+
+        result = self._route_target_discovery_service.discover_wireguard_targets(router=router)
+        if result.error_message is not None:
+            if missing_secret_message is not None and _is_missing_password_env_error(
+                result.error_message
+            ):
+                self._console.print(f"[yellow]{missing_secret_message}[/yellow]")
+                return ()
+            self._console.print(
+                f"[yellow]WireGuard interface discovery failed:[/yellow] {result.error_message}"
+            )
+            return ()
+        if not result.candidates:
+            self._console.print("[yellow]No WireGuard interfaces discovered.[/yellow]")
+            return ()
+        return result.candidates
+
+    def _prompt_route_interface(
+        self,
+        *,
+        label: str,
+        candidates: tuple[RouteTargetCandidate, ...],
+        default: str,
+    ) -> str:
+        if not candidates:
+            return Prompt.ask(label, default=default, console=self._console)
+
+        self._render_route_target_candidates(candidates=candidates)
+        choice = Prompt.ask(
+            f"{label} number, or manual value",
+            default=default,
+            console=self._console,
+        ).strip()
+        if choice.isdigit():
+            index = int(choice)
+            if 1 <= index <= len(candidates):
+                return candidates[index - 1].value
+            raise RuntimeError(f"Route interface number out of range: {index}")
+        return choice or default
+
+    def _render_route_target_candidates(
+        self,
+        *,
+        candidates: tuple[RouteTargetCandidate, ...],
+    ) -> None:
+        table = Table(show_header=True, header_style="bold white")
+        table.add_column("#")
+        table.add_column("Interface")
+        table.add_column("Connected")
+        table.add_column("Status")
+        table.add_column("Detail")
+        for index, candidate in enumerate(candidates, start=1):
+            table.add_row(
+                str(index),
+                candidate.display_name or candidate.value,
+                _format_connected(candidate.connected),
+                candidate.status or "[dim]-[/dim]",
+                candidate.detail or "[dim]-[/dim]",
+            )
+        self._console.print(table)
 
     def _render_router_save_summary(
         self,
@@ -527,3 +669,27 @@ def _split_numbers(value: str) -> list[int]:
     for part in value.replace(",", " ").split():
         numbers.append(int(part))
     return numbers
+
+
+def _format_connected(value: bool | None) -> str:
+    if value is None:
+        return "[dim]-[/dim]"
+    if value:
+        return "[green]yes[/green]"
+    return "[yellow]no[/yellow]"
+
+
+def _format_validation_error(exc: ValidationError) -> str:
+    errors = exc.errors()
+    if not errors:
+        return str(exc)
+    first_error = errors[0]
+    location = ".".join(str(part) for part in first_error.get("loc", ()))
+    message = str(first_error.get("msg", exc))
+    if location:
+        return f"{location}: {message}"
+    return message
+
+
+def _is_missing_password_env_error(message: str) -> bool:
+    return "password env" in message and "is not set" in message

@@ -15,6 +15,7 @@ from fqdn_updater.domain.keenetic import (
     ObjectGroupState,
     RouteBindingSpec,
     RouteBindingState,
+    RouteTargetCandidate,
 )
 from fqdn_updater.domain.static_route_diff import (
     MANAGED_STATIC_ROUTE_COMMENT_PREFIX,
@@ -233,6 +234,18 @@ class KeeneticRciClient(KeeneticClient):
         )
         enabled = self._parse_dns_proxy_enabled(dns_proxy_payload)
         return DnsProxyStatus(enabled=enabled)
+
+    def discover_wireguard_route_targets(self) -> tuple[RouteTargetCandidate, ...]:
+        response_payload = self._post_commands(
+            operation="discover_wireguard_route_targets",
+            commands=[{"show": {"interface": {}}}],
+        )
+        interface_payload = self._unwrap_response_path(
+            response_payload,
+            operation="discover_wireguard_route_targets",
+            path=("show", "interface"),
+        )
+        return self._parse_wireguard_route_target_candidates(interface_payload)
 
     def _post_commands(self, *, operation: str, commands: Sequence[dict[str, Any]]) -> Any:
         if not commands:
@@ -519,6 +532,149 @@ class KeeneticRciClient(KeeneticClient):
             current_payload = current_payload[segment]
 
         return current_payload
+
+    def _parse_wireguard_route_target_candidates(
+        self,
+        interface_payload: Any,
+    ) -> tuple[RouteTargetCandidate, ...]:
+        candidates_by_value: dict[str, RouteTargetCandidate] = {}
+        for raw_interface in self._iter_interface_payloads(interface_payload):
+            candidate = self._parse_wireguard_route_target_candidate(raw_interface)
+            if candidate is None:
+                continue
+            candidates_by_value.setdefault(candidate.value, candidate)
+
+        return tuple(
+            sorted(
+                candidates_by_value.values(),
+                key=lambda candidate: candidate.value.lower(),
+            )
+        )
+
+    def _iter_interface_payloads(self, payload: Any) -> tuple[dict[str, Any], ...]:
+        if isinstance(payload, list):
+            interfaces: list[dict[str, Any]] = []
+            for item in payload:
+                interfaces.extend(self._iter_interface_payloads(item))
+            return tuple(interfaces)
+
+        if not isinstance(payload, dict):
+            return ()
+
+        nested_payload = payload.get("interface")
+        if nested_payload is not None:
+            return self._iter_interface_payloads(nested_payload)
+
+        if self._looks_like_interface_payload(payload):
+            return (payload,)
+
+        interfaces: list[dict[str, Any]] = []
+        for interface_name, interface_payload in payload.items():
+            if not isinstance(interface_payload, dict):
+                continue
+            normalized_payload = dict(interface_payload)
+            normalized_payload.setdefault("id", interface_name)
+            interfaces.append(normalized_payload)
+        return tuple(interfaces)
+
+    def _looks_like_interface_payload(self, payload: dict[str, Any]) -> bool:
+        interface_fields = {
+            "class",
+            "id",
+            "name",
+            "type",
+            "description",
+            "interface-name",
+            "link",
+            "connected",
+            "state",
+        }
+        return any(field_name in payload for field_name in interface_fields)
+
+    def _parse_wireguard_route_target_candidate(
+        self,
+        raw_interface: dict[str, Any],
+    ) -> RouteTargetCandidate | None:
+        interface_name = self._first_non_blank_string(raw_interface, ("interface-name", "name"))
+        interface_id = self._first_non_blank_string(raw_interface, ("id",))
+        value = interface_name or interface_id
+        if value is None:
+            return None
+
+        interface_type = self._first_non_blank_string(raw_interface, ("type",))
+        interface_class = self._first_non_blank_string(raw_interface, ("class",))
+        description = self._first_non_blank_string(raw_interface, ("description",))
+        if not self._is_wireguard_interface(
+            interface_id=interface_id,
+            interface_name=interface_name,
+            interface_type=interface_type,
+            interface_class=interface_class,
+            description=description,
+        ):
+            return None
+
+        connected = self._parse_optional_bool(raw_interface.get("connected"))
+        state = self._first_non_blank_string(raw_interface, ("state", "link"))
+        detail_parts = tuple(
+            part
+            for part in (
+                f"type={interface_type}" if interface_type is not None else None,
+                f"class={interface_class}" if interface_class is not None else None,
+                description,
+            )
+            if part is not None
+        )
+        return RouteTargetCandidate(
+            value=value,
+            display_name=value,
+            status=state,
+            detail=", ".join(detail_parts) if detail_parts else None,
+            connected=connected,
+        )
+
+    def _is_wireguard_interface(
+        self,
+        *,
+        interface_id: str | None,
+        interface_name: str | None,
+        interface_type: str | None,
+        interface_class: str | None,
+        description: str | None,
+    ) -> bool:
+        search_values = (
+            interface_id or "",
+            interface_name or "",
+            interface_type or "",
+            interface_class or "",
+            description or "",
+        )
+        return any("wireguard" in search_value.lower() for search_value in search_values)
+
+    def _first_non_blank_string(
+        self,
+        payload: dict[str, Any],
+        keys: tuple[str, ...],
+    ) -> str | None:
+        for key in keys:
+            value = payload.get(key)
+            if value is None:
+                continue
+            normalized_value = str(value).strip()
+            if normalized_value:
+                return normalized_value
+        return None
+
+    def _parse_optional_bool(self, value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return None
+        normalized_value = str(value).strip().lower()
+        if normalized_value in {"true", "yes", "up", "connected", "1"}:
+            return True
+        if normalized_value in {"false", "no", "down", "disconnected", "0"}:
+            return False
+        return None
 
     def _parse_object_group_state(self, *, groups_payload: Any, name: str) -> ObjectGroupState:
         if not isinstance(groups_payload, dict):
@@ -1180,7 +1336,7 @@ class KeeneticRciClient(KeeneticClient):
 
 
 class KeeneticRciClientFactory(KeeneticClientFactory):
-    def create(self, router: RouterConfig, password: str) -> KeeneticClient:
+    def create(self, router: RouterConfig, password: str) -> KeeneticRciClient:
         return KeeneticRciClient(
             profile=RciConnectionProfile.from_router_config(router=router, password=password)
         )

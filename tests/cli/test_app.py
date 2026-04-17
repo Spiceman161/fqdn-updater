@@ -202,6 +202,35 @@ def test_router_list_outputs_are_deterministic_in_human_and_json(tmp_path) -> No
     )
 
 
+def test_router_add_normalizes_copied_http_rci_url_to_https_endpoint(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    _write_management_config(config_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "router",
+            "add",
+            "--config",
+            str(config_path),
+            "--id",
+            "router-1",
+            "--name",
+            "Router 1",
+            "--rci-url",
+            "http://rci.router-1.example",
+            "--username",
+            "api-user",
+            "--password-env",
+            "ROUTER_ONE_SECRET",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["routers"][0]["rci_url"] == "https://rci.router-1.example/rci/"
+
+
 def test_router_list_works_for_readable_only_config(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     _write_management_config(
@@ -372,7 +401,7 @@ def test_config_management_replace_router_preserves_existing_mappings(tmp_path) 
                 "y",
                 "Router One Renamed",
                 "https://router-1-renamed.example/rci/",
-                "api-updater",
+                "api_updater",
                 "15",
                 "y",
                 "",
@@ -449,7 +478,7 @@ def test_panel_creates_config_secret_and_default_mappings(tmp_path, monkeypatch)
             "rci_url": "https://router-1.example/rci/",
             "tags": [],
             "timeout_seconds": 10,
-            "username": "api-updater",
+            "username": "api_updater",
         }
     ]
     assert sorted(mapping["service_key"] for mapping in payload["mappings"]) == [
