@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import tempfile
 from pathlib import Path
 
@@ -54,6 +55,10 @@ class SecretEnvFile:
                 raise RuntimeError(
                     f"Secret env file '{self._path}' line {line_number} has invalid key '{key}'"
                 )
+            if not value.strip():
+                raise RuntimeError(
+                    f"Secret env file '{self._path}' line {line_number} has blank value for '{key}'"
+                )
             values[key] = value
 
         return values
@@ -87,9 +92,13 @@ class SecretEnvFile:
                 delete=False,
             ) as handle:
                 for key in sorted(values):
-                    handle.write(f"{key}={values[key]}\n")
+                    handle.write(f"{key}={_format_env_value(values[key])}\n")
                 temp_path = Path(handle.name)
+            if temp_path is None:
+                raise RuntimeError(f"Temporary secret env file was not created for {self._path}")
+            _set_owner_only_permissions(path=temp_path)
             temp_path.replace(self._path)
+            _set_owner_only_permissions(path=self._path)
         except OSError as exc:
             if temp_path is not None and temp_path.exists():
                 temp_path.unlink(missing_ok=True)
@@ -99,8 +108,25 @@ class SecretEnvFile:
 
 
 def _strip_optional_quotes(value: str) -> str:
-    if len(value) < 2:
-        return value
-    if value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
+    try:
+        parts = shlex.split(value, comments=False, posix=True)
+    except ValueError as exc:
+        raise RuntimeError(f"Secret env value could not be parsed: {exc}") from exc
+    if not parts:
+        return ""
+    if len(parts) != 1:
+        raise RuntimeError("Secret env value must be a single shell-style token")
+    return parts[0]
+
+
+def _format_env_value(value: str) -> str:
+    if not value.strip():
+        raise RuntimeError("Secret env values must not be blank")
+    return shlex.quote(value)
+
+
+def _set_owner_only_permissions(*, path: Path) -> None:
+    try:
+        path.chmod(0o600)
+    except OSError:
+        return

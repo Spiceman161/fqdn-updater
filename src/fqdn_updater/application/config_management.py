@@ -216,6 +216,32 @@ class ConfigManagementService:
             return updated_config.routers[-1]
         return updated_config.routers[existing_index]
 
+    def update_router_secret_reference(
+        self,
+        *,
+        path: Path,
+        router_id: str,
+        password_env: str,
+        password_file: str | None,
+    ) -> RouterConfig:
+        config = self._repository.load(path=path)
+        payload = config.model_dump(mode="json")
+        existing_index = self._find_router_index(
+            routers=payload["routers"],
+            router_id=router_id,
+        )
+        if existing_index is None:
+            raise RuntimeError(f"Router '{router_id}' does not exist")
+
+        router_payload = dict(payload["routers"][existing_index])
+        router_payload["password_env"] = password_env
+        router_payload["password_file"] = password_file
+        payload["routers"][existing_index] = router_payload
+
+        updated_config = self._repository.validate_payload(path=path, payload=payload)
+        self._repository.overwrite(path=path, config=updated_config)
+        return updated_config.routers[existing_index]
+
     def remove_mapping(self, *, path: Path, router_id: str, service_key: str) -> bool:
         config = self._repository.load(path=path)
         payload = config.model_dump(mode="json")

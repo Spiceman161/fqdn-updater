@@ -8,6 +8,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import fqdn_updater.cli.app as cli_app_module
+import fqdn_updater.cli.panel as panel_module
 from fqdn_updater.application.dry_run_orchestration import DryRunExecutionResult, DryRunOrchestrator
 from fqdn_updater.application.keenetic_client import KeeneticClient, KeeneticClientFactory
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
@@ -40,6 +41,10 @@ from fqdn_updater.domain.status_diagnostics import (
     RouterDiagnosticStatus,
     RouterStatusDiagnostic,
     StatusDiagnosticsResult,
+)
+from fqdn_updater.infrastructure.secret_env_file import (
+    SecretEnvFile,
+    password_env_key_for_router_id,
 )
 
 runner = CliRunner()
@@ -396,8 +401,13 @@ def test_config_management_replace_router_preserves_existing_mappings(tmp_path) 
     ]
 
 
-def test_panel_creates_config_secret_and_default_mappings(tmp_path) -> None:
+def test_panel_creates_config_secret_and_default_mappings(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
+    generated_password = "Aa1!bcdefghijklmnopq"
+
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
 
     result = runner.invoke(
         app,
@@ -453,8 +463,358 @@ def test_panel_creates_config_secret_and_default_mappings(tmp_path) -> None:
     ]
     assert all(mapping["object_group_name"].startswith("fqdn-") for mapping in payload["mappings"])
     assert all(mapping["route_target_value"] == "Wireguard0" for mapping in payload["mappings"])
-    secret_payload = (tmp_path / ".env.secrets").read_text(encoding="utf-8")
-    assert "FQDN_UPDATER_ROUTER_ROUTER_1_PASSWORD=" in secret_payload
+    secret_env = SecretEnvFile(path=tmp_path / ".env.secrets")
+    assert secret_env.read() == {
+        "FQDN_UPDATER_ROUTER_ROUTER_1_PASSWORD": generated_password,
+    }
+    assert generated_password not in config_path.read_text(encoding="utf-8")
+
+
+def test_panel_rotate_password_reuses_existing_password_env_and_preserves_mappings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    secret_path = tmp_path / ".env.secrets"
+    original_config = None
+    generated_password = "Bb2@cdefghijklmnopqr"
+
+    _write_management_config(
+        config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+        mappings=[
+            {
+                "router_id": "router-1",
+                "service_key": "telegram",
+                "object_group_name": "fqdn-telegram",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+            }
+        ],
+    )
+    original_config = config_path.read_text(encoding="utf-8")
+    secret_path.write_text("ROUTER_ONE_SECRET=old-secret\n", encoding="utf-8")
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+
+    result = runner.invoke(
+        app,
+        ["panel", "--config", str(config_path)],
+        input="\n".join(("1", "2", "1", "y", "", "0")) + "\n",
+    )
+
+    assert result.exit_code == 0
+    assert config_path.read_text(encoding="utf-8") == original_config
+    assert SecretEnvFile(path=secret_path).read() == {
+        "ROUTER_ONE_SECRET": generated_password,
+    }
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["mappings"] == [
+        {
+            "auto": True,
+            "exclusive": True,
+            "managed": True,
+            "object_group_name": "fqdn-telegram",
+            "route_interface": None,
+            "route_target_type": "interface",
+            "route_target_value": "Wireguard0",
+            "router_id": "router-1",
+            "service_key": "telegram",
+        }
+    ]
+
+
+def test_panel_rotate_password_switches_password_file_to_env_and_clears_password_file(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    secret_path = tmp_path / ".env.secrets"
+    generated_password = "Cc3#defghijklmnopqrs"
+
+    _write_management_config(
+        config_path,
+        routers=[
+            {
+                "id": "router-2",
+                "name": "Router 2",
+                "rci_url": "https://router-2.example/rci/",
+                "username": "api-user",
+                "password_file": "/run/secrets/router-2",
+                "enabled": True,
+            }
+        ],
+        mappings=[
+            {
+                "router_id": "router-2",
+                "service_key": "telegram",
+                "object_group_name": "fqdn-telegram",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+
+    result = runner.invoke(
+        app,
+        ["panel", "--config", str(config_path)],
+        input="\n".join(("1", "2", "1", "y", "", "0")) + "\n",
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["routers"] == [
+        {
+            "allowed_source_ips": [],
+            "auth_method": "digest",
+            "enabled": True,
+            "id": "router-2",
+            "name": "Router 2",
+            "password_env": "FQDN_UPDATER_ROUTER_ROUTER_2_PASSWORD",
+            "password_file": None,
+            "rci_url": "https://router-2.example/rci/",
+            "tags": [],
+            "timeout_seconds": 10,
+            "username": "api-user",
+        }
+    ]
+    assert payload["mappings"] == [
+        {
+            "auto": True,
+            "exclusive": True,
+            "managed": True,
+            "object_group_name": "fqdn-telegram",
+            "route_interface": None,
+            "route_target_type": "interface",
+            "route_target_value": "Wireguard0",
+            "router_id": "router-2",
+            "service_key": "telegram",
+        }
+    ]
+    assert SecretEnvFile(path=secret_path).read() == {
+        "FQDN_UPDATER_ROUTER_ROUTER_2_PASSWORD": generated_password,
+    }
+
+
+def test_panel_add_rejects_deterministic_password_env_collisions_before_secret_write(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    secret_path = tmp_path / ".env.secrets"
+    password_env = password_env_key_for_router_id("home-router")
+    generated_password = "Dd4%efghijklmnopqrst"
+
+    _write_management_config(
+        config_path,
+        routers=[
+            {
+                "id": "home-router",
+                "name": "Home Router",
+                "rci_url": "https://home-router.example/rci/",
+                "username": "api-user",
+                "password_env": password_env,
+                "enabled": True,
+            }
+        ],
+    )
+    secret_path.write_text(f"{password_env}=old-secret\n", encoding="utf-8")
+    original_config = config_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+
+    def _unexpected_write_value(*args, **kwargs) -> None:
+        raise AssertionError("SecretEnvFile.write_value should not be reached on collision")
+
+    monkeypatch.setattr(SecretEnvFile, "write_value", _unexpected_write_value)
+
+    result = runner.invoke(
+        app,
+        ["panel", "--config", str(config_path)],
+        input="\n".join(
+            (
+                "1",
+                "home_router",
+                "",
+                "https://home-router.example/rci/",
+                "",
+                "",
+                "",
+                "",
+                "",
+            )
+        )
+        + "\n",
+    )
+
+    assert result.exit_code == 1
+    assert f"Password env '{password_env}' is already used by router 'home-router'" in (
+        result.stderr
+    )
+    assert config_path.read_text(encoding="utf-8") == original_config
+    assert SecretEnvFile(path=secret_path).read() == {password_env: "old-secret"}
+
+
+def test_panel_rotate_password_rejects_deterministic_password_env_collisions_before_secret_write(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    secret_path = tmp_path / ".env.secrets"
+    password_env = password_env_key_for_router_id("home-router")
+    generated_password = "Ee5&fghijklmnopqrstu"
+
+    _write_management_config(
+        config_path,
+        routers=[
+            {
+                "id": "home-router",
+                "name": "Home Router",
+                "rci_url": "https://home-router.example/rci/",
+                "username": "api-user",
+                "password_file": "/run/secrets/home-router",
+                "enabled": True,
+            },
+            {
+                "id": "home_router",
+                "name": "Home Router Alias",
+                "rci_url": "https://home-router-alias.example/rci/",
+                "username": "api-user",
+                "password_env": password_env,
+                "enabled": True,
+            },
+        ],
+    )
+    secret_path.write_text(f"{password_env}=old-secret\n", encoding="utf-8")
+    original_config = config_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+
+    def _unexpected_write_value(*args, **kwargs) -> None:
+        raise AssertionError("SecretEnvFile.write_value should not be reached on collision")
+
+    monkeypatch.setattr(SecretEnvFile, "write_value", _unexpected_write_value)
+
+    result = runner.invoke(
+        app,
+        ["panel", "--config", str(config_path)],
+        input="\n".join(("1", "2", "1")) + "\n",
+    )
+
+    assert result.exit_code == 1
+    assert f"Password env '{password_env}' is already used by router 'home_router'" in (
+        result.stderr
+    )
+    assert config_path.read_text(encoding="utf-8") == original_config
+    assert SecretEnvFile(path=secret_path).read() == {password_env: "old-secret"}
+
+
+def test_panel_add_rolls_back_config_when_secret_write_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    secret_path = tmp_path / ".env.secrets"
+    generated_password = "Ff6*ghijklmnopqrstuv"
+
+    _write_management_config(config_path)
+    original_config = config_path.read_text(encoding="utf-8")
+    secret_path.write_text("UNRELATED_SECRET=old-secret\n", encoding="utf-8")
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+    monkeypatch.setattr(panel_module.Confirm, "ask", lambda *args, **kwargs: True)
+
+    def _failing_write_value(*args, **kwargs) -> None:
+        raise RuntimeError("secret write failed")
+
+    monkeypatch.setattr(SecretEnvFile, "write_value", _failing_write_value)
+
+    result = runner.invoke(
+        app,
+        ["panel", "--config", str(config_path)],
+        input="\n".join(
+            (
+                "1",
+                "home_router",
+                "",
+                "https://home-router.example/rci/",
+                "",
+                "",
+                "",
+                "",
+            )
+        )
+        + "\n",
+    )
+
+    assert result.exit_code == 1
+    assert "secret write failed" in result.stderr
+    assert config_path.read_text(encoding="utf-8") == original_config
+    assert generated_password not in config_path.read_text(encoding="utf-8")
+    assert SecretEnvFile(path=secret_path).read() == {"UNRELATED_SECRET": "old-secret"}
+
+
+def test_panel_rotate_password_rolls_back_password_file_reference_when_secret_write_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    secret_path = tmp_path / ".env.secrets"
+    generated_password = "Gg7(ghijklmnopqrstuvw"
+
+    _write_management_config(
+        config_path,
+        routers=[
+            {
+                "id": "home-router",
+                "name": "Home Router",
+                "rci_url": "https://home-router.example/rci/",
+                "username": "api-user",
+                "password_file": "/run/secrets/home-router",
+                "enabled": True,
+            }
+        ],
+    )
+    original_config = config_path.read_text(encoding="utf-8")
+    secret_path.write_text("UNRELATED_SECRET=old-secret\n", encoding="utf-8")
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+
+    def _failing_write_value(*args, **kwargs) -> None:
+        raise RuntimeError("secret write failed")
+
+    monkeypatch.setattr(SecretEnvFile, "write_value", _failing_write_value)
+
+    result = runner.invoke(
+        app,
+        ["panel", "--config", str(config_path)],
+        input="\n".join(("1", "2", "1", "y")) + "\n",
+    )
+
+    assert result.exit_code == 1
+    assert "secret write failed" in result.stderr
+    assert config_path.read_text(encoding="utf-8") == original_config
+    assert "/run/secrets/home-router" in config_path.read_text(encoding="utf-8")
+    assert SecretEnvFile(path=secret_path).read() == {"UNRELATED_SECRET": "old-secret"}
 
 
 def test_init_creates_scaffold_config(tmp_path) -> None:

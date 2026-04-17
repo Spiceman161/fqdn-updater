@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import secrets
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +11,7 @@ from rich.text import Text
 
 from fqdn_updater.application.config_bootstrap import ConfigBootstrapService
 from fqdn_updater.application.config_management import ConfigManagementService
+from fqdn_updater.application.password_generation import RciPasswordGenerator
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
 from fqdn_updater.infrastructure.config_repository import ConfigRepository
 from fqdn_updater.infrastructure.secret_env_file import (
@@ -41,6 +41,7 @@ class PanelController:
         self._repository = ConfigRepository()
         self._bootstrap_service = ConfigBootstrapService(repository=self._repository)
         self._management_service = ConfigManagementService(repository=self._repository)
+        self._password_generator = RciPasswordGenerator()
 
     def run(self) -> None:
         self._ensure_config_exists()
@@ -136,8 +137,31 @@ class PanelController:
         self._console.print(Panel(menu, border_style="cyan", width=width))
 
     def _router_menu(self) -> None:
+        menu = "\n".join(
+            (
+                "[cyan]1[/cyan]) Add or replace router",
+                "[cyan]2[/cyan]) Rotate router password",
+                "[cyan]0[/cyan]) [dim]Back[/dim]",
+            )
+        )
+        self._console.print(Panel(menu, title="Routers", border_style="cyan"))
+        choice = Prompt.ask(
+            "  [bold]>[/bold]",
+            default="1",
+            show_choices=False,
+            console=self._console,
+        )
+        normalized_choice = choice.strip()
+        if normalized_choice in {"", "1"}:
+            self._add_or_replace_router(initial_router_id=None)
+        elif normalized_choice == "2":
+            self._rotate_router_password()
+        elif normalized_choice != "0":
+            self._add_or_replace_router(initial_router_id=normalized_choice)
+
+    def _add_or_replace_router(self, *, initial_router_id: str | None) -> None:
         config = self._load_config()
-        router_id = Prompt.ask("Router id", console=self._console).strip()
+        router_id = initial_router_id or Prompt.ask("Router id", console=self._console).strip()
         existing_router = _find_router(config=config, router_id=router_id)
         if existing_router is not None:
             replace = Confirm.ask(
@@ -183,24 +207,27 @@ class PanelController:
                 router_id=router_id, selected_services=selected_services
             )
 
-        password = secrets.token_urlsafe(36)
+        password = self._password_generator.generate()
         password_env = password_env_key_for_router_id(router_id)
+        password_file = None
+        _ensure_password_env_available(
+            config=config,
+            router_id=router_id,
+            password_env=password_env,
+        )
         self._render_router_save_summary(
             router_id=router_id,
             name=name,
             rci_url=rci_url,
             username=username,
             password_env=password_env,
+            password_file=password_file,
             selected_services=selected_services,
             replacing=existing_router is not None,
         )
         if not Confirm.ask("Save changes?", default=True, console=self._console):
             return
 
-        SecretEnvFile(path=self._secrets_env_path(config=config)).write_value(
-            key=password_env,
-            value=password,
-        )
         self._management_service.save_router_setup(
             path=self._config_path,
             router_id=router_id,
@@ -208,7 +235,7 @@ class PanelController:
             rci_url=rci_url,
             username=username,
             password_env=password_env,
-            password_file=None,
+            password_file=password_file,
             enabled=True,
             tags=list(existing_router.tags) if existing_router is not None else [],
             timeout_seconds=timeout_seconds,
@@ -217,12 +244,53 @@ class PanelController:
             ),
             replace_mappings=mappings,
         )
+        try:
+            SecretEnvFile(path=self._secrets_env_path(config=config)).write_value(
+                key=password_env,
+                value=password,
+            )
+        except Exception:
+            self._repository.overwrite(path=self._config_path, config=config)
+            raise
         self._console.print("[green]Router saved.[/green]")
-        self._console.print("[bold]Generated password, shown once:[/bold]")
-        self._console.print(password)
-        self._console.print(
-            "Create or update the low-privilege Keenetic RCI user with this password."
+        self._show_generated_password(password=password)
+        Prompt.ask("Press Enter to continue", default="", console=self._console)
+
+    def _rotate_router_password(self) -> None:
+        config = self._load_config()
+        router = self._select_router(config=config)
+        if router is None:
+            return
+
+        password_env = router.password_env or password_env_key_for_router_id(router.id)
+        password = self._password_generator.generate()
+        _ensure_password_env_available(
+            config=config,
+            router_id=router.id,
+            password_env=password_env,
         )
+        self._render_password_rotation_summary(router=router, password_env=password_env)
+        if not Confirm.ask("Rotate router password?", default=False, console=self._console):
+            return
+
+        if router.password_env != password_env or router.password_file is not None:
+            self._management_service.update_router_secret_reference(
+                path=self._config_path,
+                router_id=router.id,
+                password_env=password_env,
+                password_file=None,
+            )
+        try:
+            SecretEnvFile(path=self._secrets_env_path(config=config)).write_value(
+                key=password_env,
+                value=password,
+            )
+        except Exception:
+            self._repository.overwrite(path=self._config_path, config=config)
+            raise
+
+        self._console.print("[green]Router password rotated.[/green]")
+        self._show_generated_password(password=password)
         Prompt.ask("Press Enter to continue", default="", console=self._console)
 
     def _lists_menu(self) -> None:
@@ -381,7 +449,8 @@ class PanelController:
         name: str,
         rci_url: str,
         username: str,
-        password_env: str,
+        password_env: str | None,
+        password_file: str | None,
         selected_services: set[str] | None,
         replacing: bool,
     ) -> None:
@@ -393,10 +462,38 @@ class PanelController:
         table.add_row("Name", name)
         table.add_row("RCI URL", rci_url)
         table.add_row("Username", username)
-        table.add_row("Password env", password_env)
+        table.add_row("Password env", password_env or "[dim]none[/dim]")
+        table.add_row("Password file", password_file or "[dim]none[/dim]")
         if selected_services is not None:
             table.add_row("Lists", ", ".join(sorted(selected_services)) or "none")
         self._console.print(Panel(table, title="Save summary", border_style="cyan"))
+
+    def _render_password_rotation_summary(
+        self,
+        *,
+        router: RouterConfig,
+        password_env: str,
+    ) -> None:
+        table = Table.grid(padding=(0, 2))
+        table.add_column(style="bold white")
+        table.add_column(style="cyan")
+        table.add_row("Mode", "rotate password")
+        table.add_row("Router", router.id)
+        table.add_row("Password env", password_env)
+        if router.password_file is not None:
+            table.add_row(
+                "Password file",
+                f"{router.password_file} [yellow](will be cleared)[/yellow]",
+            )
+        self._console.print(Panel(table, title="Rotation summary", border_style="cyan"))
+
+    def _show_generated_password(self, *, password: str) -> None:
+        self._console.print("[bold]Generated password, shown once:[/bold]")
+        self._console.print(password)
+        self._console.print(
+            "Update the low-privilege Keenetic RCI user with this password now. "
+            "The panel will not show it again."
+        )
 
     def _secrets_env_path(self, *, config: AppConfig) -> Path:
         path = Path(config.runtime.secrets_env_file)
@@ -410,6 +507,19 @@ def _find_router(*, config: AppConfig, router_id: str) -> RouterConfig | None:
         if router.id == router_id:
             return router
     return None
+
+
+def _ensure_password_env_available(
+    *,
+    config: AppConfig,
+    router_id: str,
+    password_env: str,
+) -> None:
+    for router in config.routers:
+        if router.id != router_id and router.password_env == password_env:
+            raise RuntimeError(
+                f"Password env '{password_env}' is already used by router '{router.id}'"
+            )
 
 
 def _split_numbers(value: str) -> list[int]:
