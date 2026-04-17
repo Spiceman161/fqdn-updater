@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S22",
+  "current_slice_id": "S23",
   "updated_at": "2026-04-17T00:00:00Z",
   "slices": [
     {
@@ -360,7 +360,7 @@
     {
       "id": "S23",
       "title": "Panel Run History And Diagnostics",
-      "status": "ready",
+      "status": "done",
       "goal": "Make the panel Runs screen useful for operators without hiding network or write side effects.",
       "summary": "Show recent local run artifacts and add explicit panel actions for status and dry-run previews, keeping sync/apply behind a clear confirmation gate.",
       "acceptance": [
@@ -372,12 +372,12 @@
         "./scripts/verify.sh passes with tests for artifact reading and panel run action rendering."
       ],
       "depends_on": ["S11", "S15", "S16", "S20"],
-      "notes": "This slice should not make hidden network calls from the main dashboard."
+      "notes": "Completed with green verification on 2026-04-17. This slice should not make hidden network calls from the main dashboard."
     },
     {
       "id": "S24",
       "title": "Panel Router And List Maintenance",
-      "status": "pending",
+      "status": "ready",
       "goal": "Complete everyday config maintenance workflows inside the terminal panel.",
       "summary": "Add safe edit flows for enabling/disabling routers, editing route targets, removing mappings, and reviewing selected services before save.",
       "acceptance": [

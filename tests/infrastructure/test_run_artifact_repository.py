@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -62,15 +62,96 @@ def test_write_cleans_up_temp_file_on_replace_failure(tmp_path, monkeypatch) -> 
     assert list((tmp_path / "artifacts").glob(".run-001.json.*.tmp")) == []
 
 
-def _artifact() -> RunArtifact:
+def test_list_recent_sorts_by_finished_at_then_run_id_then_filename_and_limits_results(
+    tmp_path,
+) -> None:
+    repository = RunArtifactRepository()
+    artifacts_dir = tmp_path / "artifacts"
+
+    _write_artifact(
+        artifacts_dir / "c.json",
+        _artifact(run_id="run-c", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC)),
+    )
+    _write_artifact(
+        artifacts_dir / "b.json",
+        _artifact(run_id="run-b", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC)),
+    )
+    _write_artifact(
+        artifacts_dir / "a.json",
+        _artifact(run_id="run-b", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC)),
+    )
+    _write_artifact(
+        artifacts_dir / "d.json",
+        _artifact(run_id="run-a", finished_at=datetime(2026, 4, 8, 12, 59, tzinfo=UTC)),
+    )
+
+    result = repository.list_recent(artifacts_dir=artifacts_dir, limit=3)
+
+    assert [item.path.name for item in result.artifacts] == ["c.json", "b.json", "a.json"]
+    assert [item.artifact.run_id for item in result.artifacts] == ["run-c", "run-b", "run-b"]
+    assert [item.artifact.finished_at for item in result.artifacts] == [
+        datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
+        datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
+        datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
+    ]
+
+
+def test_list_recent_returns_empty_tuple_for_missing_directory(tmp_path) -> None:
+    repository = RunArtifactRepository()
+
+    result = repository.list_recent(artifacts_dir=tmp_path / "missing", limit=10)
+
+    assert result.artifacts == ()
+    assert result.warnings == ()
+
+
+def test_list_recent_reports_invalid_artifacts_as_warnings_without_failing(tmp_path) -> None:
+    repository = RunArtifactRepository()
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir()
+    _write_artifact(
+        artifacts_dir / "valid.json",
+        _artifact(run_id="run-valid", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC)),
+    )
+    (artifacts_dir / "broken.json").write_text("{not json}", encoding="utf-8")
+    (artifacts_dir / "invalid.json").write_text(
+        json.dumps(
+            {
+                "mode": "dry_run",
+                "status": "success",
+                "started_at": "2026-04-08T13:00:00Z",
+                "finished_at": "2026-04-08T13:01:00Z",
+                "log_path": "data/logs/run-invalid.log",
+                "router_results": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = repository.list_recent(artifacts_dir=artifacts_dir, limit=10)
+
+    assert [item.path.name for item in result.artifacts] == ["valid.json"]
+    assert [warning.path.name for warning in result.warnings] == ["broken.json", "invalid.json"]
+    assert "artifact JSON is invalid" in result.warnings[0].message
+    assert "artifact schema is invalid" in result.warnings[1].message
+
+
+def _artifact(
+    *,
+    run_id: str = "run-001",
+    finished_at: datetime = datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+) -> RunArtifact:
     return RunArtifact(
-        run_id="run-001",
+        run_id=run_id,
         trigger=RunTrigger.OPENCLAW,
         mode=RunMode.DRY_RUN,
         status=RunStatus.SUCCESS,
-        started_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-        finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
-        log_path="data/logs/run-001.log",
+        started_at=finished_at - timedelta(minutes=1),
+        finished_at=finished_at,
+        log_path=f"data/logs/{run_id}.log",
         router_results=[
             RouterRunResult(
                 router_id="router-1",
@@ -85,4 +166,12 @@ def _artifact() -> RunArtifact:
                 ],
             )
         ],
+    )
+
+
+def _write_artifact(path: Path, artifact: RunArtifact) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(artifact.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )

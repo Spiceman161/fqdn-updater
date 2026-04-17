@@ -15,13 +15,26 @@ from fqdn_updater.application.config_management import (
     ConfigManagementService,
     normalize_rci_url_input,
 )
+from fqdn_updater.application.dry_run_orchestration import (
+    DryRunExecutionResult,
+    DryRunOrchestrator,
+)
 from fqdn_updater.application.password_generation import RciPasswordGenerator
 from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryService
+from fqdn_updater.application.run_history import RunHistoryResult, RunHistoryService
+from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
+from fqdn_updater.application.source_loading import SourceLoadingService
+from fqdn_updater.application.status_diagnostics import StatusDiagnosticsService
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
+from fqdn_updater.domain.run_artifact import RunArtifact, RunStatus, RunTrigger
+from fqdn_updater.domain.status_diagnostics import StatusDiagnosticsResult
 from fqdn_updater.infrastructure.config_repository import ConfigRepository
 from fqdn_updater.infrastructure.keenetic_rci_client import KeeneticRciClientFactory
+from fqdn_updater.infrastructure.raw_source_fetcher import HttpRawSourceFetcher
 from fqdn_updater.infrastructure.router_secret_resolver import EnvironmentFileSecretResolver
+from fqdn_updater.infrastructure.run_artifact_repository import RunArtifactRepository
+from fqdn_updater.infrastructure.run_logging import RunLoggerFactory
 from fqdn_updater.infrastructure.secret_env_file import (
     SecretEnvFile,
     password_env_key_for_router_id,
@@ -49,9 +62,25 @@ class PanelController:
         self._repository = ConfigRepository()
         self._bootstrap_service = ConfigBootstrapService(repository=self._repository)
         self._management_service = ConfigManagementService(repository=self._repository)
+        self._secret_resolver = EnvironmentFileSecretResolver()
+        self._client_factory = KeeneticRciClientFactory()
+        self._artifact_repository = RunArtifactRepository()
         self._route_target_discovery_service = RouteTargetDiscoveryService(
-            secret_resolver=EnvironmentFileSecretResolver(),
-            client_factory=KeeneticRciClientFactory(),
+            secret_resolver=self._secret_resolver,
+            client_factory=self._client_factory,
+        )
+        self._run_history_service = RunHistoryService(repository=self._artifact_repository)
+        self._status_service = StatusDiagnosticsService(
+            secret_resolver=self._secret_resolver,
+            client_factory=self._client_factory,
+        )
+        self._dry_run_orchestrator = DryRunOrchestrator(
+            source_loader=SourceLoadingService(fetcher=HttpRawSourceFetcher()),
+            secret_resolver=self._secret_resolver,
+            client_factory=self._client_factory,
+            planner=ServiceSyncPlanner(),
+            artifact_writer=self._artifact_repository,
+            logger_factory=RunLoggerFactory(),
         )
         self._password_generator = RciPasswordGenerator()
 
@@ -381,13 +410,27 @@ class PanelController:
         Prompt.ask("Press Enter to continue", default="", console=self._console)
 
     def _runs_menu(self, *, config: AppConfig) -> None:
-        self._console.print("[bold]Run commands[/bold]")
-        self._console.print(f"Artifacts: {config.runtime.artifacts_dir}")
-        self._console.print(f"Logs: {config.runtime.logs_dir}")
-        self._console.print(f"Status:  fqdn-updater status --config {self._config_path}")
-        self._console.print(f"Preview: fqdn-updater dry-run --config {self._config_path}")
-        self._console.print(f"Apply:   fqdn-updater sync --config {self._config_path}")
-        Prompt.ask("Press Enter to continue", default="", console=self._console)
+        while True:
+            config = self._load_config()
+            history = self._run_history_service.list_recent(
+                config=config,
+                config_path=self._config_path,
+                limit=8,
+            )
+            self._render_runs_screen(config=config, history=history)
+            choice = Prompt.ask(
+                "  [bold]>[/bold]",
+                choices=["0", "1", "2"],
+                default="0",
+                show_choices=False,
+                console=self._console,
+            )
+            if choice == "0":
+                return
+            if choice == "1":
+                self._run_status_diagnostics()
+            elif choice == "2":
+                self._run_dry_run_preview()
 
     def _config_menu(self, *, config: AppConfig) -> None:
         self._console.print("[green]Config is valid.[/green]")
@@ -401,7 +444,7 @@ class PanelController:
     def _about_menu(self) -> None:
         self._console.print("[bold]FQDN-updater panel[/bold]")
         self._console.print("Terminal control panel for Keenetic RCI FQDN list management.")
-        self._console.print("Router writes still happen only through dry-run/sync flows.")
+        self._console.print("Router writes happen only through confirmed sync flows.")
         Prompt.ask("Press Enter to continue", default="", console=self._console)
 
     def _select_router(self, *, config: AppConfig) -> RouterConfig | None:
@@ -540,6 +583,130 @@ class PanelController:
             return ()
         return result.candidates
 
+    def _render_runs_screen(self, *, config: AppConfig, history: RunHistoryResult) -> None:
+        self._console.print(Panel("[bold]Runs[/bold]", border_style="cyan", width=78))
+        self._console.print(f"Artifacts: {history.artifacts_dir}")
+        self._console.print(f"Logs: {self._resolve_config_relative_path(config.runtime.logs_dir)}")
+
+        table = Table(show_header=True, header_style="bold white", box=None)
+        table.add_column("Run")
+        table.add_column("Mode")
+        table.add_column("Status")
+        table.add_column("Finished")
+        table.add_column("Routers")
+        table.add_column("Summary")
+        for run in history.runs:
+            artifact = run.artifact
+            table.add_row(
+                artifact.run_id,
+                artifact.mode.value,
+                _format_run_status(artifact.status),
+                artifact.finished_at.isoformat(),
+                str(len(artifact.router_results)),
+                _format_artifact_summary(artifact),
+            )
+        if not history.runs:
+            table.add_row("[dim]none[/dim]", "-", "-", "-", "-", "-")
+        self._console.print(Panel(table, title="Recent local artifacts", border_style="dim"))
+
+        for warning in history.warnings[:3]:
+            self._console.print(
+                f"[yellow]Artifact skipped:[/yellow] {warning.path}: {warning.message}"
+            )
+        if len(history.warnings) > 3:
+            omitted_count = len(history.warnings) - 3
+            self._console.print(f"[yellow]Artifact warnings omitted:[/yellow] {omitted_count}")
+
+        menu = "\n".join(
+            (
+                "[cyan]1[/cyan]) Status diagnostics [dim](read-only network check)[/dim]",
+                "[cyan]2[/cyan]) Dry-run preview [dim](read-only; writes run artifact/log)[/dim]",
+                f"[dim]Manual apply:[/dim] fqdn-updater sync --config {self._config_path}",
+                "[cyan]0[/cyan]) [dim]Back[/dim]",
+            )
+        )
+        self._console.print(Panel(menu, border_style="cyan", width=78))
+
+    def _run_status_diagnostics(self) -> None:
+        config = self._config_with_resolved_runtime_paths(config=self._load_config())
+        try:
+            self._load_runtime_secret_env_file(config=config)
+            result = self._status_service.check(config=config)
+        except RuntimeError as exc:
+            self._console.print(f"[red]Status diagnostics failed:[/red] {exc}")
+            Prompt.ask("Press Enter to continue", default="", console=self._console)
+            return
+
+        self._render_status_result(result=result)
+        Prompt.ask("Press Enter to continue", default="", console=self._console)
+
+    def _run_dry_run_preview(self) -> None:
+        config = self._config_with_resolved_runtime_paths(config=self._load_config())
+        try:
+            self._load_runtime_secret_env_file(config=config)
+            result = self._dry_run_orchestrator.run(
+                config=config,
+                trigger=RunTrigger.MANUAL,
+            )
+        except RuntimeError as exc:
+            self._console.print(f"[red]Dry-run preview failed:[/red] {exc}")
+            Prompt.ask("Press Enter to continue", default="", console=self._console)
+            return
+
+        self._render_dry_run_result(result=result)
+        Prompt.ask("Press Enter to continue", default="", console=self._console)
+
+    def _render_status_result(self, *, result: StatusDiagnosticsResult) -> None:
+        table = Table(show_header=True, header_style="bold white")
+        table.add_column("Router")
+        table.add_column("Status")
+        table.add_column("DNS proxy")
+        table.add_column("Detail")
+        for router in result.router_results:
+            table.add_row(
+                router.router_id,
+                router.status.value,
+                _format_dns_proxy(router.dns_proxy_enabled),
+                router.error_message or "[dim]-[/dim]",
+            )
+        if not result.router_results:
+            table.add_row("[dim]none[/dim]", "-", "-", "-")
+        title = (
+            f"Status diagnostics: overall={result.overall_status.value} "
+            f"checked={result.checked_router_count}"
+        )
+        self._console.print(Panel(table, title=title, border_style="cyan"))
+
+    def _render_dry_run_result(self, *, result: DryRunExecutionResult) -> None:
+        artifact = result.artifact
+        table = Table(show_header=True, header_style="bold white")
+        table.add_column("Router")
+        table.add_column("Status")
+        table.add_column("Services")
+        table.add_column("Summary")
+        for router in artifact.router_results:
+            changed_services = sum(
+                service.added_count > 0 or service.removed_count > 0 or service.route_changed
+                for service in router.service_results
+            )
+            failed_services = sum(
+                service.error_message is not None for service in router.service_results
+            )
+            table.add_row(
+                router.router_id,
+                router.status.value,
+                str(len(router.service_results)),
+                f"changed={changed_services} failed={failed_services}",
+            )
+        if not artifact.router_results:
+            table.add_row("[dim]none[/dim]", "-", "-", "-")
+
+        title = (
+            f"Dry-run: run_id={artifact.run_id} status={artifact.status.value} "
+            f"artifact={result.artifact_path}"
+        )
+        self._console.print(Panel(table, title=title, border_style="cyan"))
+
     def _prompt_route_interface(
         self,
         *,
@@ -638,7 +805,25 @@ class PanelController:
         )
 
     def _secrets_env_path(self, *, config: AppConfig) -> Path:
-        path = Path(config.runtime.secrets_env_file)
+        return self._resolve_config_relative_path(config.runtime.secrets_env_file)
+
+    def _load_runtime_secret_env_file(self, *, config: AppConfig) -> None:
+        SecretEnvFile(path=self._secrets_env_path(config=config)).load_into_environment()
+
+    def _config_with_resolved_runtime_paths(self, *, config: AppConfig) -> AppConfig:
+        runtime = config.runtime.model_copy(
+            update={
+                "artifacts_dir": str(
+                    self._resolve_config_relative_path(config.runtime.artifacts_dir)
+                ),
+                "logs_dir": str(self._resolve_config_relative_path(config.runtime.logs_dir)),
+                "secrets_env_file": str(self._secrets_env_path(config=config)),
+            }
+        )
+        return config.model_copy(update={"runtime": runtime})
+
+    def _resolve_config_relative_path(self, configured_path: str) -> Path:
+        path = Path(configured_path)
         if path.is_absolute():
             return path
         return self._config_path.parent / path
@@ -693,3 +878,31 @@ def _format_validation_error(exc: ValidationError) -> str:
 
 def _is_missing_password_env_error(message: str) -> bool:
     return "password env" in message and "is not set" in message
+
+
+def _format_run_status(status: RunStatus) -> str:
+    if status is RunStatus.SUCCESS:
+        return "[green]success[/green]"
+    if status is RunStatus.PARTIAL:
+        return "[yellow]partial[/yellow]"
+    return "[red]failed[/red]"
+
+
+def _format_artifact_summary(artifact: RunArtifact) -> str:
+    changed_services = 0
+    failed_services = 0
+    for router in artifact.router_results:
+        for service in router.service_results:
+            if service.error_message is not None:
+                failed_services += 1
+            if service.added_count > 0 or service.removed_count > 0 or service.route_changed:
+                changed_services += 1
+    return f"changed={changed_services} failed={failed_services}"
+
+
+def _format_dns_proxy(value: bool | None) -> str:
+    if value is None:
+        return "[dim]unknown[/dim]"
+    if value:
+        return "[green]enabled[/green]"
+    return "[yellow]disabled[/yellow]"
