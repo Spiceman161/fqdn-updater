@@ -203,6 +203,7 @@ class RuntimeConfig(BaseModel):
 
     artifacts_dir: str = "data/artifacts"
     logs_dir: str = "data/logs"
+    secrets_env_file: str = ".env.secrets"
     log_format: Literal["text", "json"] = "text"
 
 

@@ -63,6 +63,7 @@ def test_app_config_accepts_valid_runtime_ready_payload() -> None:
     assert config.mappings[0].object_group_name == "svc-telegram"
     assert config.mappings[0].auto is True
     assert config.mappings[0].exclusive is True
+    assert config.runtime.secrets_env_file == ".env.secrets"
     assert str(config.services[0].resolved_sources[0].url) == "https://example.com/telegram.lst"
     assert config.services[0].resolved_sources[0].format == "raw_domain_list"
 

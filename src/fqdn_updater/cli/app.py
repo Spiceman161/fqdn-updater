@@ -15,6 +15,7 @@ from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, Serv
 from fqdn_updater.application.source_loading import SourceLoadingService
 from fqdn_updater.application.status_diagnostics import StatusDiagnosticsService
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult, SyncOrchestrator
+from fqdn_updater.cli.panel import PanelController
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
 from fqdn_updater.domain.run_artifact import RunStatus, RunTrigger
 from fqdn_updater.domain.status_diagnostics import StatusDiagnosticsResult
@@ -24,6 +25,7 @@ from fqdn_updater.infrastructure.raw_source_fetcher import HttpRawSourceFetcher
 from fqdn_updater.infrastructure.router_secret_resolver import EnvironmentFileSecretResolver
 from fqdn_updater.infrastructure.run_artifact_repository import RunArtifactRepository
 from fqdn_updater.infrastructure.run_logging import RunLoggerFactory
+from fqdn_updater.infrastructure.secret_env_file import SecretEnvFile
 
 app = typer.Typer(help="Synchronize managed FQDN object-groups on Keenetic routers.")
 config_app = typer.Typer(help="Configuration management commands.")
@@ -313,6 +315,7 @@ def dry_run_command(
         validated_config = _validation_service().validate(path=config)
     except RuntimeError as exc:
         _runtime_error_handler(exc, code=40)
+    _load_runtime_secret_env_file(config_path=config, config=validated_config)
 
     try:
         result = _dry_run_orchestrator().run(
@@ -339,6 +342,7 @@ def sync_command(
         validated_config = _validation_service().validate(path=config)
     except RuntimeError as exc:
         _runtime_error_handler(exc, code=40)
+    _load_runtime_secret_env_file(config_path=config, config=validated_config)
 
     try:
         result = _sync_orchestrator().run(
@@ -365,6 +369,7 @@ def status_command(
         validated_config = _validation_service().validate(path=config)
     except RuntimeError as exc:
         _runtime_error_handler(exc, code=40)
+    _load_runtime_secret_env_file(config_path=config, config=validated_config)
 
     try:
         result = _status_service().check(config=validated_config)
@@ -376,6 +381,15 @@ def status_command(
     else:
         typer.echo(_render_status_human(result=result))
     raise typer.Exit(code=_status_exit_code(result=result))
+
+
+@app.command("panel")
+def panel_command(config: Path = DRY_RUN_CONFIG_OPTION) -> None:
+    """Open the interactive terminal control panel."""
+    try:
+        PanelController(config_path=config).run()
+    except RuntimeError as exc:
+        _runtime_error_handler(exc)
 
 
 def _render_validation_success(config: AppConfig, path: Path) -> None:
@@ -629,6 +643,21 @@ def _status_exit_code(result: StatusDiagnosticsResult) -> int:
     if result.overall_status.value == "healthy":
         return 0
     return 20
+
+
+def _load_runtime_secret_env_file(*, config_path: Path, config: AppConfig) -> None:
+    secrets_env_file = _resolve_config_relative_path(
+        config_path=config_path,
+        configured_path=config.runtime.secrets_env_file,
+    )
+    SecretEnvFile(path=secrets_env_file).load_into_environment()
+
+
+def _resolve_config_relative_path(*, config_path: Path, configured_path: str) -> Path:
+    path = Path(configured_path)
+    if path.is_absolute():
+        return path
+    return config_path.parent / path
 
 
 def _runtime_error_handler(exc: RuntimeError, *, code: int = 1) -> NoReturn:

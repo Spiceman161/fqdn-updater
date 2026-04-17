@@ -52,6 +52,52 @@ class ConfigManagementService:
     def list_routers(self, *, path: Path) -> list[RouterConfig]:
         return list(self._repository.load(path=path).routers)
 
+    def replace_router(
+        self,
+        *,
+        path: Path,
+        router_id: str,
+        name: str,
+        rci_url: str,
+        username: str,
+        password_env: str | None,
+        password_file: str | None,
+        enabled: bool,
+        tags: list[str],
+        timeout_seconds: int,
+        allowed_source_ips: list[str],
+    ) -> RouterConfig:
+        config = self._repository.load(path=path)
+        payload = config.model_dump(mode="json")
+        router_payload = {
+            "id": router_id,
+            "name": name,
+            "rci_url": rci_url,
+            "username": username,
+            "auth_method": "digest",
+            "password_env": password_env,
+            "password_file": password_file,
+            "enabled": enabled,
+            "tags": tags,
+            "timeout_seconds": timeout_seconds,
+            "allowed_source_ips": allowed_source_ips,
+        }
+
+        existing_index = self._find_router_index(
+            routers=payload["routers"],
+            router_id=router_id,
+        )
+        if existing_index is None:
+            payload["routers"].append(router_payload)
+        else:
+            payload["routers"][existing_index] = router_payload
+
+        updated_config = self._repository.validate_payload(path=path, payload=payload)
+        self._repository.overwrite(path=path, config=updated_config)
+        if existing_index is None:
+            return updated_config.routers[-1]
+        return updated_config.routers[existing_index]
+
     def set_mapping(
         self,
         *,
@@ -98,6 +144,105 @@ class ConfigManagementService:
 
     def list_mappings(self, *, path: Path) -> list[RouterServiceMappingConfig]:
         return list(self._repository.load(path=path).mappings)
+
+    def replace_router_mappings(
+        self,
+        *,
+        path: Path,
+        router_id: str,
+        mappings: list[dict[str, Any]],
+    ) -> list[RouterServiceMappingConfig]:
+        config = self._repository.load(path=path)
+        payload = config.model_dump(mode="json")
+        payload["mappings"] = [
+            mapping for mapping in payload["mappings"] if mapping["router_id"] != router_id
+        ]
+        payload["mappings"].extend(mappings)
+
+        updated_config = self._repository.validate_payload(path=path, payload=payload)
+        self._repository.overwrite(path=path, config=updated_config)
+        return [mapping for mapping in updated_config.mappings if mapping.router_id == router_id]
+
+    def save_router_setup(
+        self,
+        *,
+        path: Path,
+        router_id: str,
+        name: str,
+        rci_url: str,
+        username: str,
+        password_env: str | None,
+        password_file: str | None,
+        enabled: bool,
+        tags: list[str],
+        timeout_seconds: int,
+        allowed_source_ips: list[str],
+        replace_mappings: list[dict[str, Any]] | None,
+    ) -> RouterConfig:
+        config = self._repository.load(path=path)
+        payload = config.model_dump(mode="json")
+        router_payload = {
+            "id": router_id,
+            "name": name,
+            "rci_url": rci_url,
+            "username": username,
+            "auth_method": "digest",
+            "password_env": password_env,
+            "password_file": password_file,
+            "enabled": enabled,
+            "tags": tags,
+            "timeout_seconds": timeout_seconds,
+            "allowed_source_ips": allowed_source_ips,
+        }
+
+        existing_index = self._find_router_index(
+            routers=payload["routers"],
+            router_id=router_id,
+        )
+        if existing_index is None:
+            payload["routers"].append(router_payload)
+        else:
+            payload["routers"][existing_index] = router_payload
+
+        if replace_mappings is not None:
+            payload["mappings"] = [
+                mapping for mapping in payload["mappings"] if mapping["router_id"] != router_id
+            ]
+            payload["mappings"].extend(replace_mappings)
+
+        updated_config = self._repository.validate_payload(path=path, payload=payload)
+        self._repository.overwrite(path=path, config=updated_config)
+        if existing_index is None:
+            return updated_config.routers[-1]
+        return updated_config.routers[existing_index]
+
+    def remove_mapping(self, *, path: Path, router_id: str, service_key: str) -> bool:
+        config = self._repository.load(path=path)
+        payload = config.model_dump(mode="json")
+        mappings = payload["mappings"]
+        existing_index = self._find_mapping_index(
+            mappings=mappings,
+            router_id=router_id,
+            service_key=service_key,
+        )
+        if existing_index is None:
+            return False
+
+        del mappings[existing_index]
+        updated_config = self._repository.validate_payload(path=path, payload=payload)
+        self._repository.overwrite(path=path, config=updated_config)
+        return True
+
+    def _find_router_index(
+        self,
+        *,
+        routers: list[dict[str, Any]],
+        router_id: str,
+    ) -> int | None:
+        for index, router in enumerate(routers):
+            if router["id"] == router_id:
+                return index
+        return None
 
     def _find_mapping_index(
         self,

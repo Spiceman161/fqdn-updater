@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -55,6 +56,14 @@ def test_root_help_shows_expected_commands() -> None:
     assert "dry-run" in result.stdout
     assert "sync" in result.stdout
     assert "status" in result.stdout
+    assert "panel" in result.stdout
+
+
+def test_panel_help_is_available() -> None:
+    result = runner.invoke(app, ["panel", "--help"])
+
+    assert result.exit_code == 0
+    assert "--config" in result.stdout
 
 
 def test_router_add_writes_valid_router_and_leaves_file_unchanged_on_validation_failures(
@@ -318,6 +327,136 @@ def test_mapping_set_appends_and_upserts_in_place_and_list_is_deterministic(
     assert json.loads(json_result.stdout) == payload["mappings"]
 
 
+def test_config_management_replace_router_preserves_existing_mappings(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    _write_management_config(
+        config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+        mappings=[
+            {
+                "router_id": "router-1",
+                "service_key": "telegram",
+                "object_group_name": "fqdn-telegram",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+            }
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "panel",
+            "--config",
+            str(config_path),
+        ],
+        input="\n".join(
+            (
+                "1",
+                "router-1",
+                "y",
+                "Router One Renamed",
+                "https://router-1-renamed.example/rci/",
+                "api-updater",
+                "15",
+                "y",
+                "",
+                "0",
+            )
+        )
+        + "\n",
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["routers"][0]["name"] == "Router One Renamed"
+    assert payload["routers"][0]["password_env"] == "FQDN_UPDATER_ROUTER_ROUTER_1_PASSWORD"
+    assert payload["mappings"] == [
+        {
+            "auto": True,
+            "exclusive": True,
+            "managed": True,
+            "object_group_name": "fqdn-telegram",
+            "route_interface": None,
+            "route_target_type": "interface",
+            "route_target_value": "Wireguard0",
+            "router_id": "router-1",
+            "service_key": "telegram",
+        }
+    ]
+
+
+def test_panel_creates_config_secret_and_default_mappings(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+
+    result = runner.invoke(
+        app,
+        ["panel", "--config", str(config_path)],
+        input="\n".join(
+            (
+                "y",
+                "1",
+                "router-1",
+                "",
+                "https://router-1.example/rci/",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "y",
+                "",
+                "0",
+            )
+        )
+        + "\n",
+    )
+
+    assert result.exit_code == 0
+    assert "[x]" in result.stdout
+    assert "[ ]" in result.stdout
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["routers"] == [
+        {
+            "allowed_source_ips": [],
+            "auth_method": "digest",
+            "enabled": True,
+            "id": "router-1",
+            "name": "router-1",
+            "password_env": "FQDN_UPDATER_ROUTER_ROUTER_1_PASSWORD",
+            "password_file": None,
+            "rci_url": "https://router-1.example/rci/",
+            "tags": [],
+            "timeout_seconds": 10,
+            "username": "api-updater",
+        }
+    ]
+    assert sorted(mapping["service_key"] for mapping in payload["mappings"]) == [
+        "discord",
+        "google_ai",
+        "meta",
+        "telegram",
+        "tiktok",
+        "twitter",
+        "youtube",
+    ]
+    assert all(mapping["object_group_name"].startswith("fqdn-") for mapping in payload["mappings"])
+    assert all(mapping["route_target_value"] == "Wireguard0" for mapping in payload["mappings"])
+    secret_payload = (tmp_path / ".env.secrets").read_text(encoding="utf-8")
+    assert "FQDN_UPDATER_ROUTER_ROUTER_1_PASSWORD=" in secret_payload
+
+
 def test_init_creates_scaffold_config(tmp_path) -> None:
     config_path = tmp_path / "config.json"
 
@@ -479,6 +618,62 @@ def test_dry_run_returns_zero_for_no_changes(monkeypatch) -> None:
     assert "Dry run completed:" in result.stdout
     assert "planned_changes=0" in result.stdout
     assert "status=no_changes" in result.stdout
+
+
+def test_dry_run_loads_runtime_secret_env_file_before_running(tmp_path, monkeypatch) -> None:
+    secret_path = tmp_path / ".env.secrets"
+    secret_path.write_text("ROUTER_ONE_SECRET=secret-from-env-file\n", encoding="utf-8")
+    config = AppConfig.model_validate(
+        {
+            "version": 1,
+            "routers": [
+                {
+                    "id": "router-1",
+                    "name": "Router 1",
+                    "rci_url": "https://router-1.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_ONE_SECRET",
+                    "enabled": True,
+                }
+            ],
+            "services": [
+                {
+                    "key": "telegram",
+                    "source_urls": ["https://example.com/telegram.lst"],
+                    "format": "raw_domain_list",
+                    "enabled": True,
+                }
+            ],
+            "mappings": [],
+            "runtime": {"secrets_env_file": str(secret_path)},
+        }
+    )
+    result_payload = _dry_run_result(
+        status=RunStatus.SUCCESS,
+        artifact_path=Path("data/artifacts/run-106.json"),
+        plans=(),
+        service_results=(),
+        router_status=RouterResultStatus.NO_CHANGES,
+    )
+    monkeypatch.delenv("ROUTER_ONE_SECRET", raising=False)
+    monkeypatch.setattr(
+        cli_app_module,
+        "_validation_service",
+        lambda: StubValidationService(config=config),
+    )
+    monkeypatch.setattr(
+        cli_app_module,
+        "_dry_run_orchestrator",
+        lambda: EnvAssertingOrchestrator(
+            result=result_payload,
+            key="ROUTER_ONE_SECRET",
+            value="secret-from-env-file",
+        ),
+    )
+
+    result = runner.invoke(app, ["dry-run", "--config", str(tmp_path / "config.json")])
+
+    assert result.exit_code == 0
 
 
 def test_dry_run_returns_thirty_for_changes_and_json_output(monkeypatch) -> None:
@@ -955,6 +1150,18 @@ class StubOrchestrator:
 
     def run(self, *, config: AppConfig, trigger: RunTrigger) -> DryRunExecutionResult:
         assert trigger is RunTrigger.MANUAL
+        return self._result
+
+
+class EnvAssertingOrchestrator:
+    def __init__(self, *, result: DryRunExecutionResult, key: str, value: str) -> None:
+        self._result = result
+        self._key = key
+        self._value = value
+
+    def run(self, *, config: AppConfig, trigger: RunTrigger) -> DryRunExecutionResult:
+        assert trigger is RunTrigger.MANUAL
+        assert os.environ[self._key] == self._value
         return self._result
 
 
