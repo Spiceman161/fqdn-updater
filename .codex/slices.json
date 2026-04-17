@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S22",
+  "current_slice_id": "S21",
   "updated_at": "2026-04-17T00:00:00Z",
   "slices": [
     {
@@ -325,7 +325,7 @@
     {
       "id": "S21",
       "title": "Panel Password Generator And Secret Rotation",
-      "status": "done",
+      "status": "ready",
       "goal": "Make panel-managed RCI credential lifecycle production-grade and auditable.",
       "summary": "Extract password generation into an explicit service, harden secrets env-file handling, and add a panel rotation flow that updates the stored secret while showing the new password exactly once.",
       "acceptance": [
@@ -337,12 +337,12 @@
         "./scripts/verify.sh passes with tests for generation, rotation, and secret redaction."
       ],
       "depends_on": ["S20"],
-      "notes": "Completed with green verification on 2026-04-17."
+      "notes": "Next useful panel hardening slice before adding more network-assisted setup."
     },
     {
       "id": "S22",
       "title": "WireGuard Interface Discovery For Panel",
-      "status": "ready",
+      "status": "pending",
       "goal": "Let the panel discover WireGuard interfaces from a configured Keenetic router and offer them as route targets.",
       "summary": "Add a read-only RCI discovery path for router interfaces, expose typed route target candidates through application code, and use them in the panel with manual fallback.",
       "acceptance": [
