@@ -7,10 +7,11 @@ from rich.console import Console
 
 import fqdn_updater.cli.panel as panel_module
 from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryResult
-from fqdn_updater.cli.panel import PanelController
-from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
+from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
 from fqdn_updater.infrastructure.secret_env_file import SecretEnvFile
+
+from .panel_test_support import ScriptedPromptAdapter, make_panel_controller, write_config
 
 
 class _FakeDiscoveryService:
@@ -49,10 +50,12 @@ def test_discover_route_targets_returns_empty_candidates_on_failure(tmp_path) ->
 
 
 def test_discover_route_targets_reports_new_router_missing_secret_as_skipped(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter()
     console = Console(force_terminal=True, record=True)
-    controller = PanelController(
+    controller = panel_module.PanelController(
         config_path=tmp_path / "config.json",
         console=console,
+        prompts=prompts,
     )
     router = _router_config()
     config = _app_config(tmp_path)
@@ -73,7 +76,7 @@ def test_discover_route_targets_reports_new_router_missing_secret_as_skipped(tmp
     assert candidates == ()
     assert fake_service.calls == [router.id]
     assert "WireGuard interface discovery skipped for new router." in console.export_text()
-    assert "WireGuard interface discovery failed" not in console.export_text()
+    assert "WireGuard discovery failed" not in console.export_text()
 
 
 def test_discover_route_targets_returns_empty_candidates_when_result_is_empty(tmp_path) -> None:
@@ -122,96 +125,50 @@ def test_discover_route_targets_returns_candidates_when_discovery_succeeds(tmp_p
     assert fake_service.calls == [router.id]
 
 
-def test_build_mappings_falls_back_to_wireguard0_without_discovered_candidates(
-    tmp_path,
-    monkeypatch,
-) -> None:
+def test_build_router_mappings_preserves_existing_metadata_and_google_override(tmp_path) -> None:
     controller = _panel_controller(tmp_path)
-    controller._prompt_route_interface = lambda *, label, candidates, default: default  # type: ignore[method-assign]
-    monkeypatch.setattr(panel_module.Confirm, "ask", lambda *args, **kwargs: False)
-
-    mappings = controller._build_mappings(
+    mappings = controller._build_router_mappings(
         router_id="router-1",
         selected_services={"telegram", "google_ai"},
-        route_target_candidates=(),
-    )
-
-    assert mappings == [
-        {
-            "router_id": "router-1",
-            "service_key": "google_ai",
-            "object_group_name": "fqdn-google_ai",
-            "route_target_type": "interface",
-            "route_target_value": "Wireguard0",
-            "route_interface": None,
-            "exclusive": True,
-            "auto": True,
-            "managed": True,
-        },
-        {
-            "router_id": "router-1",
-            "service_key": "telegram",
-            "object_group_name": "fqdn-telegram",
-            "route_target_type": "interface",
-            "route_target_value": "Wireguard0",
-            "route_interface": None,
-            "exclusive": True,
-            "auto": True,
-            "managed": True,
-        },
-    ]
-
-
-def test_build_mappings_uses_discovered_candidates_for_default_and_google_ai_interfaces(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller = _panel_controller(tmp_path)
-    prompt_calls: list[tuple[str, str]] = []
-
-    def _prompt_route_interface(*, label: str, candidates, default: str) -> str:
-        prompt_calls.append((label, default))
-        if label == "Default Keenetic route interface":
-            return "Wireguard2"
-        if label == "google_ai route interface":
-            return "Wireguard0"
-        raise AssertionError(f"unexpected label: {label}")
-
-    controller._prompt_route_interface = _prompt_route_interface  # type: ignore[method-assign]
-    monkeypatch.setattr(panel_module.Confirm, "ask", lambda *args, **kwargs: True)
-
-    mappings = controller._build_mappings(
-        router_id="router-1",
-        selected_services={"telegram", "google_ai", "youtube"},
-        route_target_candidates=(
-            RouteTargetCandidate(
-                value="Wireguard2",
-                display_name="Wireguard2",
-                status="connected",
-                detail="type=Wireguard, Primary tunnel",
-                connected=True,
+        existing_mappings={
+            "telegram": RouterServiceMappingConfig.model_validate(
+                {
+                    "router_id": "router-1",
+                    "service_key": "telegram",
+                    "object_group_name": "custom-telegram",
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard0",
+                    "exclusive": False,
+                    "auto": False,
+                    "managed": True,
+                }
             ),
-            RouteTargetCandidate(
-                value="Wireguard0",
-                display_name="Wireguard0",
-                status="up",
-                detail="type=Wireguard, Backup tunnel",
-                connected=False,
+            "google_ai": RouterServiceMappingConfig.model_validate(
+                {
+                    "router_id": "router-1",
+                    "service_key": "google_ai",
+                    "object_group_name": "custom-google-ai",
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard1",
+                    "exclusive": True,
+                    "auto": True,
+                    "managed": True,
+                }
             ),
+        },
+        mapping_plan=panel_module.MappingPlan(
+            default_target=panel_module.RouteTargetDraft("gateway", "10.0.0.2", "Wireguard9"),
+            google_ai_target=panel_module.RouteTargetDraft("interface", "Wireguard7"),
         ),
     )
 
-    assert prompt_calls == [
-        ("Default Keenetic route interface", "Wireguard0"),
-        ("google_ai route interface", "Wireguard2"),
-    ]
     assert mappings == [
         {
             "router_id": "router-1",
             "service_key": "google_ai",
-            "object_group_name": "fqdn-google_ai",
+            "object_group_name": "custom-google-ai",
             "route_target_type": "interface",
-            "route_target_value": "Wireguard0",
+            "route_target_value": "Wireguard7",
             "route_interface": None,
             "exclusive": True,
             "auto": True,
@@ -220,34 +177,32 @@ def test_build_mappings_uses_discovered_candidates_for_default_and_google_ai_int
         {
             "router_id": "router-1",
             "service_key": "telegram",
-            "object_group_name": "fqdn-telegram",
-            "route_target_type": "interface",
-            "route_target_value": "Wireguard2",
-            "route_interface": None,
-            "exclusive": True,
-            "auto": True,
-            "managed": True,
-        },
-        {
-            "router_id": "router-1",
-            "service_key": "youtube",
-            "object_group_name": "fqdn-youtube",
-            "route_target_type": "interface",
-            "route_target_value": "Wireguard2",
-            "route_interface": None,
-            "exclusive": True,
-            "auto": True,
+            "object_group_name": "custom-telegram",
+            "route_target_type": "gateway",
+            "route_target_value": "10.0.0.2",
+            "route_interface": "Wireguard9",
+            "exclusive": False,
+            "auto": False,
             "managed": True,
         },
     ]
 
 
-def test_add_new_router_uses_draft_router_for_route_target_discovery(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller = _panel_controller(tmp_path)
-    _write_panel_config(controller._config_path)
+def test_add_new_router_uses_draft_router_for_route_target_discovery(tmp_path, monkeypatch) -> None:
+    prompts = ScriptedPromptAdapter(
+        text_answers=[
+            "router-1",
+            "Router 1",
+            "http://router-1.example",
+            "api-user",
+            "15",
+        ],
+        checkbox_answers=[["telegram"]],
+        select_answers=["interface", "Wireguard9"],
+        confirm_answers=[True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
     generated_password = "Aa1!bcdefghijklmnopq"
     password_env = "FQDN_UPDATER_ROUTER_ROUTER_1_PASSWORD"
     SecretEnvFile(path=tmp_path / ".env.secrets").write_value(
@@ -275,26 +230,7 @@ def test_add_new_router_uses_draft_router_for_route_target_discovery(
         lambda self: generated_password,
     )
 
-    prompt_answers = iter(
-        (
-            "router-1",
-            "Router 1",
-            "http://router-1.example",
-            "api-user",
-            "15",
-            "",
-            "1",
-            "",
-        )
-    )
-    monkeypatch.setattr(
-        panel_module.Prompt,
-        "ask",
-        lambda *args, **kwargs: next(prompt_answers),
-    )
-    monkeypatch.setattr(panel_module.Confirm, "ask", lambda *args, **kwargs: True)
-
-    controller._add_or_replace_router(initial_router_id=None)
+    controller._add_router()
 
     assert len(fake_service.routers) == 1
     draft_router = fake_service.routers[0]
@@ -321,14 +257,23 @@ def test_add_new_router_uses_draft_router_for_route_target_discovery(
         }
     ]
     assert SecretEnvFile(path=tmp_path / ".env.secrets").read()[password_env] == generated_password
+    prompts.assert_consumed()
 
 
 def test_add_new_router_reports_invalid_draft_router_without_traceback(
-    tmp_path,
-    monkeypatch,
+    tmp_path, monkeypatch
 ) -> None:
-    controller = _panel_controller(tmp_path)
-    _write_panel_config(controller._config_path)
+    prompts = ScriptedPromptAdapter(
+        text_answers=[
+            "router-1",
+            "Router 1",
+            "https://router-1.example/api/",
+            "api-user",
+            "15",
+        ]
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
     fake_service = _RecordingDiscoveryService(
         RouteTargetDiscoveryResult(router_id="router-1", candidates=())
     )
@@ -338,34 +283,20 @@ def test_add_new_router_reports_invalid_draft_router_without_traceback(
         raise AssertionError("password generation should not run for invalid router input")
 
     monkeypatch.setattr(panel_module.RciPasswordGenerator, "generate", _unexpected_generate)
-    prompt_answers = iter(
-        (
-            "router-1",
-            "Router 1",
-            "https://router-1.example/api/",
-            "api-user",
-            "15",
-            "",
-        )
-    )
-    monkeypatch.setattr(
-        panel_module.Prompt,
-        "ask",
-        lambda *args, **kwargs: next(prompt_answers),
-    )
 
-    controller._add_or_replace_router(initial_router_id=None)
+    controller._add_router()
 
     assert fake_service.routers == []
     assert json.loads(controller._config_path.read_text(encoding="utf-8"))["routers"] == []
     assert not (tmp_path / ".env.secrets").exists()
+    assert prompts.pause_messages == ["Нажмите любую клавишу для продолжения..."]
 
 
-def _panel_controller(tmp_path: Path) -> PanelController:
-    return PanelController(
-        config_path=tmp_path / "config.json",
-        console=Console(force_terminal=True),
-    )
+def _panel_controller(tmp_path: Path):
+    prompts = ScriptedPromptAdapter()
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
+    return controller
 
 
 def _app_config(tmp_path: Path) -> AppConfig:
@@ -390,26 +321,4 @@ def _router_config() -> RouterConfig:
             "timeout_seconds": 15,
             "enabled": True,
         }
-    )
-
-
-def _write_panel_config(path: Path) -> None:
-    config = AppConfig.model_validate(
-        {
-            "routers": [],
-            "services": [
-                {
-                    "key": "telegram",
-                    "source_urls": ["https://example.com/telegram.lst"],
-                    "format": "raw_domain_list",
-                    "enabled": True,
-                }
-            ],
-            "mappings": [],
-            "runtime": {"secrets_env_file": ".env.secrets"},
-        }
-    )
-    path.write_text(
-        json.dumps(config.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )

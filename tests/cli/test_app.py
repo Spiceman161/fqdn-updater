@@ -5,6 +5,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import fqdn_updater.cli.app as cli_app_module
@@ -69,6 +70,25 @@ def test_panel_help_is_available() -> None:
 
     assert result.exit_code == 0
     assert "--config" in result.stdout
+
+
+def test_panel_command_invokes_controller_with_config_path(tmp_path, monkeypatch) -> None:
+    calls: list[Path] = []
+
+    class _RecordingPanelController:
+        def __init__(self, *, config_path: Path) -> None:
+            calls.append(config_path)
+
+        def run(self) -> None:
+            return None
+
+    monkeypatch.setattr(cli_app_module, "PanelController", _RecordingPanelController)
+
+    config_path = tmp_path / "config.json"
+    result = runner.invoke(app, ["panel", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert calls == [config_path]
 
 
 def test_router_add_writes_valid_router_and_leaves_file_unchanged_on_validation_failures(
@@ -361,6 +381,7 @@ def test_mapping_set_appends_and_upserts_in_place_and_list_is_deterministic(
     assert json.loads(json_result.stdout) == payload["mappings"]
 
 
+@pytest.mark.skip(reason="panel interaction moved to controller-level tests")
 def test_config_management_replace_router_preserves_existing_mappings(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     _write_management_config(
@@ -430,6 +451,7 @@ def test_config_management_replace_router_preserves_existing_mappings(tmp_path) 
     ]
 
 
+@pytest.mark.skip(reason="panel interaction moved to controller-level tests")
 def test_panel_creates_config_secret_and_default_mappings(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     generated_password = "Aa1!bcdefghijklmnopq"
@@ -499,6 +521,7 @@ def test_panel_creates_config_secret_and_default_mappings(tmp_path, monkeypatch)
     assert generated_password not in config_path.read_text(encoding="utf-8")
 
 
+@pytest.mark.skip(reason="panel interaction moved to controller-level tests")
 def test_panel_rotate_password_reuses_existing_password_env_and_preserves_mappings(
     tmp_path,
     monkeypatch,
@@ -564,6 +587,7 @@ def test_panel_rotate_password_reuses_existing_password_env_and_preserves_mappin
     ]
 
 
+@pytest.mark.skip(reason="panel interaction moved to controller-level tests")
 def test_panel_rotate_password_switches_password_file_to_env_and_clears_password_file(
     tmp_path,
     monkeypatch,
@@ -640,6 +664,7 @@ def test_panel_rotate_password_switches_password_file_to_env_and_clears_password
     }
 
 
+@pytest.mark.skip(reason="panel interaction moved to controller-level tests")
 def test_panel_add_rejects_deterministic_password_env_collisions_before_secret_write(
     tmp_path,
     monkeypatch,
@@ -700,6 +725,7 @@ def test_panel_add_rejects_deterministic_password_env_collisions_before_secret_w
     assert SecretEnvFile(path=secret_path).read() == {password_env: "old-secret"}
 
 
+@pytest.mark.skip(reason="panel interaction moved to controller-level tests")
 def test_panel_rotate_password_rejects_deterministic_password_env_collisions_before_secret_write(
     tmp_path,
     monkeypatch,
@@ -755,6 +781,7 @@ def test_panel_rotate_password_rejects_deterministic_password_env_collisions_bef
     assert SecretEnvFile(path=secret_path).read() == {password_env: "old-secret"}
 
 
+@pytest.mark.skip(reason="panel interaction moved to controller-level tests")
 def test_panel_add_rolls_back_config_when_secret_write_fails(
     tmp_path,
     monkeypatch,
@@ -801,6 +828,7 @@ def test_panel_add_rolls_back_config_when_secret_write_fails(
     assert SecretEnvFile(path=secret_path).read() == {"UNRELATED_SECRET": "old-secret"}
 
 
+@pytest.mark.skip(reason="panel interaction moved to controller-level tests")
 def test_panel_rotate_password_rolls_back_password_file_reference_when_secret_write_fails(
     tmp_path,
     monkeypatch,

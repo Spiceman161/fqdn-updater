@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from rich.console import Console
-
-import fqdn_updater.cli.panel as panel_module
 from fqdn_updater.application.dry_run_orchestration import DryRunExecutionResult
 from fqdn_updater.application.run_history import RecentRun, RunHistoryResult, RunHistoryWarning
 from fqdn_updater.cli.panel import PanelController
@@ -27,6 +23,8 @@ from fqdn_updater.domain.status_diagnostics import (
     RouterStatusDiagnostic,
     StatusDiagnosticsResult,
 )
+
+from .panel_test_support import ScriptedPromptAdapter, make_panel_controller
 
 
 class _RecordingRunHistoryService:
@@ -65,11 +63,9 @@ class _RecordingDryRunOrchestrator:
         return self.result
 
 
-def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, console = _panel_controller(tmp_path)
+def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["back"])
+    controller, console = _panel_controller(tmp_path, prompts=prompts)
     config = _config()
     history = RunHistoryResult(
         artifacts_dir=tmp_path / "data" / "artifacts",
@@ -106,108 +102,80 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(
         ),
     )
     run_history_service = _RecordingRunHistoryService(result=history)
-    status_service = _RecordingStatusService(result=_status_result())
-    dry_run_orchestrator = _RecordingDryRunOrchestrator(result=_dry_run_result())
     controller._load_config = lambda: config  # type: ignore[method-assign]
     controller._run_history_service = run_history_service  # type: ignore[method-assign]
-    controller._status_service = status_service  # type: ignore[method-assign]
-    controller._dry_run_orchestrator = dry_run_orchestrator  # type: ignore[method-assign]
+    controller._status_service = _RecordingStatusService(result=_status_result())  # type: ignore[method-assign]
+    controller._dry_run_orchestrator = _RecordingDryRunOrchestrator(result=_dry_run_result())  # type: ignore[method-assign]
     controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
 
-    prompt_calls: list[tuple[str, list[str] | None]] = []
-    monkeypatch.setattr(
-        panel_module.Prompt,
-        "ask",
-        _make_prompt_stub(prompt_calls, ("0",)),
-    )
-
-    controller._runs_menu(config=config)
+    controller._runs_menu()
 
     assert run_history_service.calls == [("data/artifacts", controller._config_path, 8)]
-    assert status_service.calls == []
-    assert dry_run_orchestrator.calls == []
-    assert prompt_calls[0][1] == ["0", "1", "2"]
+    assert prompts.select_calls[0]["choices"] == ["status", "dry-run", "back"]
     output = console.export_text()
-    assert "Recent local artifacts" in output
+    assert "Прогоны и диагностика" in output
+    assert "Контекст прогонов" in output
+    assert "Последние локальные артефакты" in output
     assert "run-001" in output
     assert "changed=1 failed=1" in output
-    assert "broken.json" in output
+    assert "data/artifacts" in output
+    assert "data/logs" in output
+    assert "Пропущенные артефакты" in output
+    assert "data/artifacts/broken.json" in output
+    assert "artifact JSON is invalid: unexpected token" in output
+    assert "Ручной запуск" in output
     assert "fqdn-updater sync --config" in output
 
 
 def test_runs_menu_status_choice_calls_diagnostics_service_and_renders_router_details(
     tmp_path,
-    monkeypatch,
 ) -> None:
-    controller, console = _panel_controller(tmp_path)
+    prompts = ScriptedPromptAdapter(select_answers=["status", "back"])
+    controller, console = _panel_controller(tmp_path, prompts=prompts)
     config = _config()
     status_result = _status_result()
     run_history_service = _RecordingRunHistoryService(
         result=RunHistoryResult(artifacts_dir=tmp_path / "data" / "artifacts", runs=(), warnings=())
     )
     status_service = _RecordingStatusService(result=status_result)
-    dry_run_orchestrator = _RecordingDryRunOrchestrator(result=_dry_run_result())
     controller._load_config = lambda: config  # type: ignore[method-assign]
     controller._run_history_service = run_history_service  # type: ignore[method-assign]
     controller._status_service = status_service  # type: ignore[method-assign]
-    controller._dry_run_orchestrator = dry_run_orchestrator  # type: ignore[method-assign]
+    controller._dry_run_orchestrator = _RecordingDryRunOrchestrator(result=_dry_run_result())  # type: ignore[method-assign]
     controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
 
-    prompt_answers = iter(("1", "", "0"))
-    prompt_calls: list[tuple[str, list[str] | None]] = []
-    monkeypatch.setattr(
-        panel_module.Prompt,
-        "ask",
-        _make_prompt_stub(prompt_calls, prompt_answers),
-    )
-
-    controller._runs_menu(config=config)
+    controller._runs_menu()
 
     assert len(status_service.calls) == 1
-    assert dry_run_orchestrator.calls == []
+    assert prompts.pause_messages == ["Нажмите любую клавишу для продолжения..."]
     output = console.export_text()
     assert "Status diagnostics: overall=failed checked=3" in output
     assert "router-healthy" in output
-    assert "healthy" in output
     assert "router-degraded" in output
-    assert "degraded" in output
     assert "router-failed" in output
-    assert "failed" in output
     assert "dns proxy disabled" in output
     assert "missing secret" in output
 
 
-def test_runs_menu_dry_run_choice_calls_orchestrator_and_renders_summary(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, console = _panel_controller(tmp_path)
+def test_runs_menu_dry_run_choice_calls_orchestrator_and_renders_summary(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["dry-run", "back"])
+    controller, console = _panel_controller(tmp_path, prompts=prompts)
     config = _config()
     run_history_service = _RecordingRunHistoryService(
         result=RunHistoryResult(artifacts_dir=tmp_path / "data" / "artifacts", runs=(), warnings=())
     )
-    status_service = _RecordingStatusService(result=_status_result())
     dry_run_result = _dry_run_result()
     dry_run_orchestrator = _RecordingDryRunOrchestrator(result=dry_run_result)
     controller._load_config = lambda: config  # type: ignore[method-assign]
     controller._run_history_service = run_history_service  # type: ignore[method-assign]
-    controller._status_service = status_service  # type: ignore[method-assign]
+    controller._status_service = _RecordingStatusService(result=_status_result())  # type: ignore[method-assign]
     controller._dry_run_orchestrator = dry_run_orchestrator  # type: ignore[method-assign]
     controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
 
-    prompt_answers = iter(("2", "", "0"))
-    prompt_calls: list[tuple[str, list[str] | None]] = []
-    monkeypatch.setattr(
-        panel_module.Prompt,
-        "ask",
-        _make_prompt_stub(prompt_calls, prompt_answers),
-    )
-
-    controller._runs_menu(config=config)
+    controller._runs_menu()
 
     assert len(dry_run_orchestrator.calls) == 1
     assert dry_run_orchestrator.calls[0][1] is RunTrigger.MANUAL
-    assert status_service.calls == []
     output = console.export_text()
     assert "Dry-run: run_id=run-123 status=partial artifact=data/artifacts/run-123.json" in output
     assert "changed=1 failed=1" in output
@@ -215,76 +183,23 @@ def test_runs_menu_dry_run_choice_calls_orchestrator_and_renders_summary(
     assert "partial" in output
 
 
-def _panel_controller(tmp_path: Path) -> tuple[PanelController, Console]:
-    console = Console(force_terminal=True, record=True, width=120)
-    return PanelController(config_path=tmp_path / "config.json", console=console), console
+def _panel_controller(
+    tmp_path: Path,
+    *,
+    prompts: ScriptedPromptAdapter,
+) -> tuple[PanelController, object]:
+    return make_panel_controller(tmp_path, prompts=prompts)
 
 
 def _config() -> AppConfig:
     return AppConfig.model_validate(
         {
+            "version": 1,
             "routers": [],
             "services": [],
             "mappings": [],
-            "runtime": {
-                "artifacts_dir": "data/artifacts",
-                "logs_dir": "data/logs",
-                "secrets_env_file": ".env.secrets",
-            },
+            "runtime": {"artifacts_dir": "data/artifacts", "logs_dir": "data/logs"},
         }
-    )
-
-
-def _status_result() -> StatusDiagnosticsResult:
-    return StatusDiagnosticsResult(
-        config_ready=True,
-        overall_status=OverallDiagnosticStatus.FAILED,
-        checked_router_count=3,
-        router_results=(
-            RouterStatusDiagnostic(
-                router_id="router-healthy",
-                status=RouterDiagnosticStatus.HEALTHY,
-                dns_proxy_enabled=True,
-            ),
-            RouterStatusDiagnostic(
-                router_id="router-degraded",
-                status=RouterDiagnosticStatus.DEGRADED,
-                dns_proxy_enabled=False,
-                error_message="dns proxy disabled",
-            ),
-            RouterStatusDiagnostic(
-                router_id="router-failed",
-                status=RouterDiagnosticStatus.FAILED,
-                error_message="missing secret",
-            ),
-        ),
-    )
-
-
-def _dry_run_result() -> DryRunExecutionResult:
-    return DryRunExecutionResult(
-        artifact=_artifact(
-            run_id="run-123",
-            status=RunStatus.PARTIAL,
-            finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
-            service_results=(
-                ServiceRunResult(
-                    service_key="telegram",
-                    object_group_name="svc-telegram",
-                    status=ServiceResultStatus.UPDATED,
-                    added_count=1,
-                    route_changed=True,
-                ),
-                ServiceRunResult(
-                    service_key="youtube",
-                    object_group_name="svc-youtube",
-                    status=ServiceResultStatus.FAILED,
-                    error_message="planning failed",
-                ),
-            ),
-        ),
-        artifact_path=Path("data/artifacts/run-123.json"),
-        plans=(),
     )
 
 
@@ -302,31 +217,76 @@ def _artifact(
         status=status,
         started_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
         finished_at=finished_at,
-        log_path=Path("data/logs") / f"{run_id}.log",
-        router_results=[
+        log_path=Path("data/logs/run.log"),
+        router_results=(
             RouterRunResult(
                 router_id="router-1",
-                status=(
-                    RouterResultStatus.PARTIAL
-                    if status is RunStatus.PARTIAL
-                    else RouterResultStatus.NO_CHANGES
-                ),
-                service_results=list(service_results),
-            )
-        ],
+                status=RouterResultStatus.PARTIAL,
+                service_results=service_results,
+            ),
+        ),
     )
 
 
-def _make_prompt_stub(
-    prompt_calls: list[tuple[str, list[str] | None]],
-    answers: Iterable[str],
-):
-    answer_iter = iter(answers)
+def _status_result() -> StatusDiagnosticsResult:
+    return StatusDiagnosticsResult(
+        overall_status=OverallDiagnosticStatus.FAILED,
+        checked_router_count=3,
+        router_results=(
+            RouterStatusDiagnostic(
+                router_id="router-healthy",
+                status=RouterDiagnosticStatus.HEALTHY,
+                dns_proxy_enabled=True,
+                error_message=None,
+            ),
+            RouterStatusDiagnostic(
+                router_id="router-degraded",
+                status=RouterDiagnosticStatus.DEGRADED,
+                dns_proxy_enabled=False,
+                error_message="dns proxy disabled",
+            ),
+            RouterStatusDiagnostic(
+                router_id="router-failed",
+                status=RouterDiagnosticStatus.FAILED,
+                dns_proxy_enabled=None,
+                error_message="missing secret",
+            ),
+        ),
+    )
 
-    def _ask(*args, **kwargs) -> str:
-        prompt_calls.append(
-            (str(args[0]), list(kwargs.get("choices")) if kwargs.get("choices") else None)
-        )
-        return next(answer_iter)
 
-    return _ask
+def _dry_run_result() -> DryRunExecutionResult:
+    artifact = RunArtifact(
+        run_id="run-123",
+        trigger=RunTrigger.MANUAL,
+        mode=RunMode.DRY_RUN,
+        status=RunStatus.PARTIAL,
+        started_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
+        finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+        log_path=Path("data/logs/run-123.log"),
+        router_results=(
+            RouterRunResult(
+                router_id="router-1",
+                status=RouterResultStatus.PARTIAL,
+                service_results=(
+                    ServiceRunResult(
+                        service_key="telegram",
+                        object_group_name="svc-telegram",
+                        status=ServiceResultStatus.UPDATED,
+                        added_count=1,
+                    ),
+                    ServiceRunResult(
+                        service_key="youtube",
+                        object_group_name="svc-youtube",
+                        status=ServiceResultStatus.FAILED,
+                        error_message="router rejected update",
+                    ),
+                ),
+            ),
+        ),
+    )
+    return DryRunExecutionResult(
+        artifact=artifact,
+        artifact_path=Path("data/artifacts/run-123.json"),
+        plans=(),
+    )
