@@ -39,6 +39,7 @@ class ScriptedPromptAdapter:
         choices: list[PromptChoice],
         default: str | None = None,
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> str | None:
         self.select_calls.append(
             {
@@ -46,6 +47,7 @@ class ScriptedPromptAdapter:
                 "choices": [choice.value for choice in choices],
                 "default": default,
                 "instruction": instruction,
+                "hint_lines": hint_lines,
             }
         )
         return self._pop(self._select_answers, f"select:{message}")
@@ -56,12 +58,14 @@ class ScriptedPromptAdapter:
         message: str,
         choices: list[PromptChoice],
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> list[str] | None:
         self.checkbox_calls.append(
             {
                 "message": message,
                 "choices": [(choice.value, choice.checked) for choice in choices],
                 "instruction": instruction,
+                "hint_lines": hint_lines,
             }
         )
         return self._pop(self._checkbox_answers, f"checkbox:{message}")
@@ -72,12 +76,14 @@ class ScriptedPromptAdapter:
         message: str,
         default: str = "",
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> str | None:
         self.text_calls.append(
             {
                 "message": message,
                 "default": default,
                 "instruction": instruction,
+                "hint_lines": hint_lines,
             }
         )
         return self._pop(self._text_answers, f"text:{message}")
@@ -88,17 +94,19 @@ class ScriptedPromptAdapter:
         message: str,
         default: bool = True,
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> bool | None:
         self.confirm_calls.append(
             {
                 "message": message,
                 "default": default,
                 "instruction": instruction,
+                "hint_lines": hint_lines,
             }
         )
         return self._pop(self._confirm_answers, f"confirm:{message}")
 
-    def pause(self, *, message: str) -> None:
+    def pause(self, *, message: str, hint_lines: tuple[str, ...] | None = None) -> None:
         self.pause_messages.append(message)
 
     def assert_consumed(self) -> None:

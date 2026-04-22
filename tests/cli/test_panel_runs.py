@@ -117,7 +117,8 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp
     assert "Контекст прогонов" in output
     assert "Последние локальные артефакты" in output
     assert "run-001" in output
-    assert "changed=1 failed=1" in output
+    assert "changed=1" in output
+    assert "failed=1" in output
     assert "data/artifacts" in output
     assert "data/logs" in output
     assert "Пропущенные артефакты" in output

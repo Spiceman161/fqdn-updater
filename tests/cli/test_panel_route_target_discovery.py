@@ -191,7 +191,6 @@ def test_build_router_mappings_preserves_existing_metadata_and_google_override(t
 def test_add_new_router_uses_draft_router_for_route_target_discovery(tmp_path, monkeypatch) -> None:
     prompts = ScriptedPromptAdapter(
         text_answers=[
-            "router-1",
             "Router 1",
             "http://router-1.example",
             "api-user",
@@ -265,7 +264,6 @@ def test_add_new_router_reports_invalid_draft_router_without_traceback(
 ) -> None:
     prompts = ScriptedPromptAdapter(
         text_answers=[
-            "router-1",
             "Router 1",
             "https://router-1.example/api/",
             "api-user",

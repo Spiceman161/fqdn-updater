@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -58,6 +60,22 @@ DEFAULT_SELECTED_SERVICES = frozenset(
 )
 DEFAULT_INTERFACE_NAME = "Wireguard0"
 ROOT_PANEL_WIDTH = 86
+MAIN_MENU_HINT_LINES = (
+    "Панель редактирует локальный config и preview-flow.",
+    "Изменения на маршрутизаторах применяются только через dry-run и sync.",
+)
+ROUTER_MENU_HINT_LINES = (
+    "Здесь можно добавить новый маршрутизатор, изменить параметры или сменить пароль.",
+    "Списки и маршруты не меняются до подтверждения сохранения.",
+)
+ADD_ROUTER_HINT_LINES = (
+    "ID маршрутизатора будет создан автоматически из имени.",
+    "Новый пароль RCI будет показан один раз после сохранения.",
+)
+ADD_ROUTER_SAVE_HINT_LINES = (
+    "Проверьте сгенерированный ID и ссылку RCI перед сохранением.",
+    "После сохранения обновите пароль пользователя API на Keenetic.",
+)
 
 
 @dataclass(frozen=True)
@@ -140,6 +158,7 @@ class PanelController:
                 ],
                 default="routers",
                 instruction="Стрелки выбирают, Enter открывает, Esc возвращает назад.",
+                hint_lines=MAIN_MENU_HINT_LINES,
             )
             if choice in {None, "exit"}:
                 return
@@ -182,7 +201,7 @@ class PanelController:
         summary.add_column(style="bright_cyan")
         summary.add_row("Config", str(self._config_path))
         summary.add_row("Secrets", str(self._secrets_env_path(config=config)))
-        summary.add_row("Routers", str(len(config.routers)))
+        summary.add_row("Маршрутизаторы", str(len(config.routers)))
         summary.add_row("Mappings", str(len(config.mappings)))
         summary.add_row("Artifacts", config.runtime.artifacts_dir)
         summary.add_row("Logs", config.runtime.logs_dir)
@@ -228,25 +247,26 @@ class PanelController:
             choice = self._prompts.select(
                 message="Маршрутизаторы",
                 choices=[
-                    PromptChoice("Добавить новый роутер", "add"),
+                    PromptChoice("Добавить новый маршрутизатор", "add"),
                     PromptChoice(
-                        "Изменить параметры существующего роутера",
+                        "Изменить параметры существующего маршрутизатора",
                         "edit",
-                        disabled=None if has_routers else "Нет настроенных роутеров",
+                        disabled=None if has_routers else "Нет настроенных маршрутизаторов",
                     ),
                     PromptChoice(
-                        "Включить или выключить роутер",
+                        "Включить или выключить маршрутизатор",
                         "toggle",
-                        disabled=None if has_routers else "Нет настроенных роутеров",
+                        disabled=None if has_routers else "Нет настроенных маршрутизаторов",
                     ),
                     PromptChoice(
                         "Повернуть пароль RCI",
                         "rotate",
-                        disabled=None if has_routers else "Нет настроенных роутеров",
+                        disabled=None if has_routers else "Нет настроенных маршрутизаторов",
                     ),
                     PromptChoice("Назад", "back"),
                 ],
                 default="add",
+                hint_lines=ROUTER_MENU_HINT_LINES,
             )
             if choice in {None, "back"}:
                 return
@@ -261,34 +281,32 @@ class PanelController:
 
     def _add_router(self) -> None:
         config = self._load_config()
-        router_id = self._prompts.text(
-            message="Router id",
-            instruction="Используйте lowercase, цифры, дефисы и подчёркивания.",
+        name = self._prompts.text(
+            message="Имя маршрутизатора",
+            default="",
+            hint_lines=ADD_ROUTER_HINT_LINES,
         )
-        if router_id is None:
-            return
-        router_id = router_id.strip()
-
-        existing_router = _find_router(config=config, router_id=router_id)
-        if existing_router is not None:
-            self._console.print(
-                "[yellow]"
-                f"Router '{router_id}' уже существует. Используйте режим редактирования."
-                "[/yellow]"
-            )
-            self._pause()
-            return
-
-        name = self._prompts.text(message="Имя роутера", default=router_id)
         if name is None:
             return
-        rci_url = self._prompts.text(message="KeenDNS RCI URL", default="")
+        router_id = _derive_router_id(name=name, config=config)
+        rci_url = self._prompts.text(
+            message="KeenDNS RCI URL",
+            default="",
+            hint_lines=ADD_ROUTER_HINT_LINES,
+        )
         if rci_url is None:
             return
-        username = self._prompts.text(message="RCI username", default="api_updater")
+        username = self._prompts.text(
+            message="RCI username",
+            default="api_updater",
+            hint_lines=ADD_ROUTER_HINT_LINES,
+        )
         if username is None:
             return
-        timeout_seconds = self._prompt_timeout_seconds(default=10)
+        timeout_seconds = self._prompt_timeout_seconds(
+            default=10,
+            hint_lines=ADD_ROUTER_HINT_LINES,
+        )
         if timeout_seconds is None:
             return
 
@@ -316,7 +334,8 @@ class PanelController:
             )
         except ValidationError as exc:
             self._console.print(
-                f"[yellow]Router input is invalid:[/yellow] {_format_validation_error(exc)}"
+                "[yellow]Некорректные параметры маршрутизатора:[/yellow] "
+                f"{_format_validation_error(exc)}"
             )
             self._pause()
             return
@@ -324,6 +343,7 @@ class PanelController:
         selected_services = self._prompt_service_selection(
             config=config,
             selected=DEFAULT_SELECTED_SERVICES,
+            hint_lines=ADD_ROUTER_HINT_LINES,
         )
         if selected_services is None:
             return
@@ -336,9 +356,10 @@ class PanelController:
                 editable_mappings=[],
                 selected_services=selected_services,
                 missing_secret_message=(
-                    "Автообнаружение WireGuard пропущено: сначала сохраните роутер, "
+                    "Автообнаружение WireGuard пропущено: сначала сохраните маршрутизатор, "
                     "примените пароль на Keenetic и затем откройте мастер списков снова."
                 ),
+                hint_lines=ADD_ROUTER_HINT_LINES,
             )
             if mapping_plan is None:
                 return
@@ -354,8 +375,8 @@ class PanelController:
         self._render_summary(
             title="Проверка сохранения",
             rows=[
-                ("Операция", "добавить роутер"),
-                ("Router", router_id),
+                ("Операция", "добавить маршрутизатор"),
+                ("Маршрутизатор", router_id),
                 ("Имя", name),
                 ("RCI URL", normalize_rci_url_input(rci_url)),
                 ("Username", username),
@@ -376,7 +397,11 @@ class PanelController:
                 ),
             ],
         )
-        should_save = self._prompts.confirm(message="Сохранить новый роутер?", default=True)
+        should_save = self._prompts.confirm(
+            message="Сохранить новый маршрутизатор?",
+            default=True,
+            hint_lines=ADD_ROUTER_SAVE_HINT_LINES,
+        )
         if not should_save:
             return
 
@@ -403,17 +428,20 @@ class PanelController:
             self._repository.overwrite(path=self._config_path, config=config)
             raise
 
-        self._console.print("[green]Роутер сохранён.[/green]")
+        self._console.print("[green]Маршрутизатор сохранён.[/green]")
         self._show_generated_password(password=password)
         self._pause()
 
     def _edit_router(self) -> None:
         config = self._load_config()
-        router = self._select_router(config=config, message="Выберите роутер для редактирования")
+        router = self._select_router(
+            config=config,
+            message="Выберите маршрутизатор для редактирования",
+        )
         if router is None:
             return
 
-        name = self._prompts.text(message="Имя роутера", default=router.name)
+        name = self._prompts.text(message="Имя маршрутизатора", default=router.name)
         if name is None:
             return
         rci_url = self._prompts.text(message="KeenDNS RCI URL", default=str(router.rci_url))
@@ -443,7 +471,8 @@ class PanelController:
             )
         except ValidationError as exc:
             self._console.print(
-                f"[yellow]Router input is invalid:[/yellow] {_format_validation_error(exc)}"
+                "[yellow]Некорректные параметры маршрутизатора:[/yellow] "
+                f"{_format_validation_error(exc)}"
             )
             self._pause()
             return
@@ -451,8 +480,8 @@ class PanelController:
         self._render_summary(
             title="Проверка сохранения",
             rows=[
-                ("Операция", "изменить роутер"),
-                ("Router", router.id),
+                ("Операция", "изменить маршрутизатор"),
+                ("Маршрутизатор", router.id),
                 ("Имя", name),
                 ("RCI URL", normalize_rci_url_input(rci_url)),
                 ("Username", username),
@@ -461,7 +490,10 @@ class PanelController:
                 ("Password ref", router.password_env or router.password_file or "нет"),
             ],
         )
-        should_save = self._prompts.confirm(message="Сохранить изменения роутера?", default=True)
+        should_save = self._prompts.confirm(
+            message="Сохранить изменения маршрутизатора?",
+            default=True,
+        )
         if not should_save:
             return
 
@@ -478,14 +510,14 @@ class PanelController:
             timeout_seconds=timeout_seconds,
             allowed_source_ips=list(router.allowed_source_ips),
         )
-        self._console.print("[green]Параметры роутера обновлены.[/green]")
+        self._console.print("[green]Параметры маршрутизатора обновлены.[/green]")
         self._pause()
 
     def _toggle_router_enabled(self) -> None:
         config = self._load_config()
         router = self._select_router(
             config=config,
-            message="Выберите роутер для включения или выключения",
+            message="Выберите маршрутизатор для включения или выключения",
         )
         if router is None:
             return
@@ -494,15 +526,18 @@ class PanelController:
         self._render_summary(
             title="Проверка сохранения",
             rows=[
-                ("Операция", "включить роутер" if next_enabled else "выключить роутер"),
-                ("Router", router.id),
+                (
+                    "Операция",
+                    "включить маршрутизатор" if next_enabled else "выключить маршрутизатор",
+                ),
+                ("Маршрутизатор", router.id),
                 ("Текущее состояние", _router_state_plain(router.enabled)),
                 ("Новое состояние", _router_state_plain(next_enabled)),
                 ("Password ref", router.password_env or router.password_file or "нет"),
             ],
         )
         should_save = self._prompts.confirm(
-            message="Сохранить новый статус роутера?",
+            message="Сохранить новый статус маршрутизатора?",
             default=True,
         )
         if not should_save:
@@ -521,12 +556,15 @@ class PanelController:
             timeout_seconds=router.timeout_seconds,
             allowed_source_ips=list(router.allowed_source_ips),
         )
-        self._console.print("[green]Статус роутера обновлён.[/green]")
+        self._console.print("[green]Статус маршрутизатора обновлён.[/green]")
         self._pause()
 
     def _rotate_router_password(self) -> None:
         config = self._load_config()
-        router = self._select_router(config=config, message="Выберите роутер для смены пароля")
+        router = self._select_router(
+            config=config,
+            message="Выберите маршрутизатор для смены пароля",
+        )
         if router is None:
             return
 
@@ -541,7 +579,7 @@ class PanelController:
             title="Проверка смены пароля",
             rows=[
                 ("Операция", "rotate password"),
-                ("Router", router.id),
+                ("Маршрутизатор", router.id),
                 ("Password env", password_env),
                 (
                     "Password file",
@@ -554,7 +592,7 @@ class PanelController:
             ],
         )
         should_rotate = self._prompts.confirm(
-            message="Повернуть пароль RCI для этого роутера?",
+            message="Повернуть пароль RCI для этого маршрутизатора?",
             default=False,
         )
         if not should_rotate:
@@ -576,14 +614,15 @@ class PanelController:
             self._repository.overwrite(path=self._config_path, config=config)
             raise
 
-        self._console.print("[green]Пароль роутера обновлён.[/green]")
+        self._console.print("[green]Пароль маршрутизатора обновлён.[/green]")
         self._show_generated_password(password=password)
         self._pause()
 
     def _lists_menu(self) -> None:
         config = self._load_config()
         router = self._select_router(
-            config=config, message="Выберите роутер для списков и маршрутов"
+            config=config,
+            message="Выберите маршрутизатор для списков и маршрутов",
         )
         if router is None:
             return
@@ -630,7 +669,7 @@ class PanelController:
             title="Проверка сохранения",
             rows=[
                 ("Операция", "обновить списки и маршруты"),
-                ("Router", router.id),
+                ("Маршрутизатор", router.id),
                 ("Добавить", ", ".join(added_services) or "нет"),
                 ("Удалить", ", ".join(removed_services) or "нет"),
                 ("Оставить", ", ".join(kept_services) or "нет"),
@@ -651,7 +690,7 @@ class PanelController:
             ],
         )
         should_save = self._prompts.confirm(
-            message="Сохранить списки и маршруты для роутера?",
+            message="Сохранить списки и маршруты для маршрутизатора?",
             default=True,
         )
         if not should_save:
@@ -693,7 +732,7 @@ class PanelController:
     def _config_menu(self, *, config: AppConfig) -> None:
         self._console.print("[green]Конфиг валиден.[/green]")
         self._console.print(
-            f"routers={len(config.routers)} services={len(config.services)} "
+            f"маршрутизаторы={len(config.routers)} services={len(config.services)} "
             f"mappings={len(config.mappings)}"
         )
         self._console.print(f"secrets_env_file={config.runtime.secrets_env_file}")
@@ -703,13 +742,13 @@ class PanelController:
         self._console.print("[bold]FQDN-updater panel[/bold]")
         self._console.print("Локальная терминальная панель для управления config и preview-flow.")
         self._console.print(
-            "Изменения на роутерах выполняются только через dry-run/sync с явным выбором."
+            "Изменения на маршрутизаторах выполняются только через dry-run/sync с явным выбором."
         )
         self._pause()
 
     def _select_router(self, *, config: AppConfig, message: str) -> RouterConfig | None:
         if not config.routers:
-            self._console.print("[yellow]Нет настроенных роутеров.[/yellow]")
+            self._console.print("[yellow]Нет настроенных маршрутизаторов.[/yellow]")
             self._pause()
             return None
 
@@ -734,6 +773,7 @@ class PanelController:
         *,
         config: AppConfig,
         selected: set[str],
+        hint_lines: tuple[str, ...] | None = None,
     ) -> set[str] | None:
         service_choices = [
             PromptChoice(
@@ -752,17 +792,26 @@ class PanelController:
         result = self._prompts.checkbox(
             message="Выберите управляемые сервисы",
             choices=service_choices,
-            instruction="Стрелки выбирают, Пробел отмечает, Enter сохраняет набор, Esc возвращает назад.",
+            instruction=(
+                "Стрелки выбирают, Пробел отмечает, Enter сохраняет набор, Esc возвращает назад."
+            ),
+            hint_lines=hint_lines,
         )
         if result is None:
             return None
         return set(result)
 
-    def _prompt_timeout_seconds(self, *, default: int) -> int | None:
+    def _prompt_timeout_seconds(
+        self,
+        *,
+        default: int,
+        hint_lines: tuple[str, ...] | None = None,
+    ) -> int | None:
         while True:
             raw_value = self._prompts.text(
                 message="RCI timeout seconds",
                 default=str(default),
+                hint_lines=hint_lines,
             )
             if raw_value is None:
                 return None
@@ -785,6 +834,7 @@ class PanelController:
         editable_mappings: list[RouterServiceMappingConfig],
         selected_services: set[str],
         missing_secret_message: str | None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> MappingPlan | None:
         default_target, has_inconsistent_default, google_ai_override = (
             _derive_mapping_plan_defaults(
@@ -803,6 +853,7 @@ class PanelController:
             label="Базовый route target",
             default_target=default_target,
             missing_secret_message=missing_secret_message,
+            hint_lines=hint_lines,
         )
         if default_target is None:
             return None
@@ -815,6 +866,7 @@ class PanelController:
             use_override = self._prompts.confirm(
                 message="Использовать отдельный route target для google_ai?",
                 default=google_ai_override is not None,
+                hint_lines=hint_lines,
             )
             if use_override is None:
                 return None
@@ -825,6 +877,7 @@ class PanelController:
                     label="Route target для google_ai",
                     default_target=google_ai_override or default_target,
                     missing_secret_message=missing_secret_message,
+                    hint_lines=hint_lines,
                 )
                 if google_ai_target is None:
                     return None
@@ -839,6 +892,7 @@ class PanelController:
         label: str,
         default_target: RouteTargetDraft,
         missing_secret_message: str | None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> RouteTargetDraft | None:
         target_type = self._prompts.select(
             message=f"{label}: тип маршрута",
@@ -847,6 +901,7 @@ class PanelController:
                 PromptChoice("Шлюз", "gateway"),
             ],
             default=default_target.route_target_type,
+            hint_lines=hint_lines,
         )
         if target_type is None:
             return None
@@ -858,8 +913,13 @@ class PanelController:
                 label=label,
                 default_value=default_target.route_target_value,
                 missing_secret_message=missing_secret_message,
+                hint_lines=hint_lines,
             )
-        return self._prompt_gateway_target(label=label, default_target=default_target)
+        return self._prompt_gateway_target(
+            label=label,
+            default_target=default_target,
+            hint_lines=hint_lines,
+        )
 
     def _prompt_interface_target(
         self,
@@ -869,6 +929,7 @@ class PanelController:
         label: str,
         default_value: str,
         missing_secret_message: str | None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> RouteTargetDraft | None:
         candidates = self._discover_route_targets(
             config=config,
@@ -894,6 +955,7 @@ class PanelController:
                 message=label,
                 choices=choices,
                 default=default_choice,
+                hint_lines=hint_lines,
             )
             if selected_value is None:
                 return None
@@ -907,6 +969,7 @@ class PanelController:
         manual_value = self._prompts.text(
             message=f"{label}: имя интерфейса Keenetic",
             default=default_value,
+            hint_lines=hint_lines,
         )
         if manual_value is None:
             return None
@@ -922,6 +985,7 @@ class PanelController:
         *,
         label: str,
         default_target: RouteTargetDraft,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> RouteTargetDraft | None:
         default_gateway = (
             default_target.route_target_value
@@ -933,6 +997,7 @@ class PanelController:
         gateway_value = self._prompts.text(
             message=f"{label}: IP или адрес шлюза",
             default=default_gateway,
+            hint_lines=hint_lines,
         )
         if gateway_value is None:
             return None
@@ -940,6 +1005,7 @@ class PanelController:
             message=f"{label}: интерфейс для gateway route (опционально)",
             default=default_interface,
             instruction="Оставьте пустым, если интерфейс не нужен.",
+            hint_lines=hint_lines,
         )
         if route_interface is None:
             return None
@@ -1052,7 +1118,7 @@ class PanelController:
         table.add_column("Режим")
         table.add_column("Статус")
         table.add_column("Завершён")
-        table.add_column("Роутеры")
+        table.add_column("Маршрутизаторы")
         table.add_column("Summary")
         for run in history.runs:
             artifact = run.artifact
@@ -1141,7 +1207,7 @@ class PanelController:
 
     def _render_status_result(self, *, result: StatusDiagnosticsResult) -> None:
         table = Table(show_header=True, header_style="bold white")
-        table.add_column("Роутер")
+        table.add_column("Маршрутизатор")
         table.add_column("Статус")
         table.add_column("DNS proxy")
         table.add_column("Деталь")
@@ -1163,7 +1229,7 @@ class PanelController:
     def _render_dry_run_result(self, *, result: DryRunExecutionResult) -> None:
         artifact = result.artifact
         table = Table(show_header=True, header_style="bold white")
-        table.add_column("Роутер")
+        table.add_column("Маршрутизатор")
         table.add_column("Статус")
         table.add_column("Сервисов")
         table.add_column("Summary")
@@ -1360,6 +1426,45 @@ def _router_state_plain(enabled: bool) -> str:
     return "enabled" if enabled else "disabled"
 
 
+def _derive_router_id(*, name: str, config: AppConfig) -> str:
+    base_slug = _slugify_router_name(name)
+    if _router_id_is_available(config=config, router_id=base_slug):
+        return base_slug
+
+    suffix = 2
+    while True:
+        candidate = f"{base_slug}-{suffix}"
+        if _router_id_is_available(config=config, router_id=candidate):
+            return candidate
+        suffix += 1
+
+
+def _slugify_router_name(name: str) -> str:
+    transliterated_name = "".join(
+        _CYRILLIC_TO_ASCII.get(character, character) for character in name
+    )
+    normalized_name = unicodedata.normalize("NFKD", transliterated_name)
+    ascii_name = normalized_name.encode("ascii", "ignore").decode("ascii")
+    lowered_name = ascii_name.lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", lowered_name).strip("-")
+    if not slug:
+        return "router"
+    return slug
+
+
+def _router_id_is_available(*, config: AppConfig, router_id: str) -> bool:
+    existing_ids = {router.id for router in config.routers}
+    if router_id in existing_ids:
+        return False
+
+    candidate_password_env = password_env_key_for_router_id(router_id)
+    for router in config.routers:
+        existing_password_env = _router_password_env_reference(router)
+        if existing_password_env == candidate_password_env:
+            return False
+    return True
+
+
 def _ensure_password_env_available(
     *,
     config: AppConfig,
@@ -1367,10 +1472,89 @@ def _ensure_password_env_available(
     password_env: str,
 ) -> None:
     for router in config.routers:
-        if router.id != router_id and router.password_env == password_env:
+        existing_password_env = _router_password_env_reference(router)
+        if router.id != router_id and existing_password_env == password_env:
             raise RuntimeError(
                 f"Password env '{password_env}' is already used by router '{router.id}'"
             )
+
+
+def _router_password_env_reference(router: RouterConfig) -> str | None:
+    if router.password_env is not None:
+        return router.password_env
+    if router.password_file is not None:
+        return password_env_key_for_router_id(router.id)
+    return None
+
+
+_CYRILLIC_TO_ASCII = {
+    "А": "A",
+    "а": "a",
+    "Б": "B",
+    "б": "b",
+    "В": "V",
+    "в": "v",
+    "Г": "G",
+    "г": "g",
+    "Д": "D",
+    "д": "d",
+    "Е": "E",
+    "е": "e",
+    "Ё": "E",
+    "ё": "e",
+    "Ж": "Zh",
+    "ж": "zh",
+    "З": "Z",
+    "з": "z",
+    "И": "I",
+    "и": "i",
+    "Й": "I",
+    "й": "i",
+    "К": "K",
+    "к": "k",
+    "Л": "L",
+    "л": "l",
+    "М": "M",
+    "м": "m",
+    "Н": "N",
+    "н": "n",
+    "О": "O",
+    "о": "o",
+    "П": "P",
+    "п": "p",
+    "Р": "R",
+    "р": "r",
+    "С": "S",
+    "с": "s",
+    "Т": "T",
+    "т": "t",
+    "У": "U",
+    "у": "u",
+    "Ф": "F",
+    "ф": "f",
+    "Х": "Kh",
+    "х": "kh",
+    "Ц": "Ts",
+    "ц": "ts",
+    "Ч": "Ch",
+    "ч": "ch",
+    "Ш": "Sh",
+    "ш": "sh",
+    "Щ": "Shch",
+    "щ": "shch",
+    "Ъ": "",
+    "ъ": "",
+    "Ы": "Y",
+    "ы": "y",
+    "Ь": "",
+    "ь": "",
+    "Э": "E",
+    "э": "e",
+    "Ю": "Yu",
+    "ю": "yu",
+    "Я": "Ya",
+    "я": "ya",
+}
 
 
 def _format_connected(value: bool | None) -> str:
