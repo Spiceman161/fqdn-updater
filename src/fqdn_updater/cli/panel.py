@@ -139,7 +139,7 @@ class PanelController:
                     PromptChoice("Выход", "exit"),
                 ],
                 default="routers",
-                instruction="Стрелки выбирают, Enter подтверждает, Ctrl+C отменяет.",
+                instruction="Стрелки выбирают, Enter открывает, Esc возвращает назад.",
             )
             if choice in {None, "exit"}:
                 return
@@ -752,7 +752,7 @@ class PanelController:
         result = self._prompts.checkbox(
             message="Выберите управляемые сервисы",
             choices=service_choices,
-            instruction="Пробел переключает, Enter сохраняет набор, Ctrl+C отменяет.",
+            instruction="Стрелки выбирают, Пробел отмечает, Enter сохраняет набор, Esc возвращает назад.",
         )
         if result is None:
             return None
