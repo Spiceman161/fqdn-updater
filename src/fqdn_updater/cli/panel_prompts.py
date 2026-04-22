@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import textwrap
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import questionary
+from prompt_toolkit.application.current import get_app_or_none
+from prompt_toolkit.filters import IsDone
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.keys import Keys
-from prompt_toolkit.layout import HSplit, Layout, Window
+from prompt_toolkit.layout import ConditionalContainer, HSplit, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from questionary.question import Question
@@ -36,6 +40,7 @@ class PromptAdapter(Protocol):
         choices: list[PromptChoice],
         default: str | None = None,
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> str | None: ...
 
     def checkbox(
@@ -44,6 +49,7 @@ class PromptAdapter(Protocol):
         message: str,
         choices: list[PromptChoice],
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> list[str] | None: ...
 
     def text(
@@ -52,6 +58,7 @@ class PromptAdapter(Protocol):
         message: str,
         default: str = "",
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> str | None: ...
 
     def confirm(
@@ -60,9 +67,10 @@ class PromptAdapter(Protocol):
         message: str,
         default: bool = True,
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> bool | None: ...
 
-    def pause(self, *, message: str) -> None: ...
+    def pause(self, *, message: str, hint_lines: tuple[str, ...] | None = None) -> None: ...
 
 
 class QuestionaryPromptAdapter:
@@ -74,8 +82,8 @@ class QuestionaryPromptAdapter:
                 "qmark": "fg:#00d7ff bold",
                 "answer": "fg:#5fd700 bold",
                 "pointer": "fg:#ffaf00 bold",
-                "highlighted": "fg:#00d7ff bold",
-                "selected": "fg:#5fd700",
+                "highlighted": "noreverse",
+                "selected": "noreverse",
                 "instruction": "fg:#808080 italic",
                 "footer": "fg:#808080",
                 "disabled": "fg:#808080 italic",
@@ -89,14 +97,22 @@ class QuestionaryPromptAdapter:
         choices: list[PromptChoice],
         default: str | None = None,
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> str | None:
-        return _build_select_question(
+        choice_titles = {choice.value: choice.title for choice in choices}
+        return _ask_and_echo(
+            question=_build_select_question(
+                message=message,
+                choices=choices,
+                default=default,
+                instruction=instruction,
+                hint_lines=hint_lines,
+                style=self._style,
+            ),
+            console=self._console,
             message=message,
-            choices=choices,
-            default=default,
-            instruction=instruction,
-            style=self._style,
-        ).ask()
+            render_answer=lambda result: choice_titles.get(result),
+        )
 
     def checkbox(
         self,
@@ -104,13 +120,25 @@ class QuestionaryPromptAdapter:
         message: str,
         choices: list[PromptChoice],
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> list[str] | None:
-        return _build_checkbox_question(
+        choice_titles = {choice.value: choice.title for choice in choices}
+        return _ask_and_echo(
+            question=_build_checkbox_question(
+                message=message,
+                choices=choices,
+                instruction=instruction,
+                hint_lines=hint_lines,
+                style=self._style,
+            ),
+            console=self._console,
             message=message,
-            choices=choices,
-            instruction=instruction,
-            style=self._style,
-        ).ask()
+            render_answer=lambda result: (
+                ", ".join(choice_titles[value] for value in result if value in choice_titles)
+                if result is not None
+                else None
+            ),
+        )
 
     def text(
         self,
@@ -118,13 +146,20 @@ class QuestionaryPromptAdapter:
         message: str,
         default: str = "",
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> str | None:
-        return _build_text_question(
+        return _ask_and_echo(
+            question=_build_text_question(
+                message=message,
+                default=default,
+                instruction=instruction,
+                hint_lines=hint_lines,
+                style=self._style,
+            ),
+            console=self._console,
             message=message,
-            default=default,
-            instruction=instruction,
-            style=self._style,
-        ).ask()
+            render_answer=lambda result: result,
+        )
 
     def confirm(
         self,
@@ -132,19 +167,34 @@ class QuestionaryPromptAdapter:
         message: str,
         default: bool = True,
         instruction: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
     ) -> bool | None:
-        return _build_confirm_question(
+        return _ask_and_echo(
+            question=_build_confirm_question(
+                message=message,
+                default=default,
+                instruction=instruction,
+                hint_lines=hint_lines,
+                style=self._style,
+            ),
+            console=self._console,
             message=message,
-            default=default,
-            instruction=instruction,
-            style=self._style,
-        ).ask()
+            render_answer=lambda result: (
+                "да" if result is True else "нет" if result is False else None
+            ),
+        )
 
-    def pause(self, *, message: str) -> None:
-        _build_pause_question(
+    def pause(self, *, message: str, hint_lines: tuple[str, ...] | None = None) -> None:
+        _ask_and_echo(
+            question=_build_pause_question(
+                message=message,
+                hint_lines=hint_lines,
+                style=self._style,
+            ),
+            console=self._console,
             message=message,
-            style=self._style,
-        ).ask()
+            render_answer=lambda _result: None,
+        )
 
     def _build_choice(self, choice: PromptChoice) -> questionary.Choice:
         return questionary.Choice(
@@ -161,6 +211,7 @@ def _build_select_question(
     choices: list[PromptChoice],
     default: str | None = None,
     instruction: str | None = None,
+    hint_lines: tuple[str, ...] | None = None,
     style: Style,
     **kwargs: Any,
 ) -> Question:
@@ -179,6 +230,7 @@ def _build_select_question(
     )
     return _decorate_question(
         question=question,
+        hint_lines=hint_lines,
         footer=instruction or DEFAULT_SELECT_FOOTER,
     )
 
@@ -188,6 +240,7 @@ def _build_checkbox_question(
     message: str,
     choices: list[PromptChoice],
     instruction: str | None = None,
+    hint_lines: tuple[str, ...] | None = None,
     style: Style,
     **kwargs: Any,
 ) -> Question:
@@ -205,6 +258,7 @@ def _build_checkbox_question(
     )
     return _decorate_question(
         question=question,
+        hint_lines=hint_lines,
         footer=instruction or DEFAULT_CHECKBOX_FOOTER,
     )
 
@@ -214,20 +268,22 @@ def _build_text_question(
     message: str,
     default: str = "",
     instruction: str | None = None,
+    hint_lines: tuple[str, ...] | None = None,
     style: Style,
     **kwargs: Any,
 ) -> Question:
     question = questionary.text(
         message=message,
         default=default,
-        instruction=instruction,
+        instruction=HIDDEN_INSTRUCTION,
         qmark=">",
         style=style,
         **kwargs,
     )
     return _decorate_question(
         question=question,
-        footer=DEFAULT_TEXT_FOOTER,
+        hint_lines=hint_lines,
+        footer=_compose_footer(instruction=instruction, default_footer=DEFAULT_TEXT_FOOTER),
     )
 
 
@@ -236,13 +292,14 @@ def _build_confirm_question(
     message: str,
     default: bool = True,
     instruction: str | None = None,
+    hint_lines: tuple[str, ...] | None = None,
     style: Style,
     **kwargs: Any,
 ) -> Question:
     question = questionary.confirm(
         message=message,
         default=default,
-        instruction=instruction if instruction is not None else HIDDEN_INSTRUCTION,
+        instruction=HIDDEN_INSTRUCTION,
         auto_enter=False,
         qmark=">",
         style=style,
@@ -250,13 +307,15 @@ def _build_confirm_question(
     )
     return _decorate_question(
         question=question,
-        footer=DEFAULT_CONFIRM_FOOTER,
+        hint_lines=hint_lines,
+        footer=_compose_footer(instruction=instruction, default_footer=DEFAULT_CONFIRM_FOOTER),
     )
 
 
 def _build_pause_question(
     *,
     message: str,
+    hint_lines: tuple[str, ...] | None = None,
     style: Style,
     **kwargs: Any,
 ) -> Question:
@@ -267,6 +326,7 @@ def _build_pause_question(
     )
     return _decorate_question(
         question=question,
+        hint_lines=hint_lines,
         footer=DEFAULT_PAUSE_FOOTER,
         escape_returns_none=False,
     )
@@ -275,6 +335,7 @@ def _build_pause_question(
 def _decorate_question(
     *,
     question: Question,
+    hint_lines: tuple[str, ...] | None,
     footer: str,
     escape_returns_none: bool = True,
 ) -> Question:
@@ -289,19 +350,89 @@ def _decorate_question(
             [question.application.key_bindings, bindings]
         )
 
-    footer_window = Window(
-        height=1,
-        content=FormattedTextControl(lambda: [("class:footer", f" {footer}")]),
+    hint_window = ConditionalContainer(
+        Window(
+            content=FormattedTextControl(
+                lambda: [("class:footer", _render_hint_panel(hint_lines))]
+            ),
+            dont_extend_height=True,
+        ),
+        filter=~IsDone() if hint_lines else False,
+    )
+    footer_window = ConditionalContainer(
+        Window(
+            height=1,
+            content=FormattedTextControl(lambda: [("class:footer", f" {footer}")]),
+        ),
+        filter=~IsDone(),
     )
     question.application.layout = Layout(
         HSplit(
             [
+                hint_window,
                 question.application.layout.container,
                 footer_window,
             ]
         )
     )
     return question
+
+
+def _compose_footer(*, instruction: str | None, default_footer: str) -> str:
+    if not instruction:
+        return default_footer
+    return f"{instruction} {default_footer}"
+
+
+def _render_hint_panel(hint_lines: tuple[str, ...] | None) -> str:
+    if not hint_lines:
+        return ""
+
+    terminal_width = 100
+    app = get_app_or_none()
+    if app is not None:
+        terminal_width = max(app.output.get_size().columns, 20)
+
+    inner_width = max(terminal_width - 2, 18)
+    content_width = max(inner_width - 2, 10)
+    wrapped_lines: list[str] = []
+    for line in hint_lines:
+        wrapped_lines.extend(textwrap.wrap(line, width=content_width) or [""])
+
+    title = " Подсказка "
+    title_fill = max(inner_width - len(title), 0)
+    title_left = title_fill // 2
+    title_right = title_fill - title_left
+
+    rendered_lines = [
+        "╭" + ("─" * title_left) + title + ("─" * title_right) + "╮",
+        *[f"│ {line.ljust(content_width)} │" for line in wrapped_lines],
+        "╰" + ("─" * inner_width) + "╯",
+    ]
+    return "\n".join(rendered_lines)
+
+
+def _ask_and_echo(
+    *,
+    question: Question,
+    console: Console | None,
+    message: str,
+    render_answer: Callable[[Any], str | None],
+) -> Any:
+    question.application.erase_when_done = True
+    result = question.ask()
+    answer = render_answer(result)
+    if answer is not None:
+        _print_history_line(console=console, message=message, answer=answer)
+    return result
+
+
+def _print_history_line(*, console: Console | None, message: str, answer: str) -> None:
+    line = f"> {message}" if answer == "" else f"> {message} {answer}"
+    if console is not None:
+        console.print(line, markup=False, highlight=False)
+        return
+    print(line)
 
 
 def _build_choice(choice: PromptChoice) -> questionary.Choice:
