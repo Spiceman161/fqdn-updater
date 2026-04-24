@@ -5,6 +5,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from fqdn_updater.domain.config_schema import RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.schedule import RuntimeScheduleConfig
 from fqdn_updater.infrastructure.config_repository import ConfigRepository
 
 
@@ -171,6 +172,24 @@ class ConfigManagementService:
 
     def list_mappings(self, *, path: Path) -> list[RouterServiceMappingConfig]:
         return list(self._repository.load(path=path).mappings)
+
+    def get_schedule(self, *, path: Path) -> RuntimeScheduleConfig:
+        return self._repository.load(path=path).runtime.schedule
+
+    def replace_schedule(
+        self,
+        *,
+        path: Path,
+        schedule: RuntimeScheduleConfig,
+    ) -> RuntimeScheduleConfig:
+        config = self._repository.load(path=path)
+        payload = config.model_dump(mode="json")
+        runtime_payload = payload.setdefault("runtime", {})
+        runtime_payload["schedule"] = schedule.model_dump(mode="json")
+
+        updated_config = self._repository.validate_payload(path=path, payload=payload)
+        self._repository.overwrite(path=path, config=updated_config)
+        return updated_config.runtime.schedule
 
     def replace_router_mappings(
         self,

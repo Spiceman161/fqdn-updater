@@ -1,27 +1,66 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 import fqdn_updater.cli.panel as panel_module
 from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryResult
+from fqdn_updater.domain.config_schema import AppConfig
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
+from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
+from fqdn_updater.domain.status_diagnostics import (
+    OverallDiagnosticStatus,
+    RouterDiagnosticStatus,
+    RouterStatusDiagnostic,
+    StatusDiagnosticsResult,
+)
 from fqdn_updater.infrastructure.secret_env_file import (
     SecretEnvFile,
     password_env_key_for_router_id,
 )
+from fqdn_updater.infrastructure.service_count_cache import (
+    ServiceCountCacheRepository,
+    ServiceEntryCountSnapshot,
+)
+from fqdn_updater.infrastructure.systemd_scheduler import SystemdScheduleInstallResult
 
-from .panel_test_support import ScriptedPromptAdapter, make_panel_controller, write_config
+from .panel_test_support import (
+    ScriptedPromptAdapter,
+    ScriptedSourceLoadingService,
+    make_panel_controller,
+    make_source_load_report,
+    write_config,
+)
 
 
 class _FakeDiscoveryService:
     def __init__(self, result: RouteTargetDiscoveryResult) -> None:
         self.result = result
         self.calls: list[str] = []
+        self.routers: list[object] = []
+        self.password_overrides: list[str | None] = []
 
-    def discover_wireguard_targets(self, *, router) -> RouteTargetDiscoveryResult:
+    def discover_wireguard_targets(
+        self,
+        *,
+        router,
+        password_override: str | None = None,
+    ) -> RouteTargetDiscoveryResult:
         self.calls.append(router.id)
+        self.routers.append(router)
+        self.password_overrides.append(password_override)
+        return self.result
+
+
+class _RecordingStatusService:
+    def __init__(self, result: StatusDiagnosticsResult) -> None:
+        self.result = result
+        self.calls: list[AppConfig] = []
+
+    def check(self, *, config: AppConfig) -> StatusDiagnosticsResult:
+        self.calls.append(config)
         return self.result
 
 
@@ -35,6 +74,58 @@ def test_main_menu_passes_dashboard_hint_lines_to_prompt(tmp_path) -> None:
     output = console.export_text()
     assert "Подсказка" not in output
     assert prompts.select_calls[0]["hint_lines"] == panel_module.MAIN_MENU_HINT_LINES
+
+
+def test_dashboard_renders_meta_service_as_meta_whatsapp(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["exit"])
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+        services=[
+            {
+                "key": "meta",
+                "source_urls": ["https://example.com/meta.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            }
+        ],
+        mappings=[
+            {
+                "router_id": "router-1",
+                "service_key": "meta",
+                "object_group_name": "fqdn-meta",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+            }
+        ],
+    )
+
+    controller.run()
+
+    output = console.export_text()
+    assert "Рабочий контекст" not in output
+    assert "meta (whatsapp)" in output
+
+
+def test_main_menu_includes_schedule_section(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["exit"])
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
+
+    controller.run()
+
+    assert "Расписание" in prompts.select_calls[0]["choice_titles"]
 
 
 def test_router_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
@@ -60,6 +151,162 @@ def test_router_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
     assert prompts.select_calls[0]["hint_lines"] == panel_module.ROUTER_MENU_HINT_LINES
 
 
+def test_schedule_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["back"])
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
+
+    controller._schedule_menu()
+
+    assert prompts.select_calls[0]["message"] == "Расписание"
+    assert prompts.select_calls[0]["hint_lines"] == panel_module.SCHEDULE_MENU_HINT_LINES
+
+
+def test_schedule_menu_saves_daily_schedule_and_systemd_defaults(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["edit", "daily", "back"],
+        text_answers=[
+            "03:15, 12:00",
+            "Europe/Moscow",
+            "fqdn-updater",
+            "/opt/fqdn-updater",
+            "fqdn-updater",
+        ],
+        confirm_answers=[True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
+
+    controller._schedule_menu()
+
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    assert payload["runtime"]["schedule"] == {
+        "mode": "daily",
+        "times": ["03:15", "12:00"],
+        "timezone": "Europe/Moscow",
+        "weekdays": [],
+        "systemd": {
+            "compose_service": "fqdn-updater",
+            "deployment_root": "/opt/fqdn-updater",
+            "unit_name": "fqdn-updater",
+        },
+    }
+
+
+def test_schedule_menu_install_action_calls_installer_and_renders_result(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["install", "back"])
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
+    install_calls: list[tuple[AppConfig, str]] = []
+
+    class _RecordingInstaller:
+        def install(self, *, config: AppConfig, config_path):
+            install_calls.append((config, str(config_path)))
+            return SystemdScheduleInstallResult(
+                service_path=Path("/etc/systemd/system/fqdn-updater.service"),
+                timer_path=Path("/etc/systemd/system/fqdn-updater.timer"),
+                timer_action="started",
+            )
+
+    controller._schedule_installer = _RecordingInstaller()  # type: ignore[attr-defined]
+
+    controller._schedule_menu()
+
+    output = console.export_text()
+    assert install_calls[0][1] == str(controller._config_path)
+    assert "systemd units обновлены" in output
+    assert "timer_action=started" in output
+
+
+def test_router_menu_uses_shorter_edit_label(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["back"])
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+
+    controller._router_menu()
+
+    assert prompts.select_calls[0]["choice_titles"][1] == "Изменить параметры маршрутизатора"
+    assert "Повернуть пароль RCI" not in prompts.select_calls[0]["choice_titles"]
+
+
+def test_router_menu_status_choice_calls_diagnostics_service_and_renders_router_details(
+    tmp_path,
+) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["status", "back"])
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+    raw_error = "upstream rejected request " + ("x" * 600)
+    status_service = _RecordingStatusService(
+        result=StatusDiagnosticsResult(
+            overall_status=OverallDiagnosticStatus.FAILED,
+            checked_router_count=3,
+            router_results=(
+                RouterStatusDiagnostic(
+                    router_id="router-healthy",
+                    status=RouterDiagnosticStatus.HEALTHY,
+                    dns_proxy_enabled=True,
+                    error_message=None,
+                ),
+                RouterStatusDiagnostic(
+                    router_id="router-degraded",
+                    status=RouterDiagnosticStatus.DEGRADED,
+                    dns_proxy_enabled=False,
+                    error_message="dns proxy disabled",
+                ),
+                RouterStatusDiagnostic(
+                    router_id="router-failed",
+                    status=RouterDiagnosticStatus.FAILED,
+                    dns_proxy_enabled=None,
+                    error_message=raw_error,
+                ),
+            ),
+        )
+    )
+    controller._status_service = status_service  # type: ignore[attr-defined]
+    controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
+
+    controller._router_menu()
+
+    assert len(status_service.calls) == 1
+    assert prompts.pause_messages == ["Нажмите любую клавишу для продолжения..."]
+    assert prompts.select_calls[0]["choice_titles"][3] == "Проверка связи с маршрутизаторами"
+    plain_output = console.export_text(clear=False)
+    styled_output = console.export_text(styles=True, clear=False)
+    assert "Status diagnostics: overall=failed checked=3" in plain_output
+    assert "router-healthy" in plain_output
+    assert "router-degraded" in plain_output
+    assert "router-failed" in plain_output
+    assert "dns proxy disabled" in plain_output
+    assert "upstream rejected request" in plain_output
+    assert ("x" * 400) not in plain_output
+    assert "dns proxy disabled" in styled_output
+    assert "\x1b[" in styled_output
+
+
 def test_add_router_passes_hint_lines_through_wizard_steps(
     tmp_path,
     monkeypatch,
@@ -67,14 +314,13 @@ def test_add_router_passes_hint_lines_through_wizard_steps(
     prompts = ScriptedPromptAdapter(
         text_answers=[
             "Router 1",
-            "https://router-1.example/rci/",
             "api_updater",
-            "10",
+            "https://router-1.example/rci/",
             "Wireguard0",
         ],
         checkbox_answers=[["telegram", "google_ai"]],
-        select_answers=["interface"],
-        confirm_answers=[False, True],
+        select_answers=[],
+        confirm_answers=[True, False, True],
     )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(controller._config_path)
@@ -86,26 +332,178 @@ def test_add_router_passes_hint_lines_through_wizard_steps(
     controller._add_router()
 
     assert prompts.text_calls[0]["hint_lines"] == panel_module.ADD_ROUTER_HINT_LINES
-    assert prompts.text_calls[1]["hint_lines"] == panel_module.ADD_ROUTER_HINT_LINES
-    assert prompts.text_calls[2]["hint_lines"] == panel_module.ADD_ROUTER_HINT_LINES
-    assert prompts.text_calls[3]["hint_lines"] == panel_module.ADD_ROUTER_HINT_LINES
-    assert prompts.checkbox_calls[0]["hint_lines"] == panel_module.ADD_ROUTER_HINT_LINES
-    assert prompts.select_calls[0]["hint_lines"] == panel_module.ADD_ROUTER_HINT_LINES
+    assert prompts.text_calls[1]["message"] == "RCI username"
+    assert prompts.text_calls[1]["hint_lines"] == panel_module.ADD_ROUTER_USERNAME_HINT_LINES
+    assert prompts.text_calls[2]["hint_lines"] == panel_module.ADD_ROUTER_RCI_URL_HINT_LINES
+    assert prompts.text_calls[3]["hint_lines"] == panel_module.BASE_ROUTE_INTERFACE_HINT_LINES
+    assert prompts.checkbox_calls[0]["hint_lines"] == panel_module.SERVICE_SELECTION_HINT_LINES
+    assert prompts.text_calls[3]["message"] == "Базовый интерфейс маршрутизации"
+    assert prompts.select_calls == []
+    assert prompts.confirm_calls[0]["hint_lines"] == panel_module.ADD_ROUTER_PASSWORD_HINT_LINES
+    assert prompts.confirm_calls[1]["message"] == "Использовать отдельный маршрут для google_ai?"
+    assert prompts.confirm_calls[1]["hint_lines"] == panel_module.GOOGLE_AI_OVERRIDE_HINT_LINES
     assert prompts.confirm_calls[-1]["hint_lines"] == panel_module.ADD_ROUTER_SAVE_HINT_LINES
+
+
+def test_password_confirmation_hint_mentions_access_checkbox_and_save() -> None:
+    assert (
+        "Поставьте галочку в столбце «Доступ» напротив нового пользователя и сохраните подключение."
+        in panel_module.ADD_ROUTER_PASSWORD_HINT_LINES
+    )
+
+
+def test_add_router_save_hint_mentions_review_and_confirm() -> None:
+    assert panel_module.ADD_ROUTER_SAVE_HINT_LINES == (
+        "Проверьте введенные данные и подтвердите сохранение маршрутизатора.",
+    )
+
+
+def test_add_router_service_selection_uses_source_counts_and_fixed_hint_lines(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        text_answers=[
+            "Router 1",
+            "api_updater",
+            "https://router-1.example/rci/",
+        ],
+        checkbox_answers=[[]],
+        confirm_answers=[True, True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
+    generated_password = "Aa1!bcdefghijklmnopq"
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+    controller._source_loading_service = ScriptedSourceLoadingService(  # type: ignore[attr-defined]
+        make_source_load_report(
+            loaded={
+                "telegram": (
+                    ObjectGroupEntry.from_domain("one.example"),
+                    ObjectGroupEntry.from_network("192.0.2.0/24"),
+                    ObjectGroupEntry.from_network("2001:db8::/32"),
+                ),
+                "google_ai": (
+                    ObjectGroupEntry.from_network("198.51.100.0/24"),
+                    ObjectGroupEntry.from_network("198.51.101.0/24"),
+                ),
+                "youtube": (
+                    ObjectGroupEntry.from_domain("youtube.example"),
+                    ObjectGroupEntry.from_domain("example.org"),
+                    ObjectGroupEntry.from_network("2001:db8:1::/48"),
+                ),
+            }
+        )
+    )
+
+    controller._add_router()
+
+    assert controller._source_loading_service.calls == [  # type: ignore[attr-defined]
+        ["telegram", "google_ai", "youtube"]
+    ]
+    checkbox_call = prompts.checkbox_calls[0]
+    assert checkbox_call["hint_lines"] == panel_module.SERVICE_SELECTION_HINT_LINES
+    assert checkbox_call["table_header"] == panel_module._service_selection_header()
+    assert checkbox_call["table_summary"] == (f"{'Итого выбрано':<22} | {3:>7} | {3:>7} | {2:>7}")
+    assert [choice["value"] for choice in checkbox_call["choices"]] == [
+        "telegram",
+        "google_ai",
+        "youtube",
+    ]
+    assert checkbox_call["choices"][0]["title"].endswith("|       1 |       1 |       1")
+    assert checkbox_call["choices"][1]["title"].endswith("|       0 |       2 |       0")
+    assert checkbox_call["choices"][2]["title"].endswith("|       2 |       0 |       1")
+
+
+def test_add_router_service_selection_renders_meta_as_meta_whatsapp(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        text_answers=[
+            "Router 1",
+            "api_updater",
+            "https://router-1.example/rci/",
+        ],
+        checkbox_answers=[[]],
+        confirm_answers=[True, True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        services=[
+            {
+                "key": "meta",
+                "source_urls": ["https://example.com/meta.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: "Aa1!bcdefghijklmnopq"
+    )
+
+    controller._add_router()
+
+    checkbox_call = prompts.checkbox_calls[0]
+    assert checkbox_call["choices"][0]["value"] == "meta"
+    assert checkbox_call["choices"][0]["title"].startswith("meta (whatsapp)")
+
+
+def test_add_router_service_selection_uses_cached_counts_without_source_reload(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        text_answers=[
+            "Router 1",
+            "api_updater",
+            "https://router-1.example/rci/",
+        ],
+        checkbox_answers=[[]],
+        confirm_answers=[True, True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
+    generated_password = "Aa1!bcdefghijklmnopq"
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+    source_loading_service = ScriptedSourceLoadingService(make_source_load_report(loaded={}))
+    controller._source_loading_service = source_loading_service  # type: ignore[attr-defined]
+    cache_path = controller._service_count_cache_path(config=controller._load_config())  # type: ignore[attr-defined]
+    ServiceCountCacheRepository().write(
+        path=cache_path,
+        counts={
+            "telegram": ServiceEntryCountSnapshot(domains=101, ipv4=3, ipv6=1),
+            "google_ai": ServiceEntryCountSnapshot(domains=8, ipv4=11, ipv6=0),
+            "youtube": ServiceEntryCountSnapshot(domains=22, ipv4=0, ipv6=4),
+        },
+    )
+
+    controller._add_router()
+
+    assert source_loading_service.calls == []
+    checkbox_call = prompts.checkbox_calls[0]
+    assert checkbox_call["choices"][0]["title"].endswith("|     101 |       3 |       1")
+    assert checkbox_call["choices"][1]["title"].endswith("|       8 |      11 |       0")
+    assert checkbox_call["choices"][2]["title"].endswith("|      22 |       0 |       4")
 
 
 def test_add_router_creates_config_secret_and_default_mappings(tmp_path, monkeypatch) -> None:
     prompts = ScriptedPromptAdapter(
         text_answers=[
             "Router 1",
-            "https://router-1.example/rci/",
             "api_updater",
-            "10",
+            "https://router-1.example/rci/",
             "Wireguard0",
         ],
         checkbox_answers=[["telegram", "google_ai"]],
-        select_answers=["interface"],
-        confirm_answers=[False, True],
+        select_answers=[],
+        confirm_answers=[True, False, True],
     )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(controller._config_path)
@@ -163,16 +561,42 @@ def test_add_router_creates_config_secret_and_default_mappings(tmp_path, monkeyp
     assert generated_password not in controller._config_path.read_text(encoding="utf-8")
 
 
+def test_add_router_shows_generated_password_before_save_summary(tmp_path, monkeypatch) -> None:
+    prompts = ScriptedPromptAdapter(
+        text_answers=[
+            "Router 1",
+            "api_updater",
+            "https://router-1.example/rci/",
+        ],
+        checkbox_answers=[[]],
+        confirm_answers=[True, False],
+    )
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
+    generated_password = "Aa1!bcdefghijklmnopq"
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+
+    controller._add_router()
+
+    output = console.export_text()
+    assert "Новый пароль RCI" in output
+    assert "Username" in output
+    assert generated_password in output
+    assert "Проверка сохранения" in output
+    assert output.index("Новый пароль RCI") < output.index("Проверка сохранения")
+
+
 def test_add_router_generates_transliterated_id_from_cyrillic_name(tmp_path, monkeypatch) -> None:
     prompts = ScriptedPromptAdapter(
         text_answers=[
             "Тестовый маршрутизатор",
-            "https://main.example/rci/",
             "api-user",
-            "10",
+            "https://main.example/rci/",
         ],
         checkbox_answers=[[]],
-        confirm_answers=[True],
+        confirm_answers=[True, True],
     )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(controller._config_path)
@@ -187,16 +611,18 @@ def test_add_router_generates_transliterated_id_from_cyrillic_name(tmp_path, mon
     )
 
 
-def test_edit_router_preserves_existing_mappings_and_secret_reference(tmp_path) -> None:
+def test_edit_router_updates_password_and_preserves_existing_mappings(
+    tmp_path,
+    monkeypatch,
+) -> None:
     prompts = ScriptedPromptAdapter(
         select_answers=["router-1"],
         text_answers=[
             "Router One Renamed",
             "https://router-1-renamed.example/rci/",
             "api_updater",
-            "15",
         ],
-        confirm_answers=[True],
+        confirm_answers=[True, True],
     )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(
@@ -222,12 +648,19 @@ def test_edit_router_preserves_existing_mappings_and_secret_reference(tmp_path) 
             }
         ],
     )
+    secret_path = tmp_path / ".env.secrets"
+    secret_path.write_text("ROUTER_ONE_SECRET=old-secret\n", encoding="utf-8")
+    generated_password = "Bb2@cdefghijklmnopqr"
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
 
     controller._edit_router()
 
     payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
     assert payload["routers"][0]["name"] == "Router One Renamed"
     assert payload["routers"][0]["password_env"] == "ROUTER_ONE_SECRET"
+    assert payload["routers"][0]["timeout_seconds"] == 10
     assert payload["mappings"] == [
         {
             "auto": True,
@@ -241,10 +674,238 @@ def test_edit_router_preserves_existing_mappings_and_secret_reference(tmp_path) 
             "service_key": "telegram",
         }
     ]
+    assert SecretEnvFile(path=secret_path).read() == {"ROUTER_ONE_SECRET": generated_password}
+    assert generated_password not in controller._config_path.read_text(encoding="utf-8")
+    assert prompts.confirm_calls[0]["message"] == "Пароль уже обновлён у пользователя Keenetic?"
+    assert prompts.confirm_calls[0]["hint_lines"] == panel_module.EDIT_ROUTER_PASSWORD_HINT_LINES
+
+
+def test_edit_router_keeps_existing_password_when_user_does_not_update_it(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1"],
+        text_answers=[
+            "Router One Renamed",
+            "https://router-1-renamed.example/rci/",
+            "api_updater",
+        ],
+        confirm_answers=[False, True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+    secret_path = tmp_path / ".env.secrets"
+    secret_path.write_text("ROUTER_ONE_SECRET=old-secret\n", encoding="utf-8")
+    generated_password = "KeepOldPassword123!"
+    fake_service = _FakeDiscoveryService(
+        RouteTargetDiscoveryResult(router_id="router-1", candidates=())
+    )
+    controller._route_target_discovery_service = fake_service  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+
+    controller._edit_router()
+
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    assert payload["routers"][0]["name"] == "Router One Renamed"
+    assert payload["routers"][0]["password_env"] == "ROUTER_ONE_SECRET"
+    assert payload["routers"][0]["password_file"] is None
+    assert SecretEnvFile(path=secret_path).read() == {"ROUTER_ONE_SECRET": "old-secret"}
+    assert fake_service.password_overrides == [None]
+    assert prompts.confirm_calls[1]["message"] == "Сохранить изменения маршрутизатора?"
+
+
+def test_edit_router_shows_generated_password_before_save_summary(tmp_path, monkeypatch) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1"],
+        text_answers=[
+            "Router 1",
+            "https://router-1.example/rci/",
+            "api-user",
+        ],
+        confirm_answers=[True, False],
+    )
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+    generated_password = "Cc3#defghijklmnopqrs"
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+
+    controller._edit_router()
+
+    output = console.export_text()
+    assert "Новый пароль RCI" in output
+    assert "Password env" in output
+    assert generated_password in output
+    assert "Проверка сохранения" in output
+    assert output.index("Новый пароль RCI") < output.index("Проверка сохранения")
+
+
+def test_edit_router_checks_connectivity_with_draft_router_before_save(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1"],
+        text_answers=[
+            "Router One Renamed",
+            "https://router-1-renamed.example/rci/",
+            "api-updater-new",
+        ],
+        confirm_answers=[True, False],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+    generated_password = "Dd4$efghijklmnopqrst"
+    fake_service = _FakeDiscoveryService(
+        RouteTargetDiscoveryResult(router_id="router-1", candidates=())
+    )
+    controller._route_target_discovery_service = fake_service  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+
+    controller._edit_router()
+
+    assert fake_service.calls == ["router-1"]
+    draft_router = fake_service.routers[0]
+    assert draft_router.id == "router-1"
+    assert draft_router.name == "Router One Renamed"
+    assert str(draft_router.rci_url) == "https://router-1-renamed.example/rci/"
+    assert draft_router.username == "api-updater-new"
+    assert draft_router.password_env == "ROUTER_ONE_SECRET"
+    assert draft_router.timeout_seconds == 10
+    assert fake_service.password_overrides == [generated_password]
+    assert prompts.confirm_calls[1]["message"] == "Сохранить изменения маршрутизатора?"
+
+
+def test_edit_router_reports_connectivity_error_but_still_allows_save(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1"],
+        text_answers=[
+            "Router One Renamed",
+            "https://router-1-renamed.example/rci/",
+            "api_updater",
+        ],
+        confirm_answers=[True, True],
+    )
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+    secret_path = tmp_path / ".env.secrets"
+    secret_path.write_text("ROUTER_ONE_SECRET=old-secret\n", encoding="utf-8")
+    generated_password = "Ee5%fghijklmnopqrstu"
+    controller._route_target_discovery_service = _FakeDiscoveryService(  # type: ignore[attr-defined]
+        RouteTargetDiscoveryResult(router_id="router-1", error_message="temporary failure")
+    )
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
+    )
+
+    controller._edit_router()
+
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    assert payload["routers"][0]["name"] == "Router One Renamed"
+    assert SecretEnvFile(path=secret_path).read() == {"ROUTER_ONE_SECRET": generated_password}
+    styled_output = console.export_text(styles=True, clear=False)
+    plain_output = console.export_text(clear=False)
+    assert "Проверка связи с маршрутизатором не прошла." in plain_output
+    assert "WireGuard discovery failed: temporary failure" in plain_output
+    assert "Проверка связи с маршрутизатором не прошла." in styled_output
+    assert "\x1b[" in styled_output
+
+
+def test_edit_router_selection_aligns_router_columns(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=[None])
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "main",
+                "name": "Тестовый роутер",
+                "rci_url": "https://main.example/rci/",
+                "username": "api-user",
+                "password_env": "MAIN_SECRET",
+                "enabled": True,
+            },
+            {
+                "id": "main-2",
+                "name": "main",
+                "rci_url": "https://main-2.example/rci/",
+                "username": "api-user",
+                "password_env": "MAIN_2_SECRET",
+                "enabled": True,
+            },
+        ],
+    )
+
+    controller._edit_router()
+
+    choice_titles = prompts.select_calls[0]["choice_titles"]
+    assert [[part.strip() for part in title.split("|")] for title in choice_titles] == [
+        ["main", "Тестовый роутер", "enabled"],
+        ["main-2", "main", "enabled"],
+    ]
+    assert [title.index("|") for title in choice_titles] == [7, 7]
+    assert [title.rindex("|") for title in choice_titles] == [25, 25]
 
 
 def test_toggle_router_enabled_preserves_existing_mappings(tmp_path) -> None:
-    prompts = ScriptedPromptAdapter(select_answers=["router-1"], confirm_answers=[True])
+    prompts = ScriptedPromptAdapter(checkbox_answers=[[]])
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(
         controller._config_path,
@@ -277,14 +938,80 @@ def test_toggle_router_enabled_preserves_existing_mappings(tmp_path) -> None:
     assert payload["mappings"][0]["service_key"] == "telegram"
 
 
+def test_toggle_router_enabled_uses_checkbox_table_and_preserves_checked_state(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(checkbox_answers=[["main-2"]])
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "main",
+                "name": "Городовиковск",
+                "rci_url": "https://main.example/rci/",
+                "username": "api-user",
+                "password_env": "MAIN_SECRET",
+                "enabled": True,
+            },
+            {
+                "id": "main-2",
+                "name": "main",
+                "rci_url": "https://main-2.example/rci/",
+                "username": "api-user",
+                "password_env": "MAIN_2_SECRET",
+                "enabled": False,
+            },
+        ],
+    )
+    initial_config = controller._load_config()
+    router_id_width, router_name_width = panel_module._router_selection_column_widths(
+        initial_config.routers
+    )
+    expected_titles = [
+        panel_module._router_toggle_title(
+            router=router,
+            router_id_width=router_id_width,
+            router_name_width=router_name_width,
+        )
+        for router in initial_config.routers
+    ]
+
+    controller._toggle_router_enabled()
+
+    checkbox_call = prompts.checkbox_calls[0]
+    assert checkbox_call["message"] == "Выберите маршрутизаторы, которые должны быть включены"
+    assert checkbox_call["instruction"] == (
+        "Стрелки выбирают, Пробел включает или выключает, Enter сохраняет, Esc назад."
+    )
+    assert checkbox_call["table_header"] == panel_module._router_toggle_header(
+        router_id_width=router_id_width,
+        router_name_width=router_name_width,
+    )
+    assert checkbox_call["table_summary"] == "Будет enabled: 1 | disabled: 1"
+    assert checkbox_call["choices"] == [
+        {
+            "title": expected_titles[0],
+            "value": "main",
+            "checked": True,
+        },
+        {
+            "title": expected_titles[1],
+            "value": "main-2",
+            "checked": False,
+        },
+    ]
+
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    assert [router["enabled"] for router in payload["routers"]] == [False, True]
+
+
 def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappings(
     tmp_path,
 ) -> None:
     prompts = ScriptedPromptAdapter(
-        select_answers=["router-1", "gateway", "interface", "Wireguard7"],
+        select_answers=["router-1", "Wireguard7"],
         checkbox_answers=[["telegram", "google_ai", "youtube"]],
-        text_answers=["10.0.0.2", "Wireguard9"],
-        confirm_answers=[True, True],
+        text_answers=[],
+        confirm_answers=[False, True],
     )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(
@@ -403,9 +1130,9 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-telegram",
-            "route_interface": "Wireguard9",
-            "route_target_type": "gateway",
-            "route_target_value": "10.0.0.2",
+            "route_interface": None,
+            "route_target_type": "interface",
+            "route_target_value": "Wireguard7",
             "router_id": "router-1",
             "service_key": "telegram",
         },
@@ -414,63 +1141,28 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-youtube",
-            "route_interface": "Wireguard9",
-            "route_target_type": "gateway",
-            "route_target_value": "10.0.0.2",
+            "route_interface": None,
+            "route_target_type": "interface",
+            "route_target_value": "Wireguard7",
             "router_id": "router-1",
             "service_key": "youtube",
         },
     ]
 
 
-def test_rotate_password_reuses_existing_password_env_and_preserves_mappings(
+def test_edit_router_switches_password_file_to_env_and_clears_password_file(
     tmp_path,
     monkeypatch,
 ) -> None:
-    prompts = ScriptedPromptAdapter(select_answers=["router-1"], confirm_answers=[True])
-    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
-    write_config(
-        controller._config_path,
-        routers=[
-            {
-                "id": "router-1",
-                "name": "Router 1",
-                "rci_url": "https://router-1.example/rci/",
-                "username": "api-user",
-                "password_env": "ROUTER_ONE_SECRET",
-                "enabled": True,
-            }
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-2"],
+        text_answers=[
+            "Router 2",
+            "https://router-2.example/rci/",
+            "api-user",
         ],
-        mappings=[
-            {
-                "router_id": "router-1",
-                "service_key": "telegram",
-                "object_group_name": "fqdn-telegram",
-                "route_target_type": "interface",
-                "route_target_value": "Wireguard0",
-                "managed": True,
-            }
-        ],
+        confirm_answers=[True, True],
     )
-    original_config = controller._config_path.read_text(encoding="utf-8")
-    secret_path = tmp_path / ".env.secrets"
-    secret_path.write_text("ROUTER_ONE_SECRET=old-secret\n", encoding="utf-8")
-    generated_password = "Bb2@cdefghijklmnopqr"
-    monkeypatch.setattr(
-        panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
-    )
-
-    controller._rotate_router_password()
-
-    assert controller._config_path.read_text(encoding="utf-8") == original_config
-    assert SecretEnvFile(path=secret_path).read() == {"ROUTER_ONE_SECRET": generated_password}
-
-
-def test_rotate_password_switches_password_file_to_env_and_clears_password_file(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    prompts = ScriptedPromptAdapter(select_answers=["router-2"], confirm_answers=[True])
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(
         controller._config_path,
@@ -500,7 +1192,7 @@ def test_rotate_password_switches_password_file_to_env_and_clears_password_file(
         panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
     )
 
-    controller._rotate_router_password()
+    controller._edit_router()
 
     payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
     assert payload["routers"] == [
@@ -530,12 +1222,11 @@ def test_add_router_auto_generates_unique_id_when_secret_env_would_collide(
     prompts = ScriptedPromptAdapter(
         text_answers=[
             "Home Router",
-            "https://home-router.example/rci/",
             "api-user",
-            "10",
+            "https://home-router.example/rci/",
         ],
         checkbox_answers=[[]],
-        confirm_answers=[True],
+        confirm_answers=[True, True],
     )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     original_password_env = password_env_key_for_router_id("home-router")
@@ -569,11 +1260,19 @@ def test_add_router_auto_generates_unique_id_when_secret_env_would_collide(
     }
 
 
-def test_rotate_password_rejects_deterministic_password_env_collisions_before_secret_write(
+def test_edit_router_rejects_deterministic_password_env_collisions_before_secret_write(
     tmp_path,
     monkeypatch,
 ) -> None:
-    prompts = ScriptedPromptAdapter(select_answers=["home-router"], confirm_answers=[])
+    prompts = ScriptedPromptAdapter(
+        select_answers=["home-router"],
+        text_answers=[
+            "Home Router",
+            "https://home-router.example/rci/",
+            "api-user",
+        ],
+        confirm_answers=[True],
+    )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     password_env = password_env_key_for_router_id("home-router")
     write_config(
@@ -607,7 +1306,7 @@ def test_rotate_password_rejects_deterministic_password_env_collisions_before_se
     monkeypatch.setattr(SecretEnvFile, "write_value", _unexpected_write_value)
 
     with pytest.raises(RuntimeError) as exc_info:
-        controller._rotate_router_password()
+        controller._edit_router()
 
     assert f"Password env '{password_env}' is already used by router 'home_router'" in str(
         exc_info.value
@@ -620,12 +1319,11 @@ def test_add_router_rolls_back_config_when_secret_write_fails(tmp_path, monkeypa
     prompts = ScriptedPromptAdapter(
         text_answers=[
             "Home Router",
-            "https://home-router.example/rci/",
             "api-user",
-            "10",
+            "https://home-router.example/rci/",
         ],
         checkbox_answers=[[]],
-        confirm_answers=[True],
+        confirm_answers=[True, True],
     )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(controller._config_path)
@@ -650,11 +1348,19 @@ def test_add_router_rolls_back_config_when_secret_write_fails(tmp_path, monkeypa
     assert SecretEnvFile(path=secret_path).read() == {"UNRELATED_SECRET": "old-secret"}
 
 
-def test_rotate_password_rolls_back_password_file_reference_when_secret_write_fails(
+def test_edit_router_rolls_back_password_file_reference_when_secret_write_fails(
     tmp_path,
     monkeypatch,
 ) -> None:
-    prompts = ScriptedPromptAdapter(select_answers=["home-router"], confirm_answers=[True])
+    prompts = ScriptedPromptAdapter(
+        select_answers=["home-router"],
+        text_answers=[
+            "Home Router",
+            "https://home-router.example/rci/",
+            "api-user",
+        ],
+        confirm_answers=[True, True],
+    )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(
         controller._config_path,
@@ -683,7 +1389,7 @@ def test_rotate_password_rolls_back_password_file_reference_when_secret_write_fa
     monkeypatch.setattr(SecretEnvFile, "write_value", _failing_write_value)
 
     with pytest.raises(RuntimeError) as exc_info:
-        controller._rotate_router_password()
+        controller._edit_router()
 
     assert "secret write failed" in str(exc_info.value)
     assert controller._config_path.read_text(encoding="utf-8") == original_config

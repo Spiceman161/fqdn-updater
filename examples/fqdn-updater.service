@@ -6,4 +6,4 @@ After=docker.service network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/fqdn-updater
-ExecStart=/usr/bin/docker compose run --rm fqdn-updater sync --config /work/config.json
+ExecStart=/usr/bin/docker compose run --rm fqdn-updater sync --trigger scheduled --config /work/config.json

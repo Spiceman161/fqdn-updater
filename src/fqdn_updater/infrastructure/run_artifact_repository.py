@@ -29,6 +29,7 @@ class StoredRunArtifact:
 class RunArtifactListResult:
     artifacts: tuple[StoredRunArtifact, ...]
     warnings: tuple[RunArtifactReadWarning, ...]
+    total_count: int
 
 
 class RunArtifactRepository:
@@ -40,11 +41,19 @@ class RunArtifactRepository:
         self._atomic_write(path=target_path, payload=artifact.model_dump(mode="json"))
         return target_path
 
-    def list_recent(self, *, artifacts_dir: Path, limit: int = 10) -> RunArtifactListResult:
+    def list_recent(
+        self,
+        *,
+        artifacts_dir: Path,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> RunArtifactListResult:
         if limit < 1:
             raise ValueError("limit must be greater than zero")
+        if offset < 0:
+            raise ValueError("offset must not be negative")
         if not artifacts_dir.exists():
-            return RunArtifactListResult(artifacts=(), warnings=())
+            return RunArtifactListResult(artifacts=(), warnings=(), total_count=0)
         if not artifacts_dir.is_dir():
             return RunArtifactListResult(
                 artifacts=(),
@@ -54,6 +63,7 @@ class RunArtifactRepository:
                         message="artifacts path is not a directory",
                     ),
                 ),
+                total_count=0,
             )
 
         artifacts: list[StoredRunArtifact] = []
@@ -69,8 +79,9 @@ class RunArtifactRepository:
         artifacts.sort(key=_artifact_sort_key, reverse=True)
         warnings.sort(key=lambda warning: str(warning.path))
         return RunArtifactListResult(
-            artifacts=tuple(artifacts[:limit]),
+            artifacts=tuple(artifacts[offset : offset + limit]),
             warnings=tuple(warnings),
+            total_count=len(artifacts),
         )
 
     def read(self, *, path: Path) -> RunArtifact:

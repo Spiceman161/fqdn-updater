@@ -13,6 +13,7 @@ from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import ConditionalContainer, HSplit, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
+from questionary.prompts.common import InquirerControl
 from questionary.question import Question
 from rich.console import Console
 
@@ -30,6 +31,13 @@ class PromptChoice:
     value: str
     disabled: str | None = None
     checked: bool = False
+    answer_title: str | None = None
+
+
+@dataclass(frozen=True)
+class CheckboxTableMeta:
+    header: str
+    summary: Callable[[tuple[str, ...]], str]
 
 
 class PromptAdapter(Protocol):
@@ -50,6 +58,7 @@ class PromptAdapter(Protocol):
         choices: list[PromptChoice],
         instruction: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        table_meta: CheckboxTableMeta | None = None,
     ) -> list[str] | None: ...
 
     def text(
@@ -99,7 +108,7 @@ class QuestionaryPromptAdapter:
         instruction: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
     ) -> str | None:
-        choice_titles = {choice.value: choice.title for choice in choices}
+        choice_titles = {choice.value: (choice.answer_title or choice.title) for choice in choices}
         return _ask_and_echo(
             question=_build_select_question(
                 message=message,
@@ -121,22 +130,28 @@ class QuestionaryPromptAdapter:
         choices: list[PromptChoice],
         instruction: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        table_meta: CheckboxTableMeta | None = None,
     ) -> list[str] | None:
-        choice_titles = {choice.value: choice.title for choice in choices}
+        choice_titles = {
+            choice.value: (
+                choice.answer_title or (choice.value if table_meta is not None else choice.title)
+            )
+            for choice in choices
+        }
         return _ask_and_echo(
             question=_build_checkbox_question(
                 message=message,
                 choices=choices,
                 instruction=instruction,
                 hint_lines=hint_lines,
+                table_meta=table_meta,
                 style=self._style,
             ),
             console=self._console,
             message=message,
-            render_answer=lambda result: (
-                ", ".join(choice_titles[value] for value in result if value in choice_titles)
-                if result is not None
-                else None
+            render_answer=lambda result: _render_checkbox_answer(
+                result=result,
+                choice_titles=choice_titles,
             ),
         )
 
@@ -241,6 +256,7 @@ def _build_checkbox_question(
     choices: list[PromptChoice],
     instruction: str | None = None,
     hint_lines: tuple[str, ...] | None = None,
+    table_meta: CheckboxTableMeta | None = None,
     style: Style,
     **kwargs: Any,
 ) -> Question:
@@ -256,6 +272,8 @@ def _build_checkbox_question(
         use_emacs_keys=True,
         **kwargs,
     )
+    if table_meta is not None:
+        _install_checkbox_table_meta(question=question, table_meta=table_meta)
     return _decorate_question(
         question=question,
         hint_lines=hint_lines,
@@ -378,10 +396,73 @@ def _decorate_question(
     return question
 
 
+def _install_checkbox_table_meta(
+    *,
+    question: Question,
+    table_meta: CheckboxTableMeta,
+) -> None:
+    container = question.application.layout.container
+    if not isinstance(container, HSplit):
+        return
+
+    inquirer_index: int | None = None
+    inquirer_control: InquirerControl | None = None
+    for index, child in enumerate(container.children):
+        if not isinstance(child, ConditionalContainer):
+            continue
+        if not isinstance(child.content, Window):
+            continue
+        if not isinstance(child.content.content, InquirerControl):
+            continue
+        inquirer_index = index
+        inquirer_control = child.content.content
+        break
+
+    if inquirer_index is None or inquirer_control is None:
+        return
+
+    header_window = ConditionalContainer(
+        Window(
+            height=1,
+            dont_extend_height=True,
+            content=FormattedTextControl(lambda: [("class:footer", f"     {table_meta.header}")]),
+        ),
+        filter=~IsDone(),
+    )
+    summary_window = ConditionalContainer(
+        Window(
+            height=1,
+            dont_extend_height=True,
+            content=FormattedTextControl(
+                lambda: [
+                    (
+                        "class:footer",
+                        f"     {table_meta.summary(tuple(inquirer_control.selected_options))}",
+                    )
+                ]
+            ),
+        ),
+        filter=~IsDone(),
+    )
+
+    container.children.insert(inquirer_index, header_window)
+    container.children.insert(inquirer_index + 2, summary_window)
+
+
 def _compose_footer(*, instruction: str | None, default_footer: str) -> str:
     if not instruction:
         return default_footer
     return f"{instruction} {default_footer}"
+
+
+def _render_checkbox_answer(
+    *,
+    result: list[str] | None,
+    choice_titles: dict[str, str],
+) -> str | None:
+    if result is None:
+        return None
+    return ", ".join(choice_titles[value] for value in result if value in choice_titles)
 
 
 def _render_hint_panel(hint_lines: tuple[str, ...] | None) -> str:

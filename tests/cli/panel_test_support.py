@@ -9,8 +9,10 @@ from typing import Any
 from rich.console import Console
 
 from fqdn_updater.cli.panel import PanelController
-from fqdn_updater.cli.panel_prompts import PromptChoice
+from fqdn_updater.cli.panel_prompts import CheckboxTableMeta, PromptChoice
 from fqdn_updater.domain.config_schema import AppConfig
+from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
+from fqdn_updater.domain.source_loading import NormalizedServiceSource, SourceLoadReport
 
 
 class ScriptedPromptAdapter:
@@ -45,6 +47,7 @@ class ScriptedPromptAdapter:
             {
                 "message": message,
                 "choices": [choice.value for choice in choices],
+                "choice_titles": [choice.title for choice in choices],
                 "default": default,
                 "instruction": instruction,
                 "hint_lines": hint_lines,
@@ -59,13 +62,26 @@ class ScriptedPromptAdapter:
         choices: list[PromptChoice],
         instruction: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        table_meta: CheckboxTableMeta | None = None,
     ) -> list[str] | None:
+        checked_values = tuple(choice.value for choice in choices if choice.checked)
         self.checkbox_calls.append(
             {
                 "message": message,
-                "choices": [(choice.value, choice.checked) for choice in choices],
+                "choices": [
+                    {
+                        "title": choice.title,
+                        "value": choice.value,
+                        "checked": choice.checked,
+                    }
+                    for choice in choices
+                ],
                 "instruction": instruction,
                 "hint_lines": hint_lines,
+                "table_header": table_meta.header if table_meta is not None else None,
+                "table_summary": (
+                    table_meta.summary(checked_values) if table_meta is not None else None
+                ),
             }
         )
         return self._pop(self._checkbox_answers, f"checkbox:{message}")
@@ -122,6 +138,32 @@ class ScriptedPromptAdapter:
         return queue.popleft()
 
 
+class ScriptedSourceLoadingService:
+    def __init__(self, report: SourceLoadReport) -> None:
+        self.report = report
+        self.calls: list[list[str]] = []
+
+    def load_enabled_services(self, services: list[Any]) -> SourceLoadReport:
+        self.calls.append([service.key for service in services])
+        return self.report
+
+
+def make_source_load_report(
+    *,
+    loaded: dict[str, tuple[ObjectGroupEntry, ...]],
+) -> SourceLoadReport:
+    return SourceLoadReport(
+        loaded=tuple(
+            NormalizedServiceSource(service_key=service_key, typed_entries=typed_entries)
+            for service_key, typed_entries in loaded.items()
+        )
+    )
+
+
+def make_empty_source_load_report() -> SourceLoadReport:
+    return SourceLoadReport()
+
+
 def make_panel_controller(
     tmp_path: Path, *, prompts: ScriptedPromptAdapter
 ) -> tuple[PanelController, Console]:
@@ -130,6 +172,9 @@ def make_panel_controller(
         config_path=tmp_path / "config.json",
         console=console,
         prompts=prompts,
+    )
+    controller._source_loading_service = ScriptedSourceLoadingService(  # type: ignore[attr-defined]
+        make_empty_source_load_report()
     )
     return controller, console
 

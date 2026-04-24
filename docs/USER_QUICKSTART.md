@@ -35,6 +35,24 @@ pip install -e .[dev]
 
 ## Быстрый старт
 
+На чистой Ubuntu 24.04 основной путь установки — one-command bootstrap installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash
+```
+
+Для установки конкретного release tag:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash -s -- --version v0.1.0
+```
+
+Installer разворачивает проект в `/opt/fqdn-updater`, сохраняет существующие `config.json`,
+`.env*`, `data/`, `secrets/` и `.venv`, ставит host-команды `fqdn-updater` и `domaingo`,
+собирает Docker image и включает systemd timer. Без аргументов `fqdn-updater` открывает panel;
+`sync`, `dry-run` и `status` запускаются через Docker Compose, а команды управления конфигом
+работают через локальный Python venv в `/opt/fqdn-updater/.venv`.
+
 Показать доступные команды:
 
 ```bash
@@ -112,7 +130,14 @@ mkdir -p data secrets
   "runtime": {
     "artifacts_dir": "/work/data/artifacts",
     "logs_dir": "/work/data/logs",
-    "log_format": "text"
+    "state_dir": "/work/data/state",
+    "log_format": "text",
+    "schedule": {
+      "mode": "disabled",
+      "times": [],
+      "weekdays": [],
+      "timezone": "UTC"
+    }
   }
 }
 ```
@@ -165,7 +190,9 @@ docker compose run --rm fqdn-updater sync --config /work/config.json
 docker compose run --rm fqdn-updater status --config /work/config.json
 ```
 
-Команда по умолчанию в `compose.yaml` — `sync --config /work/config.json`, поэтому для scheduled job можно запускать сервис без дополнительных аргументов.
+Команда по умолчанию в `compose.yaml` — `sync --config /work/config.json`, поэтому базовый one-shot
+service можно запускать без дополнительных аргументов. Config-driven systemd unit при этом добавляет
+`--trigger scheduled`, чтобы такие запуски отдельно маркировались в логах и артефактах.
 
 ## systemd timer
 
@@ -173,6 +200,20 @@ docker compose run --rm fqdn-updater status --config /work/config.json
 
 - `examples/fqdn-updater.service`
 - `examples/fqdn-updater.timer`
+
+Это статический baseline для ручной установки. Рекомендуемый путь для рабочих scheduled run:
+
+```bash
+fqdn-updater schedule set-daily --config config.json --time 03:15 --timezone Europe/Moscow
+sudo fqdn-updater schedule install --config config.json
+```
+
+Для weekly-расписания:
+
+```bash
+fqdn-updater schedule set-weekly --config config.json --day mon --day fri --time 04:00 --timezone Europe/Moscow
+sudo fqdn-updater schedule install --config config.json
+```
 
 Рекомендуемая схема deployment на VPS:
 
@@ -187,13 +228,19 @@ sudo mkdir -p /opt/fqdn-updater/data /opt/fqdn-updater/secrets
 Скопируйте реальные секреты отдельно и выставьте права так, чтобы их мог читать только root или service user.
 Не добавляйте реальные `.env`, `config.json` и `secrets/` в git.
 
-Установить example timer:
+Установить example timer вручную:
 
 ```bash
 sudo cp examples/fqdn-updater.service /etc/systemd/system/fqdn-updater.service
 sudo cp examples/fqdn-updater.timer /etc/systemd/system/fqdn-updater.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now fqdn-updater.timer
+```
+
+Или доверить генерацию unit/timer самому приложению:
+
+```bash
+sudo fqdn-updater schedule install --config /opt/fqdn-updater/config.json
 ```
 
 Ручной запуск того же one-shot sync:
@@ -208,7 +255,8 @@ sudo systemctl start fqdn-updater.service
 journalctl -u fqdn-updater.service -n 100 --no-pager
 ```
 
-Интервал задается в `fqdn-updater.timer` через `OnCalendar` и меняется без правок Python-кода.
+Рабочее расписание теперь задаётся в `config.json` в `runtime.schedule`, а `schedule install`
+рендерит нужные `OnCalendar=` строки и включает, перезапускает или выключает timer через `systemctl`.
 
 ## Что будет в config
 
@@ -219,7 +267,9 @@ journalctl -u fqdn-updater.service -n 100 --no-pager
 - `mappings` — привязки `router/service -> object-group/route`;
 - `runtime` — базовые runtime-настройки, включая каталог артефактов.
 - `runtime.logs_dir` — каталог отдельных run-логов;
+- `runtime.state_dir` — каталог lock/state файлов, включая `run.lock`;
 - `runtime.log_format` — формат логов (`text` или `json`).
+- `runtime.schedule` — config-driven расписание для systemd timer.
 
 Пример референс-конфига лежит в `examples/config.example.json`.
 

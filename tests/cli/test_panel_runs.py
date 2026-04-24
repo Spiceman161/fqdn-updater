@@ -17,20 +17,22 @@ from fqdn_updater.domain.run_artifact import (
     ServiceResultStatus,
     ServiceRunResult,
 )
-from fqdn_updater.domain.status_diagnostics import (
-    OverallDiagnosticStatus,
-    RouterDiagnosticStatus,
-    RouterStatusDiagnostic,
-    StatusDiagnosticsResult,
-)
 
 from .panel_test_support import ScriptedPromptAdapter, make_panel_controller
 
 
 class _RecordingRunHistoryService:
-    def __init__(self, result: RunHistoryResult) -> None:
-        self.result = result
-        self.calls: list[tuple[str, Path, int]] = []
+    def __init__(
+        self,
+        *,
+        artifacts_dir: Path,
+        runs: tuple[RecentRun, ...],
+        warnings: tuple[RunHistoryWarning, ...] = (),
+    ) -> None:
+        self.artifacts_dir = artifacts_dir
+        self.runs = runs
+        self.warnings = warnings
+        self.calls: list[tuple[str, Path, int, int]] = []
 
     def list_recent(
         self,
@@ -38,19 +40,15 @@ class _RecordingRunHistoryService:
         config: AppConfig,
         config_path: Path,
         limit: int = 10,
+        offset: int = 0,
     ) -> RunHistoryResult:
-        self.calls.append((config.runtime.artifacts_dir, config_path, limit))
-        return self.result
-
-
-class _RecordingStatusService:
-    def __init__(self, result: StatusDiagnosticsResult) -> None:
-        self.result = result
-        self.calls: list[AppConfig] = []
-
-    def check(self, *, config: AppConfig) -> StatusDiagnosticsResult:
-        self.calls.append(config)
-        return self.result
+        self.calls.append((config.runtime.artifacts_dir, config_path, limit, offset))
+        return RunHistoryResult(
+            artifacts_dir=self.artifacts_dir,
+            runs=self.runs[offset : offset + limit],
+            warnings=self.warnings,
+            total_count=len(self.runs),
+        )
 
 
 class _RecordingDryRunOrchestrator:
@@ -67,11 +65,12 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp
     prompts = ScriptedPromptAdapter(select_answers=["back"])
     controller, console = _panel_controller(tmp_path, prompts=prompts)
     config = _config()
-    history = RunHistoryResult(
-        artifacts_dir=tmp_path / "data" / "artifacts",
+    artifacts_dir = tmp_path / "data" / "artifacts"
+    run_history_service = _RecordingRunHistoryService(
+        artifacts_dir=artifacts_dir,
         runs=(
             RecentRun(
-                path=tmp_path / "data" / "artifacts" / "run-001.json",
+                path=artifacts_dir / "run-001.json",
                 artifact=_artifact(
                     run_id="run-001",
                     status=RunStatus.SUCCESS,
@@ -96,27 +95,33 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp
         ),
         warnings=(
             RunHistoryWarning(
-                path=tmp_path / "data" / "artifacts" / "broken.json",
+                path=artifacts_dir / "broken.json",
                 message="artifact JSON is invalid: unexpected token",
             ),
         ),
     )
-    run_history_service = _RecordingRunHistoryService(result=history)
     controller._load_config = lambda: config  # type: ignore[method-assign]
     controller._run_history_service = run_history_service  # type: ignore[method-assign]
-    controller._status_service = _RecordingStatusService(result=_status_result())  # type: ignore[method-assign]
     controller._dry_run_orchestrator = _RecordingDryRunOrchestrator(result=_dry_run_result())  # type: ignore[method-assign]
     controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
 
     controller._runs_menu()
 
-    assert run_history_service.calls == [("data/artifacts", controller._config_path, 8)]
-    assert prompts.select_calls[0]["choices"] == ["status", "dry-run", "back"]
+    assert run_history_service.calls == [("data/artifacts", controller._config_path, 10, 0)]
+    assert prompts.select_calls[0]["choices"] == ["dry-run", "back"]
+    assert prompts.select_calls[0]["choice_titles"] == [
+        "Выполнить Dry-run (тестовый запуск без изменения списков)",
+        "В главное меню",
+    ]
     output = console.export_text()
-    assert "Прогоны и диагностика" in output
-    assert "Контекст прогонов" in output
+    assert "Журнал" in output
+    assert "Контекст журнала" in output
     assert "Последние локальные артефакты" in output
-    assert "run-001" in output
+    assert "run-001" not in output
+    assert "1/1" in output
+    assert "1-1 из 1" in output
+    assert "08.04.2026 13:01:00" in output
+    assert "Main router" in output
     assert "changed=1" in output
     assert "failed=1" in output
     assert "data/artifacts" in output
@@ -124,38 +129,8 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp
     assert "Пропущенные артефакты" in output
     assert "data/artifacts/broken.json" in output
     assert "artifact JSON is invalid: unexpected token" in output
-    assert "Ручной запуск" in output
-    assert "fqdn-updater sync --config" in output
-
-
-def test_runs_menu_status_choice_calls_diagnostics_service_and_renders_router_details(
-    tmp_path,
-) -> None:
-    prompts = ScriptedPromptAdapter(select_answers=["status", "back"])
-    controller, console = _panel_controller(tmp_path, prompts=prompts)
-    config = _config()
-    status_result = _status_result()
-    run_history_service = _RecordingRunHistoryService(
-        result=RunHistoryResult(artifacts_dir=tmp_path / "data" / "artifacts", runs=(), warnings=())
-    )
-    status_service = _RecordingStatusService(result=status_result)
-    controller._load_config = lambda: config  # type: ignore[method-assign]
-    controller._run_history_service = run_history_service  # type: ignore[method-assign]
-    controller._status_service = status_service  # type: ignore[method-assign]
-    controller._dry_run_orchestrator = _RecordingDryRunOrchestrator(result=_dry_run_result())  # type: ignore[method-assign]
-    controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
-
-    controller._runs_menu()
-
-    assert len(status_service.calls) == 1
-    assert prompts.pause_messages == ["Нажмите любую клавишу для продолжения..."]
-    output = console.export_text()
-    assert "Status diagnostics: overall=failed checked=3" in output
-    assert "router-healthy" in output
-    assert "router-degraded" in output
-    assert "router-failed" in output
-    assert "dns proxy disabled" in output
-    assert "missing secret" in output
+    assert "Ручной запуск" not in output
+    assert "fqdn-updater sync --config" not in output
 
 
 def test_runs_menu_dry_run_choice_calls_orchestrator_and_renders_summary(tmp_path) -> None:
@@ -163,13 +138,13 @@ def test_runs_menu_dry_run_choice_calls_orchestrator_and_renders_summary(tmp_pat
     controller, console = _panel_controller(tmp_path, prompts=prompts)
     config = _config()
     run_history_service = _RecordingRunHistoryService(
-        result=RunHistoryResult(artifacts_dir=tmp_path / "data" / "artifacts", runs=(), warnings=())
+        artifacts_dir=tmp_path / "data" / "artifacts",
+        runs=(),
     )
     dry_run_result = _dry_run_result()
     dry_run_orchestrator = _RecordingDryRunOrchestrator(result=dry_run_result)
     controller._load_config = lambda: config  # type: ignore[method-assign]
     controller._run_history_service = run_history_service  # type: ignore[method-assign]
-    controller._status_service = _RecordingStatusService(result=_status_result())  # type: ignore[method-assign]
     controller._dry_run_orchestrator = dry_run_orchestrator  # type: ignore[method-assign]
     controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
 
@@ -184,6 +159,94 @@ def test_runs_menu_dry_run_choice_calls_orchestrator_and_renders_summary(tmp_pat
     assert "partial" in output
 
 
+def test_runs_menu_supports_pagination_with_next_and_previous_actions(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["next-page", "next-page", "prev-page", "back"])
+    controller, console = _panel_controller(tmp_path, prompts=prompts)
+    config = _config()
+    artifacts_dir = tmp_path / "data" / "artifacts"
+    runs = tuple(
+        RecentRun(
+            path=artifacts_dir / f"run-{minute:03d}.json",
+            artifact=_artifact(
+                run_id=f"run-{minute:03d}",
+                status=RunStatus.SUCCESS,
+                finished_at=datetime(2026, 4, 8, 13, minute, tzinfo=UTC),
+                service_results=(
+                    ServiceRunResult(
+                        service_key="telegram",
+                        object_group_name="svc-telegram",
+                        status=ServiceResultStatus.NO_CHANGES,
+                        unchanged_count=5,
+                    ),
+                ),
+            ),
+        )
+        for minute in range(24, -1, -1)
+    )
+    run_history_service = _RecordingRunHistoryService(artifacts_dir=artifacts_dir, runs=runs)
+    clear_calls: list[bool] = []
+    original_clear = console.clear
+
+    def record_clear(*, home: bool = True) -> None:
+        clear_calls.append(home)
+        original_clear(home=home)
+
+    console.clear = record_clear  # type: ignore[method-assign]
+    controller._load_config = lambda: config  # type: ignore[method-assign]
+    controller._run_history_service = run_history_service  # type: ignore[method-assign]
+    controller._dry_run_orchestrator = _RecordingDryRunOrchestrator(result=_dry_run_result())  # type: ignore[method-assign]
+    controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
+
+    controller._runs_menu()
+
+    assert run_history_service.calls == [
+        ("data/artifacts", controller._config_path, 10, 0),
+        ("data/artifacts", controller._config_path, 10, 10),
+        ("data/artifacts", controller._config_path, 10, 20),
+        ("data/artifacts", controller._config_path, 10, 10),
+    ]
+    assert clear_calls == [True, True, True, True]
+    assert prompts.select_calls[0]["choices"] == ["next-page", "dry-run", "back"]
+    assert prompts.select_calls[0]["default"] == "dry-run"
+    assert prompts.select_calls[0]["choice_titles"] == [
+        "Далее",
+        "Выполнить Dry-run (тестовый запуск без изменения списков)",
+        "В главное меню",
+    ]
+    assert prompts.select_calls[1]["choices"] == ["prev-page", "next-page", "dry-run", "back"]
+    assert prompts.select_calls[1]["default"] == "next-page"
+    assert prompts.select_calls[1]["choice_titles"] == [
+        "Назад",
+        "Далее",
+        "Выполнить Dry-run (тестовый запуск без изменения списков)",
+        "В главное меню",
+    ]
+    assert prompts.select_calls[2]["choices"] == ["prev-page", "dry-run", "back"]
+    assert prompts.select_calls[2]["default"] == "dry-run"
+    assert prompts.select_calls[2]["choice_titles"] == [
+        "Назад",
+        "Выполнить Dry-run (тестовый запуск без изменения списков)",
+        "В главное меню",
+    ]
+    assert prompts.select_calls[3]["choices"] == ["prev-page", "next-page", "dry-run", "back"]
+    assert prompts.select_calls[3]["default"] == "prev-page"
+    assert prompts.select_calls[3]["choice_titles"] == [
+        "Назад",
+        "Далее",
+        "Выполнить Dry-run (тестовый запуск без изменения списков)",
+        "В главное меню",
+    ]
+    output = console.export_text()
+    assert "1/3" in output
+    assert "2/3" in output
+    assert "3/3" in output
+    assert "1-10 из 25" in output
+    assert "11-20 из 25" in output
+    assert "21-25 из 25" in output
+    assert "08.04.2026 13:24:00" in output
+    assert "08.04.2026 13:00:00" in output
+
+
 def _panel_controller(
     tmp_path: Path,
     *,
@@ -196,7 +259,16 @@ def _config() -> AppConfig:
     return AppConfig.model_validate(
         {
             "version": 1,
-            "routers": [],
+            "routers": [
+                {
+                    "id": "router-1",
+                    "name": "Main router",
+                    "rci_url": "https://router-1.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_ONE_SECRET",
+                    "enabled": True,
+                }
+            ],
             "services": [],
             "mappings": [],
             "runtime": {"artifacts_dir": "data/artifacts", "logs_dir": "data/logs"},
@@ -224,33 +296,6 @@ def _artifact(
                 router_id="router-1",
                 status=RouterResultStatus.PARTIAL,
                 service_results=service_results,
-            ),
-        ),
-    )
-
-
-def _status_result() -> StatusDiagnosticsResult:
-    return StatusDiagnosticsResult(
-        overall_status=OverallDiagnosticStatus.FAILED,
-        checked_router_count=3,
-        router_results=(
-            RouterStatusDiagnostic(
-                router_id="router-healthy",
-                status=RouterDiagnosticStatus.HEALTHY,
-                dns_proxy_enabled=True,
-                error_message=None,
-            ),
-            RouterStatusDiagnostic(
-                router_id="router-degraded",
-                status=RouterDiagnosticStatus.DEGRADED,
-                dns_proxy_enabled=False,
-                error_message="dns proxy disabled",
-            ),
-            RouterStatusDiagnostic(
-                router_id="router-failed",
-                status=RouterDiagnosticStatus.FAILED,
-                dns_proxy_enabled=None,
-                error_message="missing secret",
             ),
         ),
     )

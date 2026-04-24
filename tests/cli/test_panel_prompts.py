@@ -13,6 +13,7 @@ from fqdn_updater.cli.panel_prompts import (
     DEFAULT_CHECKBOX_FOOTER,
     DEFAULT_CONFIRM_FOOTER,
     DEFAULT_TEXT_FOOTER,
+    CheckboxTableMeta,
     PromptChoice,
     QuestionaryPromptAdapter,
     _ask_and_echo,
@@ -20,6 +21,7 @@ from fqdn_updater.cli.panel_prompts import (
     _build_confirm_question,
     _build_select_question,
     _build_text_question,
+    _render_checkbox_answer,
 )
 
 ANSI_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -60,10 +62,7 @@ def test_select_question_uses_custom_footer_and_does_not_leak_it_into_history() 
 
 
 def test_select_question_keeps_hint_panel_only_while_active() -> None:
-    hint_lines = (
-        "ID маршрутизатора будет создан автоматически из имени.",
-        "Новый пароль RCI будет показан один раз после сохранения.",
-    )
+    hint_lines = ("Введите имя нового маршрутизатора.",)
 
     result, rendered, _raw = _run_question(
         lambda *, input, output: _build_select_question(
@@ -166,6 +165,63 @@ def test_checkbox_question_keeps_footer_only_while_active() -> None:
     )
     assert "\x1b[7m" not in raw
     assert "\x1b[0;38;5;76;7m" not in raw
+
+
+def test_checkbox_question_renders_table_header_and_live_summary_only_while_active() -> None:
+    table_meta = CheckboxTableMeta(
+        header="Сервис                 | домены |   IPv4 |   IPv6",
+        summary=lambda selected: f"Итого выбрано         | {len(selected):>7} | {0:>7} | {0:>7}",
+    )
+
+    result, rendered, _raw = _run_question(
+        lambda *, input, output: _build_checkbox_question(
+            message="Сервисы",
+            choices=[
+                PromptChoice("Telegram", "telegram"),
+                PromptChoice("YouTube", "youtube"),
+            ],
+            table_meta=table_meta,
+            style=_style(),
+            input=input,
+            output=output,
+        ),
+        user_input=" \r",
+    )
+    assert result == ["telegram"]
+    assert table_meta.header in rendered
+    assert "Итого выбрано" in rendered
+
+    _result, history = _run_history_entry(
+        lambda *, input, output: _build_checkbox_question(
+            message="Сервисы",
+            choices=[
+                PromptChoice("Telegram", "telegram"),
+                PromptChoice("YouTube", "youtube"),
+            ],
+            table_meta=table_meta,
+            style=_style(),
+            input=input,
+            output=output,
+        ),
+        user_input=" \r",
+        message="Сервисы",
+        render_answer=lambda value: "Telegram" if value == ["telegram"] else None,
+    )
+    assert table_meta.header not in history
+    assert "Итого выбрано" not in history
+
+
+def test_render_checkbox_answer_uses_display_titles_for_table_mode() -> None:
+    assert (
+        _render_checkbox_answer(
+            result=["meta", "youtube"],
+            choice_titles={
+                "meta": "meta (whatsapp)",
+                "youtube": "youtube",
+            },
+        )
+        == "meta (whatsapp), youtube"
+    )
 
 
 def test_text_question_moves_field_instruction_to_footer_only() -> None:

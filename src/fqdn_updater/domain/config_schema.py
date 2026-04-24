@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from fqdn_updater.domain.object_group_sharding import managed_shard_names
+from fqdn_updater.domain.schedule import RuntimeScheduleConfig
 from fqdn_updater.domain.source_normalizer import SourceFormat
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -203,8 +204,10 @@ class RuntimeConfig(BaseModel):
 
     artifacts_dir: str = "data/artifacts"
     logs_dir: str = "data/logs"
+    state_dir: str = "data/state"
     secrets_env_file: str = ".env.secrets"
     log_format: Literal["text", "json"] = "text"
+    schedule: RuntimeScheduleConfig = Field(default_factory=RuntimeScheduleConfig)
 
 
 class AppConfig(BaseModel):

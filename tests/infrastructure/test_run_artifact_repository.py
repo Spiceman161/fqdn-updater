@@ -94,6 +94,35 @@ def test_list_recent_sorts_by_finished_at_then_run_id_then_filename_and_limits_r
         datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
         datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
     ]
+    assert result.total_count == 4
+
+
+def test_list_recent_supports_offset_for_pagination(tmp_path) -> None:
+    repository = RunArtifactRepository()
+    artifacts_dir = tmp_path / "artifacts"
+
+    _write_artifact(
+        artifacts_dir / "d.json",
+        _artifact(run_id="run-d", finished_at=datetime(2026, 4, 8, 13, 3, tzinfo=UTC)),
+    )
+    _write_artifact(
+        artifacts_dir / "c.json",
+        _artifact(run_id="run-c", finished_at=datetime(2026, 4, 8, 13, 2, tzinfo=UTC)),
+    )
+    _write_artifact(
+        artifacts_dir / "b.json",
+        _artifact(run_id="run-b", finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=UTC)),
+    )
+    _write_artifact(
+        artifacts_dir / "a.json",
+        _artifact(run_id="run-a", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC)),
+    )
+
+    result = repository.list_recent(artifacts_dir=artifacts_dir, limit=2, offset=1)
+
+    assert [item.path.name for item in result.artifacts] == ["c.json", "b.json"]
+    assert [item.artifact.run_id for item in result.artifacts] == ["run-c", "run-b"]
+    assert result.total_count == 4
 
 
 def test_list_recent_returns_empty_tuple_for_missing_directory(tmp_path) -> None:
@@ -103,6 +132,7 @@ def test_list_recent_returns_empty_tuple_for_missing_directory(tmp_path) -> None
 
     assert result.artifacts == ()
     assert result.warnings == ()
+    assert result.total_count == 0
 
 
 def test_list_recent_reports_invalid_artifacts_as_warnings_without_failing(tmp_path) -> None:
@@ -137,6 +167,7 @@ def test_list_recent_reports_invalid_artifacts_as_warnings_without_failing(tmp_p
     assert [warning.path.name for warning in result.warnings] == ["broken.json", "invalid.json"]
     assert "artifact JSON is invalid" in result.warnings[0].message
     assert "artifact schema is invalid" in result.warnings[1].message
+    assert result.total_count == 1
 
 
 def _artifact(

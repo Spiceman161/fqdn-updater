@@ -94,6 +94,36 @@ def test_discover_wireguard_targets_returns_typed_candidates() -> None:
     assert result.successful is True
 
 
+def test_discover_wireguard_targets_uses_password_override_without_secret_resolution() -> None:
+    router = _router_config()
+    candidates = (
+        RouteTargetCandidate(
+            value="Wireguard7",
+            display_name="Wireguard7",
+            status="connected",
+            detail="type=Wireguard",
+            connected=True,
+        ),
+    )
+    client_factory = _RecordingClientFactory(
+        client=_RecordingClient(candidates=candidates),
+        seen_passwords=[],
+    )
+    service = RouteTargetDiscoveryService(
+        secret_resolver=_RaisingSecretResolver(RuntimeError("secret resolution failed")),
+        client_factory=client_factory,
+    )
+
+    result = service.discover_wireguard_targets(
+        router=router,
+        password_override="generated-password",
+    )
+
+    assert result == RouteTargetDiscoveryResult(router_id="router-1", candidates=candidates)
+    assert client_factory.seen_passwords == ["generated-password"]
+    assert result.successful is True
+
+
 @pytest.mark.parametrize(
     ("secret_resolver", "client_factory", "expected_error"),
     [

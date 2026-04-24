@@ -4,7 +4,19 @@
   "runtime": {
     "artifacts_dir": "data/artifacts",
     "log_format": "text",
-    "logs_dir": "data/logs"
+    "logs_dir": "data/logs",
+    "schedule": {
+      "mode": "disabled",
+      "systemd": {
+        "compose_service": "fqdn-updater",
+        "deployment_root": "/opt/fqdn-updater",
+        "unit_name": "fqdn-updater"
+      },
+      "times": [],
+      "timezone": "UTC",
+      "weekdays": []
+    },
+    "state_dir": "data/state"
   },
   "services": [
     {

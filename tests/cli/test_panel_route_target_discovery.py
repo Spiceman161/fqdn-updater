@@ -11,7 +11,13 @@ from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterSer
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
 from fqdn_updater.infrastructure.secret_env_file import SecretEnvFile
 
-from .panel_test_support import ScriptedPromptAdapter, make_panel_controller, write_config
+from .panel_test_support import (
+    ScriptedPromptAdapter,
+    ScriptedSourceLoadingService,
+    make_empty_source_load_report,
+    make_panel_controller,
+    write_config,
+)
 
 
 class _FakeDiscoveryService:
@@ -19,7 +25,12 @@ class _FakeDiscoveryService:
         self.result = result
         self.calls: list[str] = []
 
-    def discover_wireguard_targets(self, *, router: RouterConfig) -> RouteTargetDiscoveryResult:
+    def discover_wireguard_targets(
+        self,
+        *,
+        router: RouterConfig,
+        password_override: str | None = None,
+    ) -> RouteTargetDiscoveryResult:
         self.calls.append(router.id)
         return self.result
 
@@ -28,9 +39,16 @@ class _RecordingDiscoveryService:
     def __init__(self, result: RouteTargetDiscoveryResult) -> None:
         self.result = result
         self.routers: list[RouterConfig] = []
+        self.password_overrides: list[str | None] = []
 
-    def discover_wireguard_targets(self, *, router: RouterConfig) -> RouteTargetDiscoveryResult:
+    def discover_wireguard_targets(
+        self,
+        *,
+        router: RouterConfig,
+        password_override: str | None = None,
+    ) -> RouteTargetDiscoveryResult:
         self.routers.append(router)
+        self.password_overrides.append(password_override)
         return self.result
 
 
@@ -56,6 +74,9 @@ def test_discover_route_targets_reports_new_router_missing_secret_as_skipped(tmp
         config_path=tmp_path / "config.json",
         console=console,
         prompts=prompts,
+    )
+    controller._source_loading_service = ScriptedSourceLoadingService(  # type: ignore[attr-defined]
+        make_empty_source_load_report()
     )
     router = _router_config()
     config = _app_config(tmp_path)
@@ -125,6 +146,37 @@ def test_discover_route_targets_returns_candidates_when_discovery_succeeds(tmp_p
     assert fake_service.calls == [router.id]
 
 
+def test_discover_route_targets_truncates_raw_error_preview_for_panel(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter()
+    console = Console(force_terminal=True, record=True)
+    controller = panel_module.PanelController(
+        config_path=tmp_path / "config.json",
+        console=console,
+        prompts=prompts,
+    )
+    controller._source_loading_service = ScriptedSourceLoadingService(  # type: ignore[attr-defined]
+        make_empty_source_load_report()
+    )
+    router = _router_config()
+    config = _app_config(tmp_path)
+    raw_error = "upstream rejected request " + ("x" * 600)
+    controller._route_target_discovery_service = _FakeDiscoveryService(  # type: ignore[attr-defined]
+        RouteTargetDiscoveryResult(router_id=router.id, error_message=raw_error)
+    )
+
+    candidates = controller._discover_route_targets(
+        config=config,
+        router=router,
+        discovery_password="generated-password",
+    )
+
+    assert candidates == ()
+    output = console.export_text()
+    assert "WireGuard discovery failed:" in output
+    assert "upstream rejected request" in output
+    assert len(output) < 500
+
+
 def test_build_router_mappings_preserves_existing_metadata_and_google_override(tmp_path) -> None:
     controller = _panel_controller(tmp_path)
     mappings = controller._build_router_mappings(
@@ -192,22 +244,17 @@ def test_add_new_router_uses_draft_router_for_route_target_discovery(tmp_path, m
     prompts = ScriptedPromptAdapter(
         text_answers=[
             "Router 1",
-            "http://router-1.example",
             "api-user",
-            "15",
+            "http://router-1.example",
         ],
         checkbox_answers=[["telegram"]],
-        select_answers=["interface", "Wireguard9"],
-        confirm_answers=[True],
+        select_answers=["Wireguard9"],
+        confirm_answers=[True, True],
     )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(controller._config_path)
     generated_password = "Aa1!bcdefghijklmnopq"
     password_env = "FQDN_UPDATER_ROUTER_ROUTER_1_PASSWORD"
-    SecretEnvFile(path=tmp_path / ".env.secrets").write_value(
-        key=password_env,
-        value="existing-router-secret",
-    )
     fake_service = _RecordingDiscoveryService(
         RouteTargetDiscoveryResult(
             router_id="router-1",
@@ -238,7 +285,13 @@ def test_add_new_router_uses_draft_router_for_route_target_discovery(tmp_path, m
     assert str(draft_router.rci_url) == "https://router-1.example/rci/"
     assert draft_router.username == "api-user"
     assert draft_router.password_env == password_env
-    assert draft_router.timeout_seconds == 15
+    assert draft_router.timeout_seconds == 10
+    assert fake_service.password_overrides == [generated_password]
+    assert [call["message"] for call in prompts.text_calls] == [
+        "Имя маршрутизатора",
+        "RCI username",
+        "KeenDNS RCI URL",
+    ]
 
     payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
     assert payload["routers"][0]["rci_url"] == "https://router-1.example/rci/"
@@ -265,10 +318,10 @@ def test_add_new_router_reports_invalid_draft_router_without_traceback(
     prompts = ScriptedPromptAdapter(
         text_answers=[
             "Router 1",
-            "https://router-1.example/api/",
             "api-user",
-            "15",
-        ]
+            "https://router-1.example/api/",
+        ],
+        confirm_answers=[True],
     )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(controller._config_path)
@@ -277,10 +330,7 @@ def test_add_new_router_reports_invalid_draft_router_without_traceback(
     )
     controller._route_target_discovery_service = fake_service  # type: ignore[attr-defined]
 
-    def _unexpected_generate(self):
-        raise AssertionError("password generation should not run for invalid router input")
-
-    monkeypatch.setattr(panel_module.RciPasswordGenerator, "generate", _unexpected_generate)
+    monkeypatch.setattr(panel_module.RciPasswordGenerator, "generate", lambda self: "unused")
 
     controller._add_router()
 

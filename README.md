@@ -1,72 +1,145 @@
 # FQDN-updater
 
-CLI-инструмент для централизованного обновления managed FQDN object-group на нескольких Keenetic-роутерах через KeenDNS RCI API.
+[![Verify](https://github.com/Spiceman161/fqdn-updater/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/Spiceman161/fqdn-updater/actions/workflows/verify.yml)
 
-## Workflow for Codex
+FQDN-updater is a production-oriented Python CLI for centrally synchronizing managed
+FQDN object-groups on Keenetic routers through the KeenDNS RCI API.
 
-В репозитории подготовлен минимальный codex workflow:
+The tool is built for a small VPS or home-server deployment: configure routers and service
+lists locally, preview changes with `dry-run`, apply only managed object-groups and route
+bindings with `sync`, and run the same one-shot job from Docker Compose under a systemd timer.
 
-- `AGENTS.md` — правила репозитория и lifecycle для Codex
-- `.codex/slices.json` — canonical slice-state для roadmap-driven работы
-- `docs/ROADMAP.md` — человекочитаемое зеркало backlog и статусов
-- `.codex/hooks.json` — напоминания о workflow gate
-- `scripts/tmux-start-codex.sh` — быстро поднять tmux-сессию сразу в `codex`
-- `scripts/tmux-codex.sh` — подготовить tmux-сессию в корне проекта
-- `.codex/agents/` — роли для slice-based workflow
+## Features
 
-## Project scaffold
+- Keenetic-only remote access through KeenDNS RCI over HTTPS.
+- HTTP Digest Auth with a low-privilege API user.
+- Managed-only updates: the tool changes only configured object-groups and route bindings.
+- Read-before-write sync planning with deterministic diffs.
+- Built-in service source registry and source normalization.
+- `status`, `dry-run`, and `sync` commands for operator-safe verification.
+- Rich terminal panel for local config maintenance.
+- Docker Compose runtime and config-driven systemd timer installation.
+- One-command Ubuntu 24.04 bootstrap installer.
 
-Репозиторий инициализирован как Python CLI-проект со `src`-layout и базовыми командами:
+## Safety Model
+
+FQDN-updater is intentionally narrow:
+
+- no web UI;
+- no daemon process;
+- no SSH transport in the production path;
+- no router-wide config mutation;
+- no hidden writes from read-only commands.
+
+All RCI transport details stay behind the infrastructure client. Domain and application logic
+operate on typed models rather than raw HTTP payloads.
+
+## Installation
+
+On a clean Ubuntu 24.04 host:
 
 ```bash
-python -m fqdn_updater --help
-fqdn-updater init --config config.json
-fqdn-updater config validate --config config.json
-fqdn-updater dry-run --config config.json
-fqdn-updater sync --config config.json
-fqdn-updater status --config config.json
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash
 ```
 
-Для VPS deployment есть минимальный Docker Compose runtime и примеры systemd unit/timer.
-Операторский сценарий описан в `docs/USER_QUICKSTART.md`.
+Install a specific release tag:
 
-## Verification
+```bash
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash -s -- --version v0.1.0
+```
 
-Единый локальный и CI verification entrypoint:
+The installer deploys the selected release to `/opt/fqdn-updater`, preserves existing
+`config.json`, `.env*`, `data/`, `secrets/`, and `.venv`, installs host commands
+`fqdn-updater` and `domaingo`, builds the Docker image, and installs the systemd timer.
+
+## First Run
+
+Open the terminal panel:
+
+```bash
+fqdn-updater
+```
+
+Useful command-line checks:
+
+```bash
+fqdn-updater config validate --config /opt/fqdn-updater/config.json
+fqdn-updater status --config /opt/fqdn-updater/config.json
+fqdn-updater dry-run --config /opt/fqdn-updater/config.json
+```
+
+Apply managed changes:
+
+```bash
+fqdn-updater sync --config /opt/fqdn-updater/config.json
+```
+
+The host wrapper runs `sync`, `dry-run`, and `status` through Docker Compose. Management commands
+such as `panel`, `init`, `config`, `router`, `mapping`, and `schedule` run through the local Python
+virtual environment in `/opt/fqdn-updater/.venv`.
+
+## Scheduling
+
+Set a daily schedule and install systemd units:
+
+```bash
+fqdn-updater schedule set-daily --config /opt/fqdn-updater/config.json --time 03:15 --timezone Europe/Moscow
+sudo fqdn-updater schedule install --config /opt/fqdn-updater/config.json
+```
+
+Inspect the timer:
+
+```bash
+systemctl status fqdn-updater.timer --no-pager
+journalctl -u fqdn-updater.service -n 100 --no-pager
+```
+
+## Keenetic RCI Setup
+
+For KeenDNS RCI access, use two different settings:
+
+- in the Keenetic web UI, publish the `rci.<domain>` web application with protocol `HTTP` and
+  port `79`;
+- in `config.json`, store the external endpoint as `https://rci.<domain>/rci/`.
+
+Use a dedicated low-privilege API user for FQDN-updater. Store real passwords in `.env` or
+`secrets/`; do not commit secrets or production configs.
+
+## Local Development
+
+Requirements:
+
+- Python 3.12+
+- Docker and Docker Compose plugin for packaging/runtime checks
+
+Set up a development environment:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .[dev]
+```
+
+Run the verification gate:
 
 ```bash
 ./scripts/verify.sh
 ```
 
-Правила workflow:
+The same script runs in GitHub Actions on push and pull request.
 
-- внутри workspace допустимы прямые недеструктивные правки без отдельного подтверждения;
-- sandbox не считается отключённым; network/escalation по-прежнему требуют approve, если среда этого требует;
-- slice не считается green, пока не прошёл `./scripts/verify.sh`.
+## Documentation
 
-## Quick start
+- [User quickstart](docs/USER_QUICKSTART.md)
+- [Product requirements](PRD.md)
+- [Architecture](ARCHITECTURE.md)
+- [Roadmap](docs/ROADMAP.md)
 
-```bash
-cd /home/moltuser/clawd/artifacts/fqdn-updater
-chmod +x scripts/tmux-start-codex.sh scripts/tmux-codex.sh
-./scripts/tmux-start-codex.sh
-```
+## Project Status
 
-Или без tmux:
+FQDN-updater is usable for managed Keenetic FQDN object-group and route-binding synchronization.
+The deeper `doctor` diagnostics mode is not implemented yet.
 
-```bash
-cd /home/moltuser/clawd/artifacts/fqdn-updater
-codex
-```
+## Security
 
-## Keenetic FQDN limits
-
-Перед `dry-run`/`sync` план проверяется по подтверждённым ограничениям Keenetic:
-
-- не больше 300 записей в одном `object-group fqdn`;
-- не больше 1024 записей суммарно в управляемом FQDN-плане роутера.
-
-Если список для одного mapping содержит больше 300 записей, updater автоматически делит его на
-managed shard-группы: базовая группа сохраняет имя из `object_group_name`, следующие получают
-суффиксы `-2`, `-3`, `-4`. Лишние shard-группы после уменьшения upstream-списка очищаются, а их
-route binding удаляется.
+Please report security issues privately. See [SECURITY.md](SECURITY.md).

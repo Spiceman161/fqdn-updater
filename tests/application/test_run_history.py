@@ -34,15 +34,22 @@ class _Warning:
 class _ListResult:
     artifacts: tuple[_StoredArtifact, ...]
     warnings: tuple[_Warning, ...]
+    total_count: int
 
 
 class _RecordingRepository:
     def __init__(self, result: _ListResult) -> None:
         self.result = result
-        self.calls: list[tuple[Path, int]] = []
+        self.calls: list[tuple[Path, int, int]] = []
 
-    def list_recent(self, *, artifacts_dir: Path, limit: int = 10) -> _ListResult:
-        self.calls.append((artifacts_dir, limit))
+    def list_recent(
+        self,
+        *,
+        artifacts_dir: Path,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> _ListResult:
+        self.calls.append((artifacts_dir, limit, offset))
         return self.result
 
 
@@ -63,6 +70,7 @@ def test_run_history_service_resolves_relative_artifacts_dir_from_config_path(tm
                     message="artifact JSON is invalid: expected value at line 1 column 1",
                 ),
             ),
+            total_count=1,
         )
     )
     service = RunHistoryService(repository=repository)
@@ -76,14 +84,15 @@ def test_run_history_service_resolves_relative_artifacts_dir_from_config_path(tm
         }
     )
 
-    result = service.list_recent(config=config, config_path=config_path, limit=7)
+    result = service.list_recent(config=config, config_path=config_path, limit=7, offset=10)
 
-    assert repository.calls == [(artifacts_dir, 7)]
+    assert repository.calls == [(artifacts_dir, 7, 10)]
     assert result.artifacts_dir == artifacts_dir
     assert result.runs[0].path == artifacts_dir / "run-001.json"
     assert result.runs[0].artifact.run_id == "run-001"
     assert result.warnings[0].path == artifacts_dir / "broken.json"
     assert result.warnings[0].message.startswith("artifact JSON is invalid")
+    assert result.total_count == 1
 
 
 def _artifact(*, run_id: str) -> RunArtifact:

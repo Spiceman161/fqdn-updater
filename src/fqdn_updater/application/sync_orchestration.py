@@ -9,6 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from fqdn_updater.application.keenetic_client import KeeneticClient, KeeneticClientFactory
+from fqdn_updater.application.run_locking import NullRunLockManager, RunLockManager
 from fqdn_updater.application.run_support import (
     aggregate_router_status,
     aggregate_run_status,
@@ -84,6 +85,7 @@ class SyncOrchestrator:
         planner: ServiceSyncPlanner,
         artifact_writer: RunArtifactWriter,
         logger_factory: LoggerFactory | None = None,
+        run_lock_manager: RunLockManager | None = None,
         now_provider: Callable[[], datetime] | None = None,
         run_id_factory: Callable[[], str] | None = None,
     ) -> None:
@@ -93,74 +95,76 @@ class SyncOrchestrator:
         self._planner = planner
         self._artifact_writer = artifact_writer
         self._logger_factory = logger_factory or _NullLoggerFactory()
+        self._run_lock_manager = run_lock_manager or NullRunLockManager()
         self._now_provider = now_provider or _utc_now
         self._run_id_factory = run_id_factory or _generate_run_id
 
     def run(self, *, config: AppConfig, trigger: RunTrigger) -> SyncExecutionResult:
-        run_id = self._run_id_factory()
-        started_at = self._now_provider()
-        logger = self._logger_factory.create(
-            config=config,
-            run_id=run_id,
-            mode=RunMode.APPLY,
-            trigger=trigger,
-        )
-        logger.event("run_started", status="started")
-
-        try:
-            managed_mappings = eligible_mappings(config=config)
-            loaded_sources = self._source_loader.load_enabled_services(config.services)
-            desired_entries_by_service = {
-                source.service_key: source.typed_entries for source in loaded_sources.loaded
-            }
-            source_failures_by_service = group_source_failures(report=loaded_sources)
-            static_route_service_keys = static_route_capable_service_keys(config)
-
-            router_results: list[RouterRunResult] = []
-            plans: list[ServiceSyncPlan] = []
-
-            for router in config.routers:
-                router_mappings = [
-                    mapping for mapping in managed_mappings if mapping.router_id == router.id
-                ]
-                if not router_mappings:
-                    continue
-
-                router_result, router_plans = self._run_router(
-                    logger=logger,
-                    router=router,
-                    mappings=router_mappings,
-                    desired_entries_by_service=desired_entries_by_service,
-                    source_failures_by_service=source_failures_by_service,
-                    static_route_service_keys=static_route_service_keys,
-                )
-                router_results.append(router_result)
-                plans.extend(router_plans)
-
-            artifact = RunArtifact(
+        with self._run_lock_manager.acquire(config=config):
+            run_id = self._run_id_factory()
+            started_at = self._now_provider()
+            logger = self._logger_factory.create(
+                config=config,
                 run_id=run_id,
-                trigger=trigger,
                 mode=RunMode.APPLY,
-                status=aggregate_run_status(router_results),
-                started_at=started_at,
-                finished_at=self._now_provider(),
-                log_path=logger.path,
-                router_results=router_results,
+                trigger=trigger,
             )
-            artifact_path = self._artifact_writer.write(config=config, artifact=artifact)
-            logger.event(
-                "run_finished",
-                status=artifact.status.value,
-                message=f"artifact_path={artifact_path}",
-            )
+            logger.event("run_started", status="started")
 
-            return SyncExecutionResult(
-                artifact=artifact,
-                artifact_path=artifact_path,
-                plans=tuple(plans),
-            )
-        finally:
-            logger.close()
+            try:
+                managed_mappings = eligible_mappings(config=config)
+                loaded_sources = self._source_loader.load_enabled_services(config.services)
+                desired_entries_by_service = {
+                    source.service_key: source.typed_entries for source in loaded_sources.loaded
+                }
+                source_failures_by_service = group_source_failures(report=loaded_sources)
+                static_route_service_keys = static_route_capable_service_keys(config)
+
+                router_results: list[RouterRunResult] = []
+                plans: list[ServiceSyncPlan] = []
+
+                for router in config.routers:
+                    router_mappings = [
+                        mapping for mapping in managed_mappings if mapping.router_id == router.id
+                    ]
+                    if not router_mappings:
+                        continue
+
+                    router_result, router_plans = self._run_router(
+                        logger=logger,
+                        router=router,
+                        mappings=router_mappings,
+                        desired_entries_by_service=desired_entries_by_service,
+                        source_failures_by_service=source_failures_by_service,
+                        static_route_service_keys=static_route_service_keys,
+                    )
+                    router_results.append(router_result)
+                    plans.extend(router_plans)
+
+                artifact = RunArtifact(
+                    run_id=run_id,
+                    trigger=trigger,
+                    mode=RunMode.APPLY,
+                    status=aggregate_run_status(router_results),
+                    started_at=started_at,
+                    finished_at=self._now_provider(),
+                    log_path=logger.path,
+                    router_results=router_results,
+                )
+                artifact_path = self._artifact_writer.write(config=config, artifact=artifact)
+                logger.event(
+                    "run_finished",
+                    status=artifact.status.value,
+                    message=f"artifact_path={artifact_path}",
+                )
+
+                return SyncExecutionResult(
+                    artifact=artifact,
+                    artifact_path=artifact_path,
+                    plans=tuple(plans),
+                )
+            finally:
+                logger.close()
 
     def _run_router(
         self,

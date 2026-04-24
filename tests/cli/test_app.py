@@ -43,10 +43,13 @@ from fqdn_updater.domain.status_diagnostics import (
     RouterStatusDiagnostic,
     StatusDiagnosticsResult,
 )
+from fqdn_updater.infrastructure.run_lock import RunLockError
 from fqdn_updater.infrastructure.secret_env_file import (
     SecretEnvFile,
     password_env_key_for_router_id,
 )
+from fqdn_updater.infrastructure.service_count_cache import CachingSourceLoadingService
+from fqdn_updater.infrastructure.systemd_scheduler import SystemdScheduleInstallResult
 
 runner = CliRunner()
 
@@ -59,6 +62,7 @@ def test_root_help_shows_expected_commands() -> None:
     assert "config" in result.stdout
     assert "router" in result.stdout
     assert "mapping" in result.stdout
+    assert "schedule" in result.stdout
     assert "dry-run" in result.stdout
     assert "sync" in result.stdout
     assert "status" in result.stdout
@@ -70,6 +74,14 @@ def test_panel_help_is_available() -> None:
 
     assert result.exit_code == 0
     assert "--config" in result.stdout
+
+
+def test_schedule_help_is_available() -> None:
+    result = runner.invoke(app, ["schedule", "--help"])
+
+    assert result.exit_code == 0
+    assert "show" in result.stdout
+    assert "install" in result.stdout
 
 
 def test_panel_command_invokes_controller_with_config_path(tmp_path, monkeypatch) -> None:
@@ -89,6 +101,214 @@ def test_panel_command_invokes_controller_with_config_path(tmp_path, monkeypatch
 
     assert result.exit_code == 0
     assert calls == [config_path]
+
+
+def test_schedule_show_outputs_human_and_json(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "routers": [],
+                "services": [],
+                "mappings": [],
+                "runtime": {
+                    "schedule": {
+                        "mode": "daily",
+                        "times": ["03:15", "12:00"],
+                        "timezone": "Europe/Moscow",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    human = runner.invoke(app, ["schedule", "show", "--config", str(config_path)])
+    json_result = runner.invoke(
+        app,
+        ["schedule", "show", "--config", str(config_path), "--output", "json"],
+    )
+
+    assert human.exit_code == 0
+    assert "mode=daily" in human.stdout
+    assert "times=03:15, 12:00" in human.stdout
+    assert "deployment_root=/opt/fqdn-updater" in human.stdout
+    assert json.loads(json_result.stdout)["mode"] == "daily"
+
+
+def test_schedule_set_daily_persists_times_timezone_and_defaults(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    _write_management_config(config_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "schedule",
+            "set-daily",
+            "--config",
+            str(config_path),
+            "--time",
+            "12:00",
+            "--time",
+            "03:15",
+            "--timezone",
+            "Europe/Moscow",
+        ],
+    )
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert payload["runtime"]["schedule"] == {
+        "mode": "daily",
+        "times": ["03:15", "12:00"],
+        "timezone": "Europe/Moscow",
+        "weekdays": [],
+        "systemd": {
+            "compose_service": "fqdn-updater",
+            "deployment_root": "/opt/fqdn-updater",
+            "unit_name": "fqdn-updater",
+        },
+    }
+
+
+def test_schedule_set_weekly_persists_weekdays_and_preserves_existing_systemd_settings(
+    tmp_path,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "routers": [],
+                "services": [],
+                "mappings": [],
+                "runtime": {
+                    "schedule": {
+                        "mode": "disabled",
+                        "timezone": "UTC",
+                        "times": [],
+                        "weekdays": [],
+                        "systemd": {
+                            "unit_name": "custom-fqdn",
+                            "deployment_root": "/srv/fqdn-updater",
+                            "compose_service": "sync-job",
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "schedule",
+            "set-weekly",
+            "--config",
+            str(config_path),
+            "--day",
+            "fri",
+            "--day",
+            "mon",
+            "--time",
+            "04:00",
+            "--timezone",
+            "Europe/Moscow",
+        ],
+    )
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert payload["runtime"]["schedule"] == {
+        "mode": "weekly",
+        "times": ["04:00"],
+        "timezone": "Europe/Moscow",
+        "weekdays": ["mon", "fri"],
+        "systemd": {
+            "compose_service": "sync-job",
+            "deployment_root": "/srv/fqdn-updater",
+            "unit_name": "custom-fqdn",
+        },
+    }
+
+
+def test_schedule_disable_clears_times_and_weekdays(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "routers": [],
+                "services": [],
+                "mappings": [],
+                "runtime": {
+                    "schedule": {
+                        "mode": "weekly",
+                        "times": ["04:00"],
+                        "weekdays": ["mon", "fri"],
+                        "timezone": "Europe/Moscow",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["schedule", "disable", "--config", str(config_path)])
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert payload["runtime"]["schedule"]["mode"] == "disabled"
+    assert payload["runtime"]["schedule"]["times"] == []
+    assert payload["runtime"]["schedule"]["weekdays"] == []
+
+
+def test_schedule_install_uses_installer_and_renders_result(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(_config().model_dump(mode="json")), encoding="utf-8")
+    install_calls: list[tuple[AppConfig, Path]] = []
+
+    class _StubInstaller:
+        def install(self, *, config: AppConfig, config_path: Path) -> SystemdScheduleInstallResult:
+            install_calls.append((config, config_path))
+            return SystemdScheduleInstallResult(
+                service_path=Path("/etc/systemd/system/fqdn-updater.service"),
+                timer_path=Path("/etc/systemd/system/fqdn-updater.timer"),
+                timer_action="started",
+            )
+
+    monkeypatch.setattr(cli_app_module, "_schedule_installer", lambda: _StubInstaller())
+
+    result = runner.invoke(app, ["schedule", "install", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert install_calls[0][1] == config_path
+    assert "timer_action=started" in result.stdout
+    assert "/etc/systemd/system/fqdn-updater.timer" in result.stdout
+
+
+def test_dry_run_orchestrator_uses_caching_source_loader(tmp_path) -> None:
+    config = _config()
+
+    orchestrator = cli_app_module._dry_run_orchestrator(
+        config_path=tmp_path / "config.json",
+        config=config,
+    )
+
+    assert isinstance(orchestrator, DryRunOrchestrator)
+    assert isinstance(orchestrator._source_loader, CachingSourceLoadingService)  # type: ignore[attr-defined]
+    assert orchestrator._source_loader._cache_path == tmp_path / "data" / "service-count-cache.json"  # type: ignore[attr-defined]
+
+
+def test_sync_orchestrator_uses_caching_source_loader(tmp_path) -> None:
+    config = _config()
+
+    orchestrator = cli_app_module._sync_orchestrator(
+        config_path=tmp_path / "config.json",
+        config=config,
+    )
+
+    assert isinstance(orchestrator._source_loader, CachingSourceLoadingService)  # type: ignore[attr-defined]
+    assert orchestrator._source_loader._cache_path == tmp_path / "data" / "service-count-cache.json"  # type: ignore[attr-defined]
 
 
 def test_router_add_writes_valid_router_and_leaves_file_unchanged_on_validation_failures(
@@ -1081,7 +1301,7 @@ def test_dry_run_loads_runtime_secret_env_file_before_running(tmp_path, monkeypa
     monkeypatch.setattr(
         cli_app_module,
         "_dry_run_orchestrator",
-        lambda: EnvAssertingOrchestrator(
+        lambda **_kwargs: EnvAssertingOrchestrator(
             result=result_payload,
             key="ROUTER_ONE_SECRET",
             value="secret-from-env-file",
@@ -1091,6 +1311,43 @@ def test_dry_run_loads_runtime_secret_env_file_before_running(tmp_path, monkeypa
     result = runner.invoke(app, ["dry-run", "--config", str(tmp_path / "config.json")])
 
     assert result.exit_code == 0
+
+
+def test_dry_run_passes_explicit_scheduled_trigger(monkeypatch) -> None:
+    config = _config()
+    expected_result = _dry_run_result(
+        status=RunStatus.SUCCESS,
+        artifact_path=Path("data/artifacts/run-trigger.json"),
+        plans=(),
+        service_results=(),
+        router_status=RouterResultStatus.NO_CHANGES,
+    )
+    recorded_triggers: list[RunTrigger] = []
+
+    class _RecordingOrchestrator:
+        def run(self, *, config: AppConfig, trigger: RunTrigger) -> DryRunExecutionResult:
+            del config
+            recorded_triggers.append(trigger)
+            return expected_result
+
+    monkeypatch.setattr(
+        cli_app_module,
+        "_validation_service",
+        lambda: StubValidationService(config=config),
+    )
+    monkeypatch.setattr(
+        cli_app_module,
+        "_dry_run_orchestrator",
+        lambda **_kwargs: _RecordingOrchestrator(),
+    )
+
+    result = runner.invoke(
+        app,
+        ["dry-run", "--config", "config.json", "--trigger", "scheduled"],
+    )
+
+    assert result.exit_code == 0
+    assert recorded_triggers == [RunTrigger.SCHEDULED]
 
 
 def test_dry_run_returns_thirty_for_changes_and_json_output(monkeypatch) -> None:
@@ -1257,6 +1514,33 @@ def test_dry_run_returns_forty_for_invalid_config(monkeypatch) -> None:
     assert "Invalid JSON in config file missing.json: broken" in result.stderr
 
 
+def test_dry_run_returns_fifty_when_run_lock_is_held(monkeypatch) -> None:
+    config = _config()
+
+    class _LockingOrchestrator:
+        def run(self, *, config: AppConfig, trigger: RunTrigger) -> DryRunExecutionResult:
+            del config, trigger
+            raise RunLockError(
+                "Another run is already in progress (lock file: data/state/run.lock)"
+            )
+
+    monkeypatch.setattr(
+        cli_app_module,
+        "_validation_service",
+        lambda: StubValidationService(config=config),
+    )
+    monkeypatch.setattr(
+        cli_app_module,
+        "_dry_run_orchestrator",
+        lambda **_kwargs: _LockingOrchestrator(),
+    )
+
+    result = runner.invoke(app, ["dry-run", "--config", "config.json"])
+
+    assert result.exit_code == 50
+    assert "Another run is already in progress" in result.stderr
+
+
 def test_sync_returns_zero_for_no_changes(monkeypatch) -> None:
     config = _config()
     result_payload = _sync_result(
@@ -1289,6 +1573,43 @@ def test_sync_returns_zero_for_no_changes(monkeypatch) -> None:
     assert "Sync completed:" in result.stdout
     assert "planned_changes=0" in result.stdout
     assert "skipped_services=0" in result.stdout
+
+
+def test_sync_passes_explicit_openclaw_trigger(monkeypatch) -> None:
+    config = _config()
+    expected_result = _sync_result(
+        status=RunStatus.SUCCESS,
+        artifact_path=Path("data/artifacts/run-sync-trigger.json"),
+        plans=(),
+        service_results=(),
+        router_status=RouterResultStatus.NO_CHANGES,
+    )
+    recorded_triggers: list[RunTrigger] = []
+
+    class _RecordingOrchestrator:
+        def run(self, *, config: AppConfig, trigger: RunTrigger) -> SyncExecutionResult:
+            del config
+            recorded_triggers.append(trigger)
+            return expected_result
+
+    monkeypatch.setattr(
+        cli_app_module,
+        "_validation_service",
+        lambda: StubValidationService(config=config),
+    )
+    monkeypatch.setattr(
+        cli_app_module,
+        "_sync_orchestrator",
+        lambda **_kwargs: _RecordingOrchestrator(),
+    )
+
+    result = runner.invoke(
+        app,
+        ["sync", "--config", "config.json", "--trigger", "openclaw"],
+    )
+
+    assert result.exit_code == 0
+    assert recorded_triggers == [RunTrigger.OPENCLAW]
 
 
 def test_sync_returns_ten_for_applied_changes_and_json_output(monkeypatch) -> None:
@@ -1406,6 +1727,33 @@ def test_sync_returns_forty_for_invalid_config(monkeypatch) -> None:
 
     assert result.exit_code == 40
     assert "Config validation failed for missing.json" in result.stderr
+
+
+def test_sync_returns_fifty_when_run_lock_is_held(monkeypatch) -> None:
+    config = _config()
+
+    class _LockingOrchestrator:
+        def run(self, *, config: AppConfig, trigger: RunTrigger) -> SyncExecutionResult:
+            del config, trigger
+            raise RunLockError(
+                "Another run is already in progress (lock file: data/state/run.lock)"
+            )
+
+    monkeypatch.setattr(
+        cli_app_module,
+        "_validation_service",
+        lambda: StubValidationService(config=config),
+    )
+    monkeypatch.setattr(
+        cli_app_module,
+        "_sync_orchestrator",
+        lambda **_kwargs: _LockingOrchestrator(),
+    )
+
+    result = runner.invoke(app, ["sync", "--config", "config.json"])
+
+    assert result.exit_code == 50
+    assert "Another run is already in progress" in result.stderr
 
 
 def test_status_returns_zero_for_healthy_result(monkeypatch) -> None:
@@ -1534,7 +1882,7 @@ def test_dry_run_never_calls_write_methods(monkeypatch, tmp_path) -> None:
         now_provider=lambda: datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
         run_id_factory=lambda: "run-103",
     )
-    monkeypatch.setattr(cli_app_module, "_dry_run_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(cli_app_module, "_dry_run_orchestrator", lambda **_kwargs: orchestrator)
 
     result = runner.invoke(app, ["dry-run", "--config", str(config_path)])
 
@@ -1721,7 +2069,7 @@ def _install_dry_run_stubs(
     monkeypatch.setattr(
         cli_app_module,
         "_dry_run_orchestrator",
-        lambda: StubOrchestrator(result=result),
+        lambda **_kwargs: StubOrchestrator(result=result),
     )
 
 
@@ -1739,7 +2087,7 @@ def _install_sync_stubs(
     monkeypatch.setattr(
         cli_app_module,
         "_sync_orchestrator",
-        lambda: StubSyncOrchestrator(result=result),
+        lambda **_kwargs: StubSyncOrchestrator(result=result),
     )
 
 

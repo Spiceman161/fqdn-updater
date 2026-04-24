@@ -1,8 +1,8 @@
 {
   "version": 1,
   "project": "fqdn-updater",
-  "current_slice_id": "S23",
-  "updated_at": "2026-04-17T00:00:00Z",
+  "current_slice_id": "S26",
+  "updated_at": "2026-04-24T00:00:00Z",
   "slices": [
     {
       "id": "S0",
@@ -407,6 +407,24 @@
       ],
       "depends_on": ["S20", "S21"],
       "notes": "Documentation should stay operator-focused and avoid promising a web UI or daemon behavior."
+    },
+    {
+      "id": "S26",
+      "title": "Ubuntu 24.04 One-Command Bootstrap Installer",
+      "status": "done",
+      "goal": "Install FQDN-updater on a clean Ubuntu 24.04 host with one command.",
+      "summary": "Add a root bootstrap installer that installs Docker/runtime dependencies, deploys the latest release to /opt/fqdn-updater, installs host command wrappers, builds the Docker image, and enables the config-driven systemd timer.",
+      "acceptance": [
+        "Root install.sh supports curl-pipe-sudo installation and an optional --version tag override.",
+        "The installer checks for root, Ubuntu 24.04, and systemd before mutating the host.",
+        "The installer installs Docker Engine, Buildx, and the Docker Compose plugin.",
+        "The installer deploys the selected release cleanly while preserving config.json, .env*, data/, secrets/, and .venv.",
+        "The installer uses the Python CLI for init, schedule set-daily, and schedule install.",
+        "Host commands fqdn-updater and domaingo route sync/dry-run/status through Docker Compose and management commands through the venv CLI.",
+        "./scripts/verify.sh passes with packaging tests for installer contracts."
+      ],
+      "depends_on": ["S18"],
+      "notes": "Completed with green verification on 2026-04-24. GitHub-facing docs and repository templates were prepared for the first public bootstrap release."
     }
   ]
 }

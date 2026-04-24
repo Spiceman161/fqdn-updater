@@ -25,6 +25,7 @@ class RunHistoryResult:
     artifacts_dir: Path
     runs: tuple[RecentRun, ...]
     warnings: tuple[RunHistoryWarning, ...]
+    total_count: int
 
 
 class StoredRunArtifact(Protocol):
@@ -40,10 +41,17 @@ class RunArtifactReadWarning(Protocol):
 class RunArtifactListResult(Protocol):
     artifacts: tuple[StoredRunArtifact, ...]
     warnings: tuple[RunArtifactReadWarning, ...]
+    total_count: int
 
 
 class RunArtifactReader(Protocol):
-    def list_recent(self, *, artifacts_dir: Path, limit: int = 10) -> RunArtifactListResult:
+    def list_recent(
+        self,
+        *,
+        artifacts_dir: Path,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> RunArtifactListResult:
         """Read recent local run artifacts from an artifacts directory."""
 
 
@@ -57,12 +65,17 @@ class RunHistoryService:
         config: AppConfig,
         config_path: Path,
         limit: int = 10,
+        offset: int = 0,
     ) -> RunHistoryResult:
         artifacts_dir = _resolve_config_relative_path(
             config_path=config_path,
             configured_path=config.runtime.artifacts_dir,
         )
-        result = self._repository.list_recent(artifacts_dir=artifacts_dir, limit=limit)
+        result = self._repository.list_recent(
+            artifacts_dir=artifacts_dir,
+            limit=limit,
+            offset=offset,
+        )
         return RunHistoryResult(
             artifacts_dir=artifacts_dir,
             runs=tuple(
@@ -72,6 +85,7 @@ class RunHistoryService:
                 RunHistoryWarning(path=warning.path, message=warning.message)
                 for warning in result.warnings
             ),
+            total_count=result.total_count,
         )
 
 

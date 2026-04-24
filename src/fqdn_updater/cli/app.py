@@ -18,22 +18,35 @@ from fqdn_updater.application.sync_orchestration import SyncExecutionResult, Syn
 from fqdn_updater.cli.panel import PanelController
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
 from fqdn_updater.domain.run_artifact import RunStatus, RunTrigger
+from fqdn_updater.domain.schedule import RuntimeScheduleConfig, ScheduleWeekday
 from fqdn_updater.domain.status_diagnostics import StatusDiagnosticsResult
 from fqdn_updater.infrastructure.config_repository import ConfigRepository
 from fqdn_updater.infrastructure.keenetic_rci_client import KeeneticRciClientFactory
 from fqdn_updater.infrastructure.raw_source_fetcher import HttpRawSourceFetcher
 from fqdn_updater.infrastructure.router_secret_resolver import EnvironmentFileSecretResolver
 from fqdn_updater.infrastructure.run_artifact_repository import RunArtifactRepository
+from fqdn_updater.infrastructure.run_lock import FileRunLockManager, RunLockError
 from fqdn_updater.infrastructure.run_logging import RunLoggerFactory
 from fqdn_updater.infrastructure.secret_env_file import SecretEnvFile
+from fqdn_updater.infrastructure.service_count_cache import (
+    CachingSourceLoadingService,
+    ServiceCountCacheRepository,
+    resolve_service_count_cache_path,
+)
+from fqdn_updater.infrastructure.systemd_scheduler import (
+    SystemdScheduleInstaller,
+    SystemdScheduleInstallResult,
+)
 
 app = typer.Typer(help="Synchronize managed FQDN object-groups on Keenetic routers.")
 config_app = typer.Typer(help="Configuration management commands.")
 router_app = typer.Typer(help="Router config management commands.")
 mapping_app = typer.Typer(help="Router/service mapping config management commands.")
+schedule_app = typer.Typer(help="Schedule management commands.")
 app.add_typer(config_app, name="config")
 app.add_typer(router_app, name="router")
 app.add_typer(mapping_app, name="mapping")
+app.add_typer(schedule_app, name="schedule")
 
 DEFAULT_CONFIG_PATH = Path("config.json")
 INIT_CONFIG_OPTION = typer.Option(
@@ -109,11 +122,28 @@ LIST_OUTPUT_OPTION = typer.Option(
     case_sensitive=False,
     help="Output format for list results.",
 )
+TRIGGER_OPTION = typer.Option(
+    RunTrigger.MANUAL,
+    "--trigger",
+    case_sensitive=False,
+    help="Run trigger label stored in logs and artifacts.",
+)
 ROUTER_TAGS_OPTION = typer.Option(None, "--tag", help="Router tag; repeatable.")
 ROUTER_ALLOWED_SOURCE_IPS_OPTION = typer.Option(
     None,
     "--allowed-source-ip",
     help="Allowed source IP or CIDR annotation; repeatable.",
+)
+SCHEDULE_TIME_OPTION = typer.Option(
+    None,
+    "--time",
+    help="Schedule time in HH:MM; repeatable.",
+)
+SCHEDULE_DAY_OPTION = typer.Option(
+    None,
+    "--day",
+    case_sensitive=False,
+    help="Weekly schedule day; repeatable.",
 )
 MAPPING_ROUTE_TARGET_TYPE_OPTION = typer.Option(
     ...,
@@ -139,25 +169,31 @@ def _config_management_service() -> ConfigManagementService:
     return ConfigManagementService(repository=_repository())
 
 
-def _dry_run_orchestrator() -> DryRunOrchestrator:
+def _schedule_installer() -> SystemdScheduleInstaller:
+    return SystemdScheduleInstaller()
+
+
+def _dry_run_orchestrator(*, config_path: Path, config: AppConfig) -> DryRunOrchestrator:
     return DryRunOrchestrator(
-        source_loader=SourceLoadingService(fetcher=HttpRawSourceFetcher()),
+        source_loader=_caching_source_loader(config_path=config_path, config=config),
         secret_resolver=EnvironmentFileSecretResolver(),
         client_factory=KeeneticRciClientFactory(),
         planner=ServiceSyncPlanner(),
         artifact_writer=RunArtifactRepository(),
         logger_factory=RunLoggerFactory(),
+        run_lock_manager=FileRunLockManager(),
     )
 
 
-def _sync_orchestrator() -> SyncOrchestrator:
+def _sync_orchestrator(*, config_path: Path, config: AppConfig) -> SyncOrchestrator:
     return SyncOrchestrator(
-        source_loader=SourceLoadingService(fetcher=HttpRawSourceFetcher()),
+        source_loader=_caching_source_loader(config_path=config_path, config=config),
         secret_resolver=EnvironmentFileSecretResolver(),
         client_factory=KeeneticRciClientFactory(),
         planner=ServiceSyncPlanner(),
         artifact_writer=RunArtifactRepository(),
         logger_factory=RunLoggerFactory(),
+        run_lock_manager=FileRunLockManager(),
     )
 
 
@@ -165,6 +201,21 @@ def _status_service() -> StatusDiagnosticsService:
     return StatusDiagnosticsService(
         secret_resolver=EnvironmentFileSecretResolver(),
         client_factory=KeeneticRciClientFactory(),
+    )
+
+
+def _caching_source_loader(
+    *,
+    config_path: Path,
+    config: AppConfig,
+) -> CachingSourceLoadingService:
+    return CachingSourceLoadingService(
+        source_loader=SourceLoadingService(fetcher=HttpRawSourceFetcher()),
+        cache_repository=ServiceCountCacheRepository(),
+        cache_path=resolve_service_count_cache_path(
+            config_path=config_path,
+            artifacts_dir=config.runtime.artifacts_dir,
+        ),
     )
 
 
@@ -309,23 +360,148 @@ def mapping_list_command(
         typer.echo(_render_mappings_human(mappings=mappings))
 
 
+@schedule_app.command("show")
+def schedule_show_command(
+    config: Path = CONFIG_MANAGEMENT_LIST_CONFIG_OPTION,
+    output: OutputMode = LIST_OUTPUT_OPTION,
+) -> None:
+    """Show the configured schedule and systemd deployment settings."""
+    try:
+        schedule = _validation_service().validate(path=config).runtime.schedule
+    except RuntimeError as exc:
+        _runtime_error_handler(exc)
+
+    if output is OutputMode.JSON:
+        typer.echo(_render_schedule_json(schedule=schedule))
+    else:
+        typer.echo(_render_schedule_human(schedule=schedule))
+
+
+@schedule_app.command("set-daily")
+def schedule_set_daily_command(
+    config: Path = CONFIG_MANAGEMENT_CONFIG_OPTION,
+    times: list[str] | None = SCHEDULE_TIME_OPTION,
+    timezone: str | None = typer.Option(
+        None,
+        "--timezone",
+        help="IANA timezone used in the systemd OnCalendar lines.",
+    ),
+) -> None:
+    """Persist a daily schedule in config.json."""
+    try:
+        existing_schedule = _config_management_service().get_schedule(path=config)
+        schedule = RuntimeScheduleConfig(
+            mode="daily",
+            times=list(times or []),
+            weekdays=[],
+            timezone=timezone or existing_schedule.timezone,
+            systemd=existing_schedule.systemd,
+        )
+        updated_schedule = _config_management_service().replace_schedule(
+            path=config,
+            schedule=schedule,
+        )
+    except RuntimeError as exc:
+        _runtime_error_handler(exc)
+    typer.echo(f"Schedule updated: mode={updated_schedule.mode.value} path={config}")
+
+
+@schedule_app.command("set-weekly")
+def schedule_set_weekly_command(
+    config: Path = CONFIG_MANAGEMENT_CONFIG_OPTION,
+    days: list[ScheduleWeekday] | None = SCHEDULE_DAY_OPTION,
+    times: list[str] | None = SCHEDULE_TIME_OPTION,
+    timezone: str | None = typer.Option(
+        None,
+        "--timezone",
+        help="IANA timezone used in the systemd OnCalendar lines.",
+    ),
+) -> None:
+    """Persist a weekly schedule in config.json."""
+    try:
+        existing_schedule = _config_management_service().get_schedule(path=config)
+        schedule = RuntimeScheduleConfig(
+            mode="weekly",
+            weekdays=[day.value for day in days or []],
+            times=list(times or []),
+            timezone=timezone or existing_schedule.timezone,
+            systemd=existing_schedule.systemd,
+        )
+        updated_schedule = _config_management_service().replace_schedule(
+            path=config,
+            schedule=schedule,
+        )
+    except RuntimeError as exc:
+        _runtime_error_handler(exc)
+    typer.echo(f"Schedule updated: mode={updated_schedule.mode.value} path={config}")
+
+
+@schedule_app.command("disable")
+def schedule_disable_command(
+    config: Path = CONFIG_MANAGEMENT_CONFIG_OPTION,
+) -> None:
+    """Disable the schedule in config.json."""
+    try:
+        existing_schedule = _config_management_service().get_schedule(path=config)
+        updated_schedule = _config_management_service().replace_schedule(
+            path=config,
+            schedule=RuntimeScheduleConfig(
+                mode="disabled",
+                times=[],
+                weekdays=[],
+                timezone=existing_schedule.timezone,
+                systemd=existing_schedule.systemd,
+            ),
+        )
+    except RuntimeError as exc:
+        _runtime_error_handler(exc)
+    typer.echo(f"Schedule updated: mode={updated_schedule.mode.value} path={config}")
+
+
+@schedule_app.command("install")
+def schedule_install_command(
+    config: Path = CONFIG_MANAGEMENT_LIST_CONFIG_OPTION,
+) -> None:
+    """Render and install systemd units from config.json."""
+    try:
+        validated_config = _validation_service().validate(path=config)
+        result = _schedule_installer().install(
+            config=validated_config,
+            config_path=config,
+        )
+    except RuntimeError as exc:
+        _runtime_error_handler(exc)
+    typer.echo(
+        _render_schedule_install_result(result=result, schedule=validated_config.runtime.schedule)
+    )
+
+
 @app.command("dry-run")
 def dry_run_command(
     config: Path = DRY_RUN_CONFIG_OPTION,
     output: OutputMode = DRY_RUN_OUTPUT_OPTION,
+    trigger: RunTrigger = TRIGGER_OPTION,
 ) -> None:
     """Run a read-only sync preview against configured routers."""
     try:
-        validated_config = _validation_service().validate(path=config)
+        validated_config = _config_with_resolved_runtime_paths(
+            config_path=config,
+            config=_validation_service().validate(path=config),
+        )
     except RuntimeError as exc:
         _runtime_error_handler(exc, code=40)
     _load_runtime_secret_env_file(config_path=config, config=validated_config)
 
     try:
-        result = _dry_run_orchestrator().run(
+        result = _dry_run_orchestrator(
+            config_path=config,
             config=validated_config,
-            trigger=RunTrigger.MANUAL,
+        ).run(
+            config=validated_config,
+            trigger=trigger,
         )
+    except RunLockError as exc:
+        _runtime_error_handler(exc, code=50)
     except RuntimeError as exc:
         _runtime_error_handler(exc, code=20)
 
@@ -340,19 +516,28 @@ def dry_run_command(
 def sync_command(
     config: Path = SYNC_CONFIG_OPTION,
     output: OutputMode = DRY_RUN_OUTPUT_OPTION,
+    trigger: RunTrigger = TRIGGER_OPTION,
 ) -> None:
     """Apply managed object-group changes against configured routers."""
     try:
-        validated_config = _validation_service().validate(path=config)
+        validated_config = _config_with_resolved_runtime_paths(
+            config_path=config,
+            config=_validation_service().validate(path=config),
+        )
     except RuntimeError as exc:
         _runtime_error_handler(exc, code=40)
     _load_runtime_secret_env_file(config_path=config, config=validated_config)
 
     try:
-        result = _sync_orchestrator().run(
+        result = _sync_orchestrator(
+            config_path=config,
             config=validated_config,
-            trigger=RunTrigger.MANUAL,
+        ).run(
+            config=validated_config,
+            trigger=trigger,
         )
+    except RunLockError as exc:
+        _runtime_error_handler(exc, code=50)
     except RuntimeError as exc:
         _runtime_error_handler(exc, code=20)
 
@@ -550,6 +735,40 @@ def _render_mappings_human(*, mappings: list[RouterServiceMappingConfig]) -> str
     return "\n".join(lines)
 
 
+def _render_schedule_human(*, schedule: RuntimeScheduleConfig) -> str:
+    times = ", ".join(schedule.times) if schedule.times else "-"
+    weekdays = ", ".join(day.value for day in schedule.weekdays) if schedule.weekdays else "-"
+    return "\n".join(
+        [
+            "Schedule: "
+            f"mode={schedule.mode.value} timezone={schedule.timezone} "
+            f"times={times} weekdays={weekdays}",
+            "Systemd: "
+            f"unit_name={schedule.systemd.unit_name} "
+            f"deployment_root={schedule.systemd.deployment_root} "
+            f"compose_service={schedule.systemd.compose_service}",
+        ]
+    )
+
+
+def _render_schedule_json(*, schedule: RuntimeScheduleConfig) -> str:
+    return json.dumps(schedule.model_dump(mode="json"), indent=2, sort_keys=True)
+
+
+def _render_schedule_install_result(
+    *,
+    result: SystemdScheduleInstallResult,
+    schedule: RuntimeScheduleConfig,
+) -> str:
+    return (
+        "Schedule installed: "
+        f"mode={schedule.mode.value} "
+        f"timer_action={result.timer_action} "
+        f"service_path={result.service_path} "
+        f"timer_path={result.timer_path}"
+    )
+
+
 def _render_dry_run_json(result: DryRunExecutionResult) -> str:
     return _render_operation_json(result=result)
 
@@ -655,6 +874,38 @@ def _load_runtime_secret_env_file(*, config_path: Path, config: AppConfig) -> No
         configured_path=config.runtime.secrets_env_file,
     )
     SecretEnvFile(path=secrets_env_file).load_into_environment()
+
+
+def _config_with_resolved_runtime_paths(*, config_path: Path, config: AppConfig) -> AppConfig:
+    runtime = config.runtime.model_copy(
+        update={
+            "artifacts_dir": str(
+                _resolve_config_relative_path(
+                    config_path=config_path,
+                    configured_path=config.runtime.artifacts_dir,
+                )
+            ),
+            "logs_dir": str(
+                _resolve_config_relative_path(
+                    config_path=config_path,
+                    configured_path=config.runtime.logs_dir,
+                )
+            ),
+            "state_dir": str(
+                _resolve_config_relative_path(
+                    config_path=config_path,
+                    configured_path=config.runtime.state_dir,
+                )
+            ),
+            "secrets_env_file": str(
+                _resolve_config_relative_path(
+                    config_path=config_path,
+                    configured_path=config.runtime.secrets_env_file,
+                )
+            ),
+        }
+    )
+    return config.model_copy(update={"runtime": runtime})
 
 
 def _resolve_config_relative_path(*, config_path: Path, configured_path: str) -> Path:

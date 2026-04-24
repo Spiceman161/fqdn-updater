@@ -13,8 +13,8 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 
 ## Current State
 
-- Current slice: `S23` — Panel Run History And Diagnostics
-- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation; `S11` — CLI Dry-Run Entry Point; `S12` — Managed Object-Group Apply Core; `S13` — Apply Orchestration And Sync CLI; `S14` — Route Binding Read And Apply; `S15` — Run Logging And Rich Failure Artifacts; `S16` — Status And Preconditions Diagnostics; `S17` — Config Management CLI; `S18` — Packaging And Scheduled Execution; `S19` — Mixed Domain And Subnet Source Groups; `S20` — Terminal Control Panel Skeleton; `S21` — Panel Password Generator And Secret Rotation; `S22` — WireGuard Interface Discovery For Panel; `S23` — Panel Run History And Diagnostics
+- Current slice: `S26` — Ubuntu 24.04 One-Command Bootstrap Installer
+- Completed slices: `S0` — Workflow state bootstrap; `S1` — Python CLI scaffold baseline; `S2` — Config domain model expansion; `S3` — Source registry scaffold; `S4` — Logging and run artifact scaffold; `S5` — RCI client contracts; `S6` — Workflow enforcement gates; `S7` — Fetch And Normalize Pipeline; `S8` — Deterministic Managed Diff Planning; `S9` — Read-Only Sync Orchestration; `S10` — RCI Read Transport Implementation; `S11` — CLI Dry-Run Entry Point; `S12` — Managed Object-Group Apply Core; `S13` — Apply Orchestration And Sync CLI; `S14` — Route Binding Read And Apply; `S15` — Run Logging And Rich Failure Artifacts; `S16` — Status And Preconditions Diagnostics; `S17` — Config Management CLI; `S18` — Packaging And Scheduled Execution; `S19` — Mixed Domain And Subnet Source Groups; `S20` — Terminal Control Panel Skeleton; `S21` — Panel Password Generator And Secret Rotation; `S22` — WireGuard Interface Discovery For Panel; `S23` — Panel Run History And Diagnostics; `S26` — Ubuntu 24.04 One-Command Bootstrap Installer
 - Next ready slice: `S24` — Panel Router And List Maintenance
 
 ## Backlog
@@ -47,3 +47,4 @@ Canonical slice state lives in `.codex/slices.json`. This document is the human-
 | S23 | done | Panel Run History And Diagnostics | Make the panel Runs screen useful for operators without hiding network or write side effects. |
 | S24 | ready | Panel Router And List Maintenance | Complete everyday config maintenance workflows inside the terminal panel. |
 | S25 | pending | Panel Operator Documentation And Deployment UX | Document the panel workflow, secrets env-file behavior, and Docker/systemd operational path. |
+| S26 | done | Ubuntu 24.04 One-Command Bootstrap Installer | Install FQDN-updater on a clean Ubuntu 24.04 host with one command. |

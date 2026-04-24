@@ -49,9 +49,14 @@ class RouteTargetDiscoveryService:
         self,
         *,
         router: RouterConfig,
+        password_override: str | None = None,
     ) -> RouteTargetDiscoveryResult:
         try:
-            password = self._secret_resolver.resolve(router)
+            password = (
+                password_override
+                if password_override is not None
+                else self._secret_resolver.resolve(router)
+            )
             client = self._client_factory.create(router=router, password=password)
             candidates = client.discover_wireguard_route_targets()
         except Exception as exc:
