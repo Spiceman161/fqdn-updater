@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
 
@@ -46,7 +46,7 @@ class RunLogger:
         status: str | None = None,
         message: str | None = None,
     ) -> None:
-        occurred_at = datetime.now(UTC)
+        occurred_at = datetime.now(timezone.utc)
         payload = {
             "timestamp": occurred_at.isoformat().replace("+00:00", "Z"),
             "run_id": self._run_id,

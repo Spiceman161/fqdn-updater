@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fqdn_updater.application.run_history import RunHistoryService
@@ -101,8 +101,8 @@ def _artifact(*, run_id: str) -> RunArtifact:
         trigger=RunTrigger.MANUAL,
         mode=RunMode.DRY_RUN,
         status=RunStatus.SUCCESS,
-        started_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-        finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+        started_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
         log_path=Path("data/logs") / f"{run_id}.log",
         router_results=[
             RouterRunResult(

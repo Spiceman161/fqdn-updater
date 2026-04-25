@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -1900,7 +1900,7 @@ def test_dry_run_never_calls_write_methods(monkeypatch, tmp_path) -> None:
         client_factory=client_factory,
         planner=ServiceSyncPlanner(),
         artifact_writer=artifact_writer,
-        now_provider=lambda: datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+        now_provider=lambda: datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
         run_id_factory=lambda: "run-103",
     )
     monkeypatch.setattr(cli_app_module, "_dry_run_orchestrator", lambda **_kwargs: orchestrator)
@@ -2144,8 +2144,8 @@ def _dry_run_result(
             trigger=RunTrigger.MANUAL,
             mode=RunMode.DRY_RUN,
             status=status,
-            started_at=datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-            finished_at=datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            started_at=datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             log_path=Path("data/logs") / f"{artifact_path.stem}.log",
             router_results=[
                 RouterRunResult(
@@ -2174,8 +2174,8 @@ def _sync_result(
             trigger=RunTrigger.MANUAL,
             mode=RunMode.APPLY,
             status=status,
-            started_at=datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-            finished_at=datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+            started_at=datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             log_path=Path("data/logs") / f"{artifact_path.stem}.log",
             router_results=[
                 RouterRunResult(

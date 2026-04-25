@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fqdn_updater.application.dry_run_orchestration import DryRunExecutionResult
@@ -74,7 +74,7 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp
                 artifact=_artifact(
                     run_id="run-001",
                     status=RunStatus.SUCCESS,
-                    finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+                    finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
                     service_results=(
                         ServiceRunResult(
                             service_key="telegram",
@@ -170,7 +170,7 @@ def test_runs_menu_supports_pagination_with_next_and_previous_actions(tmp_path) 
             artifact=_artifact(
                 run_id=f"run-{minute:03d}",
                 status=RunStatus.SUCCESS,
-                finished_at=datetime(2026, 4, 8, 13, minute, tzinfo=UTC),
+                finished_at=datetime(2026, 4, 8, 13, minute, tzinfo=timezone.utc),
                 service_results=(
                     ServiceRunResult(
                         service_key="telegram",
@@ -288,7 +288,7 @@ def _artifact(
         trigger=RunTrigger.MANUAL,
         mode=RunMode.DRY_RUN,
         status=status,
-        started_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
+        started_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
         finished_at=finished_at,
         log_path=Path("data/logs/run.log"),
         router_results=(
@@ -307,8 +307,8 @@ def _dry_run_result() -> DryRunExecutionResult:
         trigger=RunTrigger.MANUAL,
         mode=RunMode.DRY_RUN,
         status=RunStatus.PARTIAL,
-        started_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-        finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+        started_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
         log_path=Path("data/logs/run-123.log"),
         router_results=(
             RouterRunResult(

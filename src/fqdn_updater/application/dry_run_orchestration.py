@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
@@ -509,7 +509,7 @@ def _build_service_result_from_plan(plan: ServiceSyncPlan) -> ServiceRunResult:
 
 
 def _utc_now() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def _generate_run_id() -> str:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -87,7 +87,7 @@ class _RecordingSyncOrchestrator:
 
 
 def _sync_result(*, router_id: str = "router-1") -> SyncExecutionResult:
-    timestamp = datetime(2026, 4, 25, 12, 0, tzinfo=UTC)
+    timestamp = datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc)
     artifact = RunArtifact(
         run_id="run-sync",
         trigger=RunTrigger.MANUAL,

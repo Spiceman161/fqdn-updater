@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
@@ -56,8 +56,8 @@ def test_sync_orchestrator_applies_changes_and_saves_once_per_router() -> None:
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-101",
@@ -113,8 +113,8 @@ def test_sync_orchestrator_applies_sharded_large_service() -> None:
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-101-sharded",
@@ -206,8 +206,8 @@ def test_sync_orchestrator_cleans_stale_shard_route_when_service_shrinks() -> No
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-101-cleanup",
@@ -269,8 +269,8 @@ def test_sync_orchestrator_skips_writes_and_save_when_diff_is_empty() -> None:
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-102",
@@ -344,8 +344,8 @@ def test_sync_orchestrator_applies_mixed_service_static_routes_and_saves_once() 
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-107",
@@ -414,8 +414,8 @@ def test_sync_orchestrator_stops_current_router_after_write_failure_and_skips_re
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-103",
@@ -493,8 +493,8 @@ def test_sync_orchestrator_continues_other_routers_after_partial_failures() -> N
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-104",
@@ -554,8 +554,8 @@ def test_sync_orchestrator_marks_updated_services_failed_when_save_config_fails(
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-105",
@@ -617,8 +617,8 @@ def test_sync_orchestrator_applies_route_only_changes_and_saves() -> None:
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-106",
@@ -663,8 +663,8 @@ def test_sync_orchestrator_rejects_router_total_above_keenetic_fqdn_limit_before
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
-                datetime(2026, 4, 9, 10, 1, tzinfo=UTC),
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-107",

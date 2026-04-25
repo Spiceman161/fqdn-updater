@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -25,8 +25,8 @@ def test_run_artifact_model_dump_is_machine_readable_and_deterministic() -> None
         trigger=RunTrigger.MANUAL,
         mode=RunMode.DRY_RUN,
         status=RunStatus.PARTIAL,
-        started_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-        finished_at=datetime(2026, 4, 8, 13, 5, tzinfo=UTC),
+        started_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 4, 8, 13, 5, tzinfo=timezone.utc),
         log_path="data/logs/run-001.log",
         router_results=[
             RouterRunResult(
@@ -49,7 +49,7 @@ def test_run_artifact_model_dump_is_machine_readable_and_deterministic() -> None
                         failure_detail=FailureDetail(
                             step=RunStep.SOURCE_LOAD,
                             message="upstream timeout",
-                            occurred_at=datetime(2026, 4, 8, 13, 3, tzinfo=UTC),
+                            occurred_at=datetime(2026, 4, 8, 13, 3, tzinfo=timezone.utc),
                         ),
                     ),
                 ],
@@ -113,8 +113,8 @@ def test_run_artifact_rejects_finished_at_before_started_at() -> None:
             trigger=RunTrigger.SCHEDULED,
             mode=RunMode.APPLY,
             status=RunStatus.FAILED,
-            started_at=datetime(2026, 4, 8, 13, 5, tzinfo=UTC),
-            finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
+            started_at=datetime(2026, 4, 8, 13, 5, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
             log_path="data/logs/run-001.log",
         )
 

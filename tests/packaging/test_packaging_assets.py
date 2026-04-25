@@ -189,6 +189,11 @@ def test_install_script_validates_archive_before_deploy() -> None:
     assert 'deploy_release "${DOWNLOAD_RELEASE_DIR}"' in main_block
 
 
+def test_runtime_code_does_not_use_python_3_11_datetime_utc_alias() -> None:
+    for path in (ROOT / "src").rglob("*.py"):
+        assert "datetime import UTC" not in path.read_text(encoding="utf-8"), path
+
+
 def test_install_script_uses_clean_deploy_while_preserving_operator_state() -> None:
     install_script = _read("install.sh")
 

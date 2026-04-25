@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
@@ -128,9 +128,9 @@ class RunArtifactRepository:
 def _artifact_sort_key(artifact: StoredRunArtifact) -> tuple[float, str, str]:
     finished_at = artifact.artifact.finished_at
     if finished_at.tzinfo is None:
-        finished_at = finished_at.replace(tzinfo=UTC)
+        finished_at = finished_at.replace(tzinfo=timezone.utc)
     return (
-        finished_at.astimezone(UTC).timestamp(),
+        finished_at.astimezone(timezone.utc).timestamp(),
         artifact.artifact.run_id,
         artifact.path.name,
     )

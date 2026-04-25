@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -70,19 +70,19 @@ def test_list_recent_sorts_by_finished_at_then_run_id_then_filename_and_limits_r
 
     _write_artifact(
         artifacts_dir / "c.json",
-        _artifact(run_id="run-c", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC)),
+        _artifact(run_id="run-c", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc)),
     )
     _write_artifact(
         artifacts_dir / "b.json",
-        _artifact(run_id="run-b", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC)),
+        _artifact(run_id="run-b", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc)),
     )
     _write_artifact(
         artifacts_dir / "a.json",
-        _artifact(run_id="run-b", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC)),
+        _artifact(run_id="run-b", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc)),
     )
     _write_artifact(
         artifacts_dir / "d.json",
-        _artifact(run_id="run-a", finished_at=datetime(2026, 4, 8, 12, 59, tzinfo=UTC)),
+        _artifact(run_id="run-a", finished_at=datetime(2026, 4, 8, 12, 59, tzinfo=timezone.utc)),
     )
 
     result = repository.list_recent(artifacts_dir=artifacts_dir, limit=3)
@@ -90,9 +90,9 @@ def test_list_recent_sorts_by_finished_at_then_run_id_then_filename_and_limits_r
     assert [item.path.name for item in result.artifacts] == ["c.json", "b.json", "a.json"]
     assert [item.artifact.run_id for item in result.artifacts] == ["run-c", "run-b", "run-b"]
     assert [item.artifact.finished_at for item in result.artifacts] == [
-        datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-        datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-        datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
+        datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
     ]
     assert result.total_count == 4
 
@@ -103,19 +103,19 @@ def test_list_recent_supports_offset_for_pagination(tmp_path) -> None:
 
     _write_artifact(
         artifacts_dir / "d.json",
-        _artifact(run_id="run-d", finished_at=datetime(2026, 4, 8, 13, 3, tzinfo=UTC)),
+        _artifact(run_id="run-d", finished_at=datetime(2026, 4, 8, 13, 3, tzinfo=timezone.utc)),
     )
     _write_artifact(
         artifacts_dir / "c.json",
-        _artifact(run_id="run-c", finished_at=datetime(2026, 4, 8, 13, 2, tzinfo=UTC)),
+        _artifact(run_id="run-c", finished_at=datetime(2026, 4, 8, 13, 2, tzinfo=timezone.utc)),
     )
     _write_artifact(
         artifacts_dir / "b.json",
-        _artifact(run_id="run-b", finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=UTC)),
+        _artifact(run_id="run-b", finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc)),
     )
     _write_artifact(
         artifacts_dir / "a.json",
-        _artifact(run_id="run-a", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC)),
+        _artifact(run_id="run-a", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc)),
     )
 
     result = repository.list_recent(artifacts_dir=artifacts_dir, limit=2, offset=1)
@@ -141,7 +141,7 @@ def test_list_recent_reports_invalid_artifacts_as_warnings_without_failing(tmp_p
     artifacts_dir.mkdir()
     _write_artifact(
         artifacts_dir / "valid.json",
-        _artifact(run_id="run-valid", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=UTC)),
+        _artifact(run_id="run-valid", finished_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc)),
     )
     (artifacts_dir / "broken.json").write_text("{not json}", encoding="utf-8")
     (artifacts_dir / "invalid.json").write_text(
@@ -173,7 +173,7 @@ def test_list_recent_reports_invalid_artifacts_as_warnings_without_failing(tmp_p
 def _artifact(
     *,
     run_id: str = "run-001",
-    finished_at: datetime = datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+    finished_at: datetime = datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
 ) -> RunArtifact:
     return RunArtifact(
         run_id=run_id,

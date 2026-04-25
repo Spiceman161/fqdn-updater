@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fqdn_updater.application.dry_run_orchestration import DryRunOrchestrator
@@ -57,8 +57,8 @@ def test_dry_run_orchestrator_builds_plans_and_artifact_deterministically() -> N
         artifact_writer=artifact_writer,
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-                datetime(2026, 4, 8, 13, 5, tzinfo=UTC),
+                datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 8, 13, 5, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-001",
@@ -205,8 +205,8 @@ def test_dry_run_orchestrator_skips_disabled_and_unmanaged_mappings() -> None:
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-                datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+                datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-002",
@@ -266,8 +266,8 @@ def test_dry_run_orchestrator_marks_source_failures_per_service_and_keeps_other_
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-                datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+                datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-003",
@@ -351,8 +351,8 @@ def test_dry_run_orchestrator_tracks_mixed_service_static_routes_in_plans() -> N
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-                datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+                datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-001-mixed",
@@ -388,8 +388,8 @@ def test_dry_run_orchestrator_marks_router_secret_failure_for_all_services() -> 
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-                datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+                datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-004",
@@ -445,8 +445,8 @@ def test_dry_run_orchestrator_marks_read_failures_partial_and_preserves_order() 
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-                datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+                datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-005",
@@ -507,8 +507,8 @@ def test_dry_run_orchestrator_marks_route_only_changes_as_updated() -> None:
         artifact_writer=RecordingArtifactWriter(),
         now_provider=SequentialNowProvider(
             [
-                datetime(2026, 4, 8, 13, 0, tzinfo=UTC),
-                datetime(2026, 4, 8, 13, 1, tzinfo=UTC),
+                datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
             ]
         ),
         run_id_factory=lambda: "run-006",
