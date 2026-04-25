@@ -49,6 +49,12 @@ def is_service_static_route_comment(*, comment: str | None, service_key: str) ->
     return comment == prefix or comment.startswith(f"{prefix} ")
 
 
+def is_managed_static_route_comment(*, comment: str | None) -> bool:
+    if comment is None:
+        return False
+    return comment.startswith(MANAGED_STATIC_ROUTE_COMMENT_PREFIX)
+
+
 class StaticRouteSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -261,20 +267,30 @@ def build_static_route_diff(
     for route in all_actual_routes:
         actual_by_route_key.setdefault(route.route_key, []).append(route)
 
+    covered_by_other_service: dict[tuple[str, str, str, str | None], StaticRouteState] = {}
     for desired_route in desired_by_identity.values():
         overlapping_routes = actual_by_route_key.get(desired_route.route_key, ())
-        conflicting_routes = tuple(
+        routes_from_other_owners = tuple(
             route
             for route in overlapping_routes
             if not is_service_static_route_comment(comment=route.comment, service_key=service_key)
         )
-        if conflicting_routes:
-            conflict = conflicting_routes[0]
+        unmanaged_conflicts = tuple(
+            route
+            for route in routes_from_other_owners
+            if not is_managed_static_route_comment(comment=route.comment)
+        )
+        if unmanaged_conflicts:
+            conflict = unmanaged_conflicts[0]
             marker = conflict.comment or "no managed comment"
             raise ValueError(
-                "desired managed static route overlaps an unmanaged or differently "
-                f"managed route: {desired_route.network} via "
-                f"{desired_route.route_target_value} ({marker})"
+                "desired managed static route overlaps an unmanaged route: "
+                f"{desired_route.network} via {desired_route.route_target_value} ({marker})"
+            )
+        if routes_from_other_owners:
+            covered_by_other_service.setdefault(
+                desired_route.route_key,
+                sorted(routes_from_other_owners, key=lambda route: route.sort_key)[0],
             )
 
     managed_actual_routes = tuple(
@@ -291,6 +307,10 @@ def build_static_route_diff(
     for identity, desired_route in desired_by_identity.items():
         actual_route = actual_by_identity.get(identity)
         if actual_route is None:
+            shared_route = covered_by_other_service.get(desired_route.route_key)
+            if shared_route is not None:
+                unchanged.append(shared_route)
+                continue
             to_add.append(desired_route)
             continue
         if _route_options_match(desired_route=desired_route, actual_route=actual_route):

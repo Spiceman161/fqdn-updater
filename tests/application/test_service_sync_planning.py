@@ -379,6 +379,45 @@ def test_service_sync_planner_handles_mixed_typed_entries() -> None:
     assert plan.has_changes is True
 
 
+def test_service_sync_planner_keeps_service_plan_when_static_route_is_shared() -> None:
+    planner = ServiceSyncPlanner()
+    mapping = _mapping(service_key="discord", object_group_name="fqdn-discord")
+    shared_route = StaticRouteState(
+        network="162.158.0.0/15",
+        route_target_type="gateway",
+        route_target_value="10.0.0.1",
+        route_interface="Wireguard0",
+        auto=False,
+        exclusive=True,
+        comment="fqdn-updater:cloudflare",
+    )
+
+    plan = planner.plan(
+        mapping=mapping,
+        desired_entries=(
+            ObjectGroupEntry.from_domain("discord.com"),
+            ObjectGroupEntry.from_network("162.158.0.0/15"),
+        ),
+        actual_state=ObjectGroupState(name="fqdn-discord", entries=(), exists=True),
+        actual_route_binding=RouteBindingState(
+            object_group_name="fqdn-discord",
+            exists=True,
+            route_target_type="gateway",
+            route_target_value="10.0.0.1",
+            route_interface="Wireguard0",
+            auto=False,
+            exclusive=True,
+        ),
+        actual_static_routes=(shared_route,),
+    )
+
+    assert plan.object_group_diff.to_add == ("discord.com",)
+    assert plan.static_route_diff.to_add == ()
+    assert plan.static_route_diff.to_remove == ()
+    assert plan.static_route_diff.unchanged == (shared_route,)
+    assert plan.has_changes is True
+
+
 def test_service_sync_planner_skips_route_binding_for_subnet_only_services() -> None:
     planner = ServiceSyncPlanner()
     actual_state = ObjectGroupState(name="svc-telegram", entries=(), exists=False)

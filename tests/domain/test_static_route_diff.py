@@ -191,6 +191,33 @@ def test_build_static_route_diff_ignores_routes_without_matching_service_comment
     assert diff.has_changes is True
 
 
+def test_build_static_route_diff_skips_routes_already_managed_by_other_service() -> None:
+    desired_route = StaticRouteSpec(
+        service_key="discord",
+        network="162.158.0.0/15",
+        route_target_type="interface",
+        route_target_value="Wireguard1",
+        comment="fqdn-updater:discord Discord",
+    )
+    existing_route = StaticRouteState(
+        network="162.158.0.0/15",
+        route_target_type="interface",
+        route_target_value="Wireguard1",
+        comment="fqdn-updater:cloudflare Cloudflare",
+    )
+
+    diff = build_static_route_diff(
+        service_key="discord",
+        desired_routes=(desired_route,),
+        actual_routes=(existing_route,),
+    )
+
+    assert diff.to_add == ()
+    assert diff.to_remove == ()
+    assert diff.unchanged == (existing_route,)
+    assert diff.has_changes is False
+
+
 def test_build_static_route_diff_rejects_overlapping_unmanaged_routes() -> None:
     desired_route = StaticRouteSpec(
         service_key="telegram",
@@ -214,6 +241,6 @@ def test_build_static_route_diff_rejects_overlapping_unmanaged_routes() -> None:
             ),
         )
     except ValueError as exc:
-        assert "overlaps an unmanaged or differently managed route" in str(exc)
+        assert "overlaps an unmanaged route" in str(exc)
     else:
         raise AssertionError("expected overlapping unmanaged route to be rejected")
