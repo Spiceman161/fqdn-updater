@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from fqdn_updater.domain.config_schema import RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
 from fqdn_updater.domain.schedule import RuntimeScheduleConfig
+from fqdn_updater.domain.source_registry import builtin_service_definitions
 from fqdn_updater.infrastructure.config_repository import ConfigRepository
 
 
@@ -35,11 +37,54 @@ def normalize_rci_url_input(value: str) -> str:
     )
 
 
+@dataclass(frozen=True)
+class BuiltinServiceSyncResult:
+    config: AppConfig
+    added_service_keys: tuple[str, ...]
+
+
 class ConfigManagementService:
     """Manage persisted router and mapping config entries."""
 
     def __init__(self, repository: ConfigRepository) -> None:
         self._repository = repository
+
+    def sync_builtin_services(self, *, path: Path) -> BuiltinServiceSyncResult:
+        config = self._repository.load(path=path)
+        builtin_services = builtin_service_definitions()
+        builtin_keys = {service.key for service in builtin_services}
+        current_by_key = {service.key: service for service in config.services}
+        added_service_keys = tuple(
+            service.key for service in builtin_services if service.key not in current_by_key
+        )
+
+        custom_services = [
+            service for service in config.services if service.key not in builtin_keys
+        ]
+        merged_services = [
+            builtin_service.model_copy(
+                update={"enabled": current_by_key[builtin_service.key].enabled}
+            )
+            if builtin_service.key in current_by_key
+            else builtin_service
+            for builtin_service in builtin_services
+        ] + custom_services
+        payload = config.model_dump(mode="json")
+        merged_service_payloads = [service.model_dump(mode="json") for service in merged_services]
+        if payload["services"] == merged_service_payloads:
+            return BuiltinServiceSyncResult(
+                config=config,
+                added_service_keys=added_service_keys,
+            )
+
+        payload["services"] = merged_service_payloads
+
+        updated_config = self._repository.validate_payload(path=path, payload=payload)
+        self._repository.overwrite(path=path, config=updated_config)
+        return BuiltinServiceSyncResult(
+            config=updated_config,
+            added_service_keys=added_service_keys,
+        )
 
     def add_router(
         self,

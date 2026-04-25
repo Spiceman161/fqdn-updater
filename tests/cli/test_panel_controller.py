@@ -1,15 +1,27 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 import fqdn_updater.cli.panel as panel_module
 from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryResult
+from fqdn_updater.application.sync_orchestration import SyncExecutionResult
 from fqdn_updater.domain.config_schema import AppConfig
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
+from fqdn_updater.domain.run_artifact import (
+    RouterResultStatus,
+    RouterRunResult,
+    RunArtifact,
+    RunMode,
+    RunStatus,
+    RunTrigger,
+    ServiceResultStatus,
+    ServiceRunResult,
+)
 from fqdn_updater.domain.status_diagnostics import (
     OverallDiagnosticStatus,
     RouterDiagnosticStatus,
@@ -64,6 +76,48 @@ class _RecordingStatusService:
         return self.result
 
 
+class _RecordingSyncOrchestrator:
+    def __init__(self, result: SyncExecutionResult) -> None:
+        self.result = result
+        self.calls: list[tuple[AppConfig, RunTrigger]] = []
+
+    def run(self, *, config: AppConfig, trigger: RunTrigger) -> SyncExecutionResult:
+        self.calls.append((config, trigger))
+        return self.result
+
+
+def _sync_result(*, router_id: str = "router-1") -> SyncExecutionResult:
+    timestamp = datetime(2026, 4, 25, 12, 0, tzinfo=UTC)
+    artifact = RunArtifact(
+        run_id="run-sync",
+        trigger=RunTrigger.MANUAL,
+        mode=RunMode.APPLY,
+        status=RunStatus.SUCCESS,
+        started_at=timestamp,
+        finished_at=timestamp,
+        log_path=Path("data/logs/run-sync.log"),
+        router_results=[
+            RouterRunResult(
+                router_id=router_id,
+                status=RouterResultStatus.UPDATED,
+                service_results=[
+                    ServiceRunResult(
+                        service_key="telegram",
+                        object_group_name="fqdn-telegram",
+                        status=ServiceResultStatus.UPDATED,
+                        added_count=1,
+                    )
+                ],
+            )
+        ],
+    )
+    return SyncExecutionResult(
+        artifact=artifact,
+        artifact_path=Path("data/artifacts/run-sync.json"),
+        plans=(),
+    )
+
+
 def test_main_menu_passes_dashboard_hint_lines_to_prompt(tmp_path) -> None:
     prompts = ScriptedPromptAdapter(select_answers=["exit"])
     controller, console = make_panel_controller(tmp_path, prompts=prompts)
@@ -74,6 +128,26 @@ def test_main_menu_passes_dashboard_hint_lines_to_prompt(tmp_path) -> None:
     output = console.export_text()
     assert "Подсказка" not in output
     assert prompts.select_calls[0]["hint_lines"] == panel_module.MAIN_MENU_HINT_LINES
+
+
+def test_panel_run_adds_missing_builtin_services_to_existing_config(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["exit"])
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
+
+    controller.run()
+
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    service_keys = [service["key"] for service in payload["services"]]
+    assert service_keys[:5] == [
+        "anime",
+        "block",
+        "block_p2p_streaming",
+        "block_vpn_proxy_privacy",
+        "block_dev_hosting_security",
+    ]
+    assert "geoblock_ai" in service_keys
+    assert service_keys.index("news") < service_keys.index("cloudflare")
 
 
 def test_dashboard_renders_meta_service_as_meta_whatsapp(tmp_path) -> None:
@@ -491,6 +565,69 @@ def test_add_router_service_selection_uses_cached_counts_without_source_reload(
     assert checkbox_call["choices"][0]["title"].endswith("|     101 |       3 |       1")
     assert checkbox_call["choices"][1]["title"].endswith("|       8 |      11 |       0")
     assert checkbox_call["choices"][2]["title"].endswith("|      22 |       0 |       4")
+
+
+def test_add_router_service_selection_refreshes_incomplete_cached_counts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        text_answers=[
+            "Router 1",
+            "api_updater",
+            "https://router-1.example/rci/",
+        ],
+        checkbox_answers=[[]],
+        confirm_answers=[True, True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        services=[
+            {
+                "key": "telegram",
+                "source_urls": ["https://example.com/telegram.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "block",
+                "source_urls": ["https://example.com/block.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: "Aa1!bcdefghijklmnopq"
+    )
+    source_loading_service = ScriptedSourceLoadingService(
+        make_source_load_report(
+            loaded={
+                "block": (
+                    ObjectGroupEntry.from_domain("one.example"),
+                    ObjectGroupEntry.from_domain("two.example"),
+                ),
+            }
+        )
+    )
+    controller._source_loading_service = source_loading_service  # type: ignore[attr-defined]
+    cache_path = controller._service_count_cache_path(  # type: ignore[attr-defined]
+        config=controller._load_config()  # type: ignore[attr-defined]
+    )
+    ServiceCountCacheRepository().write(
+        path=cache_path,
+        counts={
+            "telegram": ServiceEntryCountSnapshot(domains=101, ipv4=3, ipv6=1),
+        },
+    )
+
+    controller._add_router()
+
+    assert source_loading_service.calls == [["telegram", "block"]]
+    checkbox_call = prompts.checkbox_calls[0]
+    assert checkbox_call["choices"][0]["title"].endswith("|     101 |       3 |       1")
+    assert checkbox_call["choices"][1]["title"].endswith("|       2 |       0 |       0")
 
 
 def test_add_router_creates_config_secret_and_default_mappings(tmp_path, monkeypatch) -> None:
@@ -1008,7 +1145,7 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
     tmp_path,
 ) -> None:
     prompts = ScriptedPromptAdapter(
-        select_answers=["router-1", "Wireguard7"],
+        select_answers=["router-1", "Wireguard7", "back"],
         checkbox_answers=[["telegram", "google_ai", "youtube"]],
         text_answers=[],
         confirm_answers=[False, True],
@@ -1148,6 +1285,102 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
             "service_key": "youtube",
         },
     ]
+
+
+def test_lists_menu_can_run_sync_for_selected_router_after_save(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1", "Wireguard7", "sync-router"],
+        checkbox_answers=[["telegram"]],
+        confirm_answers=[True],
+    )
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            },
+            {
+                "id": "router-2",
+                "name": "Router 2",
+                "rci_url": "https://router-2.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_TWO_SECRET",
+                "enabled": True,
+            },
+        ],
+        services=[
+            {
+                "key": "telegram",
+                "source_urls": ["https://example.com/telegram.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+        ],
+        mappings=[
+            {
+                "router_id": "router-1",
+                "service_key": "telegram",
+                "object_group_name": "fqdn-telegram",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+            },
+            {
+                "router_id": "router-2",
+                "service_key": "telegram",
+                "object_group_name": "fqdn-telegram",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard9",
+                "managed": True,
+            },
+        ],
+    )
+    SecretEnvFile(path=tmp_path / ".env.secrets").write_value(
+        key="ROUTER_ONE_SECRET",
+        value="existing-secret",
+    )
+    controller._route_target_discovery_service = _FakeDiscoveryService(  # type: ignore[attr-defined]
+        RouteTargetDiscoveryResult(
+            router_id="router-1",
+            candidates=(
+                RouteTargetCandidate(
+                    value="Wireguard7",
+                    display_name="Wireguard7",
+                    status="up",
+                    detail="type=Wireguard",
+                    connected=True,
+                ),
+            ),
+        )
+    )
+    sync_orchestrator = _RecordingSyncOrchestrator(result=_sync_result())
+    controller._sync_orchestrator = sync_orchestrator  # type: ignore[attr-defined]
+    controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
+
+    controller._lists_menu()
+
+    assert prompts.select_calls[-1]["message"] == "Списки и маршруты сохранены"
+    assert prompts.select_calls[-1]["choice_titles"] == [
+        "Запустить обновление на этом маршрутизаторе",
+        "Вернуться без запуска",
+    ]
+    assert len(sync_orchestrator.calls) == 1
+    sync_config, trigger = sync_orchestrator.calls[0]
+    assert trigger is RunTrigger.MANUAL
+    assert [router.id for router in sync_config.routers] == ["router-1"]
+    assert {mapping.router_id for mapping in sync_config.mappings} == {"router-1"}
+    assert all(Path(path).is_absolute() for path in (sync_config.runtime.artifacts_dir,))
+
+    output = console.export_text()
+    assert "Sync: run_id=run-sync status=success artifact=data/artifacts/run-sync.json" in output
+    assert "router-1" in output
+    assert "changed=1 failed=0" in output
 
 
 def test_edit_router_switches_password_file_to_env_and_clears_password_file(

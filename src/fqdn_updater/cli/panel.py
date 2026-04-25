@@ -29,6 +29,7 @@ from fqdn_updater.application.run_history import RunHistoryResult, RunHistorySer
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.application.source_loading import SourceLoadingService
 from fqdn_updater.application.status_diagnostics import StatusDiagnosticsService
+from fqdn_updater.application.sync_orchestration import SyncExecutionResult, SyncOrchestrator
 from fqdn_updater.cli.panel_prompts import (
     CheckboxTableMeta,
     PromptAdapter,
@@ -87,6 +88,24 @@ DISCOVERY_ERROR_MESSAGE_LIMIT = 280
 SERVICE_SELECTION_SERVICE_WIDTH = 22
 SERVICE_SELECTION_COUNT_WIDTH = 7
 SERVICE_DISPLAY_LABELS = {
+    "block": "block (full)",
+    "block_p2p_streaming": "block: p2p/media",
+    "block_vpn_proxy_privacy": "block: vpn/privacy",
+    "block_dev_hosting_security": "block: dev/hosting",
+    "block_finance_shopping": "block: finance/shop",
+    "block_social_creators": "block: social/media",
+    "block_news_politics": "block: news/politics",
+    "block_other": "block: other",
+    "geoblock": "geoblock (full)",
+    "geoblock_ai": "geo: AI tools",
+    "geoblock_dev_cloud_saas": "geo: dev/SaaS",
+    "geoblock_media_games": "geo: media/games",
+    "geoblock_shopping_travel": "geo: shopping/travel",
+    "geoblock_enterprise_hardware": "geo: enterprise",
+    "geoblock_security_networking": "geo: security/net",
+    "geoblock_finance_payments": "geo: payments",
+    "geoblock_health_reference": "geo: health/ref",
+    "geoblock_other": "geo: other",
     "meta": "meta (whatsapp)",
 }
 MAIN_MENU_HINT_LINES = (
@@ -224,10 +243,20 @@ class PanelController:
             logger_factory=RunLoggerFactory(),
             run_lock_manager=FileRunLockManager(),
         )
+        self._sync_orchestrator = SyncOrchestrator(
+            source_loader=self._source_loading_service,
+            secret_resolver=self._secret_resolver,
+            client_factory=self._client_factory,
+            planner=ServiceSyncPlanner(),
+            artifact_writer=self._artifact_repository,
+            logger_factory=RunLoggerFactory(),
+            run_lock_manager=FileRunLockManager(),
+        )
         self._password_generator = RciPasswordGenerator()
 
     def run(self) -> None:
         self._ensure_config_exists()
+        self._management_service.sync_builtin_services(path=self._config_path)
         while True:
             config = self._load_config()
             self._render_dashboard(config=config)
@@ -810,7 +839,22 @@ class PanelController:
             mappings=full_mapping_payloads,
         )
         self._console.print("[green]Списки и маршруты сохранены.[/green]")
-        self._pause()
+        choice = self._prompts.select(
+            message="Списки и маршруты сохранены",
+            choices=[
+                PromptChoice("Запустить обновление на этом маршрутизаторе", "sync-router"),
+                PromptChoice("Вернуться без запуска", "back"),
+            ],
+            default="sync-router",
+            hint_lines=(
+                "Команда применит managed mappings только выбранного маршрутизатора.",
+                "Перед записью будет прочитано текущее состояние Keenetic.",
+            ),
+        )
+        if choice == "sync-router":
+            self._run_sync_for_router(router_id=router.id)
+        elif choice == "back":
+            self._pause()
 
     def _runs_menu(self) -> None:
         page_index = 0
@@ -1165,7 +1209,8 @@ class PanelController:
 
         cache_path = self._service_count_cache_path(config=config)
         cached_counts = self._service_count_cache_repository.read(path=cache_path)
-        if cached_counts:
+        enabled_service_keys = {service.key for service in enabled_services}
+        if cached_counts and enabled_service_keys.issubset(cached_counts):
             return {
                 service.key: _service_entry_counts_from_snapshot(cached_counts.get(service.key))
                 for service in enabled_services
@@ -1175,6 +1220,12 @@ class PanelController:
         report = self._service_count_source_loader(config=config).load_enabled_services(
             enabled_services
         )
+        updated_counts = self._service_count_cache_repository.read(path=cache_path)
+        if updated_counts:
+            return {
+                service.key: _service_entry_counts_from_snapshot(updated_counts.get(service.key))
+                for service in enabled_services
+            }
         return _service_entry_counts_from_report(
             services=enabled_services,
             report=report,
@@ -1603,6 +1654,26 @@ class PanelController:
         self._render_dry_run_result(result=result)
         self._pause()
 
+    def _run_sync_for_router(self, *, router_id: str) -> None:
+        config = self._config_with_resolved_runtime_paths(config=self._load_config())
+        router_config = _config_for_router(config=config, router_id=router_id)
+        try:
+            self._load_runtime_secret_env_file(config=router_config)
+            orchestrator = self._sync_orchestrator
+            if isinstance(orchestrator, SyncOrchestrator):
+                orchestrator = self._build_sync_orchestrator(config=router_config)
+            result = orchestrator.run(
+                config=router_config,
+                trigger=RunTrigger.MANUAL,
+            )
+        except RuntimeError as exc:
+            self._console.print(f"[red]Sync failed:[/red] {exc}")
+            self._pause()
+            return
+
+        self._render_sync_result(result=result)
+        self._pause()
+
     def _render_status_result(self, *, result: StatusDiagnosticsResult) -> None:
         table = Table(show_header=True, header_style="bold white")
         table.add_column("Маршрутизатор")
@@ -1650,6 +1721,36 @@ class PanelController:
 
         title = (
             f"Dry-run: run_id={artifact.run_id} status={artifact.status.value} "
+            f"artifact={result.artifact_path}"
+        )
+        self._console.print(Panel(table, title=title, border_style="bright_cyan"))
+
+    def _render_sync_result(self, *, result: SyncExecutionResult) -> None:
+        artifact = result.artifact
+        table = Table(show_header=True, header_style="bold white")
+        table.add_column("Маршрутизатор")
+        table.add_column("Статус")
+        table.add_column("Сервисов")
+        table.add_column("Summary")
+        for router in artifact.router_results:
+            changed_services = sum(
+                service.added_count > 0 or service.removed_count > 0 or service.route_changed
+                for service in router.service_results
+            )
+            failed_services = sum(
+                service.error_message is not None for service in router.service_results
+            )
+            table.add_row(
+                router.router_id,
+                router.status.value,
+                str(len(router.service_results)),
+                f"changed={changed_services} failed={failed_services}",
+            )
+        if not artifact.router_results:
+            table.add_row("[dim]нет[/dim]", "-", "-", "-")
+
+        title = (
+            f"Sync: run_id={artifact.run_id} status={artifact.status.value} "
             f"artifact={result.artifact_path}"
         )
         self._console.print(Panel(table, title=title, border_style="bright_cyan"))
@@ -1705,6 +1806,17 @@ class PanelController:
 
     def _build_dry_run_orchestrator(self, *, config: AppConfig) -> DryRunOrchestrator:
         return DryRunOrchestrator(
+            source_loader=self._service_count_source_loader(config=config),
+            secret_resolver=self._secret_resolver,
+            client_factory=self._client_factory,
+            planner=ServiceSyncPlanner(),
+            artifact_writer=self._artifact_repository,
+            logger_factory=RunLoggerFactory(),
+            run_lock_manager=FileRunLockManager(),
+        )
+
+    def _build_sync_orchestrator(self, *, config: AppConfig) -> SyncOrchestrator:
+        return SyncOrchestrator(
             source_loader=self._service_count_source_loader(config=config),
             secret_resolver=self._secret_resolver,
             client_factory=self._client_factory,
@@ -1794,6 +1906,18 @@ def _find_router(*, config: AppConfig, router_id: str) -> RouterConfig | None:
         if router.id == router_id:
             return router
     return None
+
+
+def _config_for_router(*, config: AppConfig, router_id: str) -> AppConfig:
+    router = _find_router(config=config, router_id=router_id)
+    if router is None:
+        raise RuntimeError(f"Router '{router_id}' does not exist")
+    return config.model_copy(
+        update={
+            "routers": [router],
+            "mappings": [mapping for mapping in config.mappings if mapping.router_id == router_id],
+        }
+    )
 
 
 def _partition_router_mappings(
