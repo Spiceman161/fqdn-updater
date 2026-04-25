@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from enum import StrEnum
 from pathlib import Path
 from typing import NoReturn
 
@@ -16,6 +15,7 @@ from fqdn_updater.application.source_loading import SourceLoadingService
 from fqdn_updater.application.status_diagnostics import StatusDiagnosticsService
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult, SyncOrchestrator
 from fqdn_updater.cli.panel import PanelController
+from fqdn_updater.domain._enum import StrEnum
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
 from fqdn_updater.domain.run_artifact import RunStatus, RunTrigger
 from fqdn_updater.domain.schedule import RuntimeScheduleConfig, ScheduleWeekday

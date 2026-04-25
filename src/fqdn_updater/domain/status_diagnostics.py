@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from enum import StrEnum
-
 from pydantic import BaseModel, ConfigDict, Field
 
+from fqdn_updater.domain._enum import StrEnum
 from fqdn_updater.domain.run_artifact import RunStep
 
 

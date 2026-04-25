@@ -21,7 +21,7 @@ It is built for a small VPS or home server: configure routers and service lists 
 
 ## Installation
 
-On a clean Ubuntu 24.04 host:
+On a clean Ubuntu 22.04 or later host:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash

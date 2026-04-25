@@ -109,6 +109,9 @@ def test_install_script_covers_expected_installation_contract() -> None:
         "domaingo",
         "docker-compose-plugin",
         "systemctl enable --now docker",
+        "require_ubuntu_22_or_later",
+        "This installer supports Ubuntu 22.04 and later only.",
+        "${VERSION_CODENAME} stable",
         '"${GITHUB_API_URL}/releases/latest"',
         'git ls-remote --tags --refs "https://github.com/${REPOSITORY_SLUG}.git"',
         '"${VENV_DIR}/bin/fqdn-updater" init --config "${CONFIG_PATH}"',
@@ -119,6 +122,9 @@ def test_install_script_covers_expected_installation_contract() -> None:
         'find "${INSTALL_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +',
     ]:
         assert text in install_script, text
+
+    assert "Ubuntu 24.04 only" not in install_script
+    assert "noble stable" not in install_script
 
 
 def test_install_script_uses_clean_deploy_while_preserving_operator_state() -> None:

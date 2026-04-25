@@ -62,7 +62,7 @@ require_root() {
     fi
 }
 
-require_ubuntu_24_04() {
+require_ubuntu_22_or_later() {
     if [[ ! -r /etc/os-release ]]; then
         fail "Cannot detect operating system."
     fi
@@ -70,8 +70,20 @@ require_ubuntu_24_04() {
     # shellcheck disable=SC1091
     . /etc/os-release
 
-    if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "24.04" ]]; then
-        fail "This installer supports Ubuntu 24.04 only."
+    if [[ "${ID:-}" != "ubuntu" ]]; then
+        fail "This installer supports Ubuntu 22.04 and later only."
+    fi
+
+    local version_major="${VERSION_ID%%.*}"
+    local version_minor="${VERSION_ID#*.}"
+    version_minor="${version_minor%%.*}"
+
+    if [[ ! "${version_major}" =~ ^[0-9]+$ || ! "${version_minor}" =~ ^[0-9]+$ ]]; then
+        fail "Cannot detect supported Ubuntu version."
+    fi
+
+    if (( version_major < 22 || (version_major == 22 && version_minor < 4) )); then
+        fail "This installer supports Ubuntu 22.04 and later only."
     fi
 }
 
@@ -95,6 +107,10 @@ install_base_packages() {
 }
 
 install_docker_repository() {
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    [[ -n "${VERSION_CODENAME:-}" ]] || fail "Cannot detect Ubuntu codename."
+
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" -o /etc/apt/keyrings/docker.asc
     chmod a+r /etc/apt/keyrings/docker.asc
@@ -103,7 +119,7 @@ install_docker_repository() {
     architecture="$(dpkg --print-architecture)"
 
     cat > /etc/apt/sources.list.d/docker.list <<EOF
-deb [arch=${architecture} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable
+deb [arch=${architecture} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable
 EOF
 }
 
@@ -289,7 +305,7 @@ main() {
     trap cleanup EXIT
     parse_args "$@"
     require_root
-    require_ubuntu_24_04
+    require_ubuntu_22_or_later
     require_systemd
 
     TEMP_DIR="$(mktemp -d)"

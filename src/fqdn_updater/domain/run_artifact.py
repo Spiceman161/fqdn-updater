@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from fqdn_updater.domain._enum import StrEnum
 
 
 class RunMode(StrEnum):

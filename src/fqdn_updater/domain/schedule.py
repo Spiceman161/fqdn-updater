@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from enum import StrEnum
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from fqdn_updater.domain._enum import StrEnum
 
 _TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _WEEKDAY_ORDER = {

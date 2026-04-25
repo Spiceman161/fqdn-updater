@@ -21,7 +21,7 @@
 
 ## Установка
 
-На чистой Ubuntu 24.04:
+На чистой Ubuntu 22.04 и новее:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash

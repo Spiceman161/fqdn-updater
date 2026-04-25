@@ -1,6 +1,6 @@
 # Установка и эксплуатация
 
-## Ubuntu 24.04
+## Ubuntu 22.04+
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash
