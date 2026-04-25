@@ -104,6 +104,7 @@ def test_install_script_covers_expected_installation_contract() -> None:
         'readonly REPOSITORY_OWNER="Spiceman161"',
         'readonly REPOSITORY_NAME="fqdn-updater"',
         'readonly REPOSITORY_SLUG="${REPOSITORY_OWNER}/${REPOSITORY_NAME}"',
+        'readonly DEFAULT_BRANCH="main"',
         "/opt/fqdn-updater",
         "/usr/local/bin/fqdn-updater",
         "domaingo",
@@ -114,7 +115,8 @@ def test_install_script_covers_expected_installation_contract() -> None:
         "This installer supports Ubuntu 22.04 and later only.",
         "${VERSION_CODENAME} stable",
         '"${GITHUB_API_URL}/releases/latest"',
-        'git ls-remote --tags --refs "https://github.com/${REPOSITORY_SLUG}.git"',
+        'printf \'heads/%s\\n\' "${DEFAULT_BRANCH}"',
+        'archive/refs/${release_ref}.tar.gz',
         '"${VENV_DIR}/bin/fqdn-updater" init --config "${CONFIG_PATH}"',
         '"${VENV_DIR}/bin/fqdn-updater" schedule set-daily \\',
         '"${VENV_DIR}/bin/fqdn-updater" schedule install --config "${CONFIG_PATH}"',
@@ -133,7 +135,7 @@ def test_install_script_preserves_existing_docker_runtime() -> None:
 
     runtime_check_start = install_script.index("docker_runtime_available()")
     install_start = install_script.index("install_docker_packages()")
-    install_end = install_script.index("resolve_release_version()")
+    install_end = install_script.index("resolve_release_ref()")
     runtime_check_block = install_script[runtime_check_start:install_start]
     install_block = install_script[install_start:install_end]
 
@@ -149,6 +151,20 @@ def test_install_script_preserves_existing_docker_runtime() -> None:
         "apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin "
         "docker-compose-plugin" in install_block
     )
+
+
+def test_install_script_installs_main_when_no_github_release_exists() -> None:
+    install_script = _read("install.sh")
+
+    resolve_start = install_script.index("resolve_release_ref()")
+    download_start = install_script.index("download_release_tarball()")
+    resolve_block = install_script[resolve_start:download_start]
+
+    assert 'printf \'tags/%s\\n\' "${RELEASE_VERSION}"' in resolve_block
+    assert '"${GITHUB_API_URL}/releases/latest")' in resolve_block
+    assert 'printf \'tags/%s\\n\' "${latest_version}"' in resolve_block
+    assert 'printf \'heads/%s\\n\' "${DEFAULT_BRANCH}"' in resolve_block
+    assert "git ls-remote" not in resolve_block
 
 
 def test_install_script_uses_clean_deploy_while_preserving_operator_state() -> None:

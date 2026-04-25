@@ -5,6 +5,7 @@ readonly REPOSITORY_OWNER="Spiceman161"
 readonly REPOSITORY_NAME="fqdn-updater"
 readonly REPOSITORY_SLUG="${REPOSITORY_OWNER}/${REPOSITORY_NAME}"
 readonly GITHUB_API_URL="https://api.github.com/repos/${REPOSITORY_SLUG}"
+readonly DEFAULT_BRANCH="main"
 readonly INSTALL_DIR="/opt/fqdn-updater"
 readonly VENV_DIR="${INSTALL_DIR}/.venv"
 readonly CONFIG_PATH="${INSTALL_DIR}/config.json"
@@ -146,37 +147,35 @@ install_docker_packages() {
     docker_runtime_available || fail "Docker with Compose plugin is required."
 }
 
-resolve_release_version() {
+resolve_release_ref() {
     if [[ -n "${RELEASE_VERSION}" ]]; then
-        printf '%s\n' "${RELEASE_VERSION}"
+        printf 'tags/%s\n' "${RELEASE_VERSION}"
         return
     fi
 
-    if curl \
+    local latest_release_json
+    if latest_release_json="$(curl \
         -fsSL \
         -H "Accept: application/vnd.github+json" \
         -H "User-Agent: fqdn-updater-installer" \
-        "${GITHUB_API_URL}/releases/latest" \
-        | python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])'; then
+        "${GITHUB_API_URL}/releases/latest")"; then
+        local latest_version
+        latest_version="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])' \
+            <<< "${latest_release_json}")"
+        printf 'tags/%s\n' "${latest_version}"
         return
     fi
 
-    local fallback_version
-    fallback_version="$(git ls-remote --tags --refs "https://github.com/${REPOSITORY_SLUG}.git" \
-        | awk '{ sub("refs/tags/", "", $2); print $2 }' \
-        | sort -V \
-        | tail -n 1)"
-    [[ -n "${fallback_version}" ]] || fail "No GitHub Release or git tag found for ${REPOSITORY_SLUG}."
-    printf '%s\n' "${fallback_version}"
+    printf 'heads/%s\n' "${DEFAULT_BRANCH}"
 }
 
 download_release_tarball() {
-    local version="$1"
+    local release_ref="$1"
     local archive_path="${TEMP_DIR}/release.tar.gz"
     local extract_dir="${TEMP_DIR}/release"
 
     mkdir -p "${extract_dir}"
-    curl -fsSL "https://github.com/${REPOSITORY_SLUG}/archive/refs/tags/${version}.tar.gz" -o "${archive_path}"
+    curl -fsSL "https://github.com/${REPOSITORY_SLUG}/archive/refs/${release_ref}.tar.gz" -o "${archive_path}"
     tar -xzf "${archive_path}" -C "${extract_dir}" --strip-components=1
 
     printf '%s\n' "${extract_dir}"
@@ -329,10 +328,10 @@ main() {
     install_base_packages
     install_docker_packages
 
-    local version
-    version="$(resolve_release_version)"
+    local release_ref
+    release_ref="$(resolve_release_ref)"
     local release_dir
-    release_dir="$(download_release_tarball "${version}")"
+    release_dir="$(download_release_tarball "${release_ref}")"
 
     deploy_release "${release_dir}"
     install_virtualenv
@@ -341,7 +340,7 @@ main() {
     build_runtime_image
     install_wrapper
 
-    printf 'fqdn-updater %s installed in %s\n' "${version}" "${INSTALL_DIR}"
+    printf 'fqdn-updater %s installed in %s\n' "${release_ref}" "${INSTALL_DIR}"
 }
 
 main "$@"
