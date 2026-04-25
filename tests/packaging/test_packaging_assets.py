@@ -105,6 +105,7 @@ def test_install_script_covers_expected_installation_contract() -> None:
         'readonly REPOSITORY_NAME="fqdn-updater"',
         'readonly REPOSITORY_SLUG="${REPOSITORY_OWNER}/${REPOSITORY_NAME}"',
         'readonly DEFAULT_BRANCH="main"',
+        'DOWNLOAD_RELEASE_DIR=""',
         "/opt/fqdn-updater",
         "/usr/local/bin/fqdn-updater",
         "domaingo",
@@ -117,6 +118,7 @@ def test_install_script_covers_expected_installation_contract() -> None:
         '"${GITHUB_API_URL}/releases/latest"',
         'printf \'heads/%s\\n\' "${DEFAULT_BRANCH}"',
         'archive/refs/${release_ref}.tar.gz',
+        "Downloaded archive does not contain pyproject.toml.",
         '"${VENV_DIR}/bin/fqdn-updater" init --config "${CONFIG_PATH}"',
         '"${VENV_DIR}/bin/fqdn-updater" schedule set-daily \\',
         '"${VENV_DIR}/bin/fqdn-updater" schedule install --config "${CONFIG_PATH}"',
@@ -161,10 +163,30 @@ def test_install_script_installs_main_when_no_github_release_exists() -> None:
     resolve_block = install_script[resolve_start:download_start]
 
     assert 'printf \'tags/%s\\n\' "${RELEASE_VERSION}"' in resolve_block
-    assert '"${GITHUB_API_URL}/releases/latest")' in resolve_block
+    assert '"${GITHUB_API_URL}/releases/latest"' in resolve_block
+    assert "2>/dev/null" in resolve_block
     assert 'printf \'tags/%s\\n\' "${latest_version}"' in resolve_block
     assert 'printf \'heads/%s\\n\' "${DEFAULT_BRANCH}"' in resolve_block
     assert "git ls-remote" not in resolve_block
+
+
+def test_install_script_validates_archive_before_deploy() -> None:
+    install_script = _read("install.sh")
+
+    download_start = install_script.index("download_release_tarball()")
+    deploy_start = install_script.index("deploy_release()")
+    main_start = install_script.index("main()")
+    download_block = install_script[download_start:deploy_start]
+    main_block = install_script[main_start:]
+
+    assert "--retry 5" in download_block
+    assert "--retry-all-errors" in download_block
+    assert '|| fail "Cannot download ${archive_url}."' in download_block
+    assert '|| fail "Cannot extract ${archive_url}."' in download_block
+    assert '[[ -f "${extract_dir}/pyproject.toml" ]]' in download_block
+    assert 'DOWNLOAD_RELEASE_DIR="${extract_dir}"' in download_block
+    assert 'release_dir="$(download_release_tarball "${release_ref}")"' not in main_block
+    assert 'deploy_release "${DOWNLOAD_RELEASE_DIR}"' in main_block
 
 
 def test_install_script_uses_clean_deploy_while_preserving_operator_state() -> None:

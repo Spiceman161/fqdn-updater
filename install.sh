@@ -14,6 +14,7 @@ readonly ALIAS_PATH="/usr/local/bin/domaingo"
 
 RELEASE_VERSION=""
 TEMP_DIR=""
+DOWNLOAD_RELEASE_DIR=""
 
 cleanup() {
     if [[ -n "${TEMP_DIR}" && -d "${TEMP_DIR}" ]]; then
@@ -158,7 +159,8 @@ resolve_release_ref() {
         -fsSL \
         -H "Accept: application/vnd.github+json" \
         -H "User-Agent: fqdn-updater-installer" \
-        "${GITHUB_API_URL}/releases/latest")"; then
+        "${GITHUB_API_URL}/releases/latest" \
+        2>/dev/null)"; then
         local latest_version
         latest_version="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])' \
             <<< "${latest_release_json}")"
@@ -173,12 +175,22 @@ download_release_tarball() {
     local release_ref="$1"
     local archive_path="${TEMP_DIR}/release.tar.gz"
     local extract_dir="${TEMP_DIR}/release"
+    local archive_url="https://github.com/${REPOSITORY_SLUG}/archive/refs/${release_ref}.tar.gz"
 
     mkdir -p "${extract_dir}"
-    curl -fsSL "https://github.com/${REPOSITORY_SLUG}/archive/refs/${release_ref}.tar.gz" -o "${archive_path}"
-    tar -xzf "${archive_path}" -C "${extract_dir}" --strip-components=1
+    curl --fail --silent --show-error --location \
+        --retry 5 \
+        --retry-delay 2 \
+        --retry-all-errors \
+        "${archive_url}" \
+        -o "${archive_path}" \
+        || fail "Cannot download ${archive_url}."
+    tar -xzf "${archive_path}" -C "${extract_dir}" --strip-components=1 \
+        || fail "Cannot extract ${archive_url}."
+    [[ -f "${extract_dir}/pyproject.toml" ]] \
+        || fail "Downloaded archive does not contain pyproject.toml."
 
-    printf '%s\n' "${extract_dir}"
+    DOWNLOAD_RELEASE_DIR="${extract_dir}"
 }
 
 prepare_install_root() {
@@ -330,10 +342,9 @@ main() {
 
     local release_ref
     release_ref="$(resolve_release_ref)"
-    local release_dir
-    release_dir="$(download_release_tarball "${release_ref}")"
+    download_release_tarball "${release_ref}"
 
-    deploy_release "${release_dir}"
+    deploy_release "${DOWNLOAD_RELEASE_DIR}"
     install_virtualenv
     initialize_config_if_missing
     install_schedule
