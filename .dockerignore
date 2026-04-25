@@ -1,5 +1,14 @@
 .git
 .codex
+.agents
+.claude
+.cursor
+.continue
+.windsurf
+.roo
+.aider*
+.mcp
+.mcp.json
 .venv
 __pycache__
 .pytest_cache
@@ -12,7 +21,11 @@ build
 dist
 data
 config.json
+config.*.json
 .env
 .env.*
 secrets
 docs/cli_manual_kn-1112.pdf
+AGENTS.md
+CLAUDE.md
+artifacts

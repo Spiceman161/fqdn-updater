@@ -1000,7 +1000,7 @@ def test_edit_router_reports_connectivity_error_but_still_allows_save(
     styled_output = console.export_text(styles=True, clear=False)
     plain_output = console.export_text(clear=False)
     assert "Проверка связи с маршрутизатором не прошла." in plain_output
-    assert "WireGuard discovery failed: temporary failure" in plain_output
+    assert "WireGuard discovery не прошёл: temporary failure" in plain_output
     assert "Проверка связи с маршрутизатором не прошла." in styled_output
     assert "\x1b[" in styled_output
 
@@ -1034,8 +1034,8 @@ def test_edit_router_selection_aligns_router_columns(tmp_path) -> None:
 
     choice_titles = prompts.select_calls[0]["choice_titles"]
     assert [[part.strip() for part in title.split("|")] for title in choice_titles] == [
-        ["main", "Тестовый роутер", "enabled"],
-        ["main-2", "main", "enabled"],
+        ["main", "Тестовый роутер", "включён"],
+        ["main-2", "main", "включён"],
     ]
     assert [title.index("|") for title in choice_titles] == [7, 7]
     assert [title.rindex("|") for title in choice_titles] == [25, 25]
@@ -1123,7 +1123,7 @@ def test_toggle_router_enabled_uses_checkbox_table_and_preserves_checked_state(t
         router_id_width=router_id_width,
         router_name_width=router_name_width,
     )
-    assert checkbox_call["table_summary"] == "Будет enabled: 1 | disabled: 1"
+    assert checkbox_call["table_summary"] == "Будет включено: 1 | выключено: 1"
     assert checkbox_call["choices"] == [
         {
             "title": expected_titles[0],
@@ -1380,7 +1380,7 @@ def test_lists_menu_can_run_sync_for_selected_router_after_save(tmp_path) -> Non
     output = console.export_text()
     assert "Sync: run_id=run-sync status=success artifact=data/artifacts/run-sync.json" in output
     assert "router-1" in output
-    assert "changed=1 failed=0" in output
+    assert "изменено=1 ошибок=0" in output
 
 
 def test_edit_router_switches_password_file_to_env_and_clears_password_file(
@@ -1541,7 +1541,7 @@ def test_edit_router_rejects_deterministic_password_env_collisions_before_secret
     with pytest.raises(RuntimeError) as exc_info:
         controller._edit_router()
 
-    assert f"Password env '{password_env}' is already used by router 'home_router'" in str(
+    assert f"Password env '{password_env}' уже используется роутером 'home_router'" in str(
         exc_info.value
     )
     assert controller._config_path.read_text(encoding="utf-8") == original_config

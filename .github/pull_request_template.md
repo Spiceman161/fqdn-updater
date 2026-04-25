@@ -1,14 +1,14 @@
-## Summary
+## Кратко
 
 -
 
-## Verification
+## Проверка
 
 - [ ] `./scripts/verify.sh`
 
-## Safety Checklist
+## Safety checklist
 
-- [ ] No real `config.json`, `.env*`, `secrets/`, or router credentials are committed.
-- [ ] RCI/HTTP details stay behind infrastructure adapters.
-- [ ] Apply paths remain managed-only and read-before-write.
-- [ ] Operator docs are updated when workflows change.
+- [ ] Реальные `config.json`, `.env*`, `secrets/` и credentials роутеров не закоммичены.
+- [ ] RCI/HTTP details остаются за infrastructure adapters.
+- [ ] Apply paths остаются managed-only и read-before-write.
+- [ ] Operator docs обновлены, если изменились workflows.

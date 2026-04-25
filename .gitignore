@@ -2,18 +2,34 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+build/
+dist/
 *.egg-info/
 *.pyc
 *.pyo
 *.pyd
 
 /config.json
+/config.*.json
 /.env
 /.env.*
 /secrets/
-.codex/
 data/*
 !data/.gitkeep
 
+# Local AI/editor/workflow state. These files are not part of the public product.
+/.codex/
+/.agents/
+/.claude/
+/.cursor/
+/.continue/
+/.windsurf/
+/.roo/
+/.aider*
+/.mcp/
+/.mcp.json
+/AGENTS.md
+/CLAUDE.md
+
 # Local reference artifacts copied for study/adaptation only.
-/artifacts/gotelegram-panel-reference/
+/artifacts/

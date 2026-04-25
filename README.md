@@ -1,145 +1,126 @@
 # FQDN-updater
 
+[English](README_EN.md) | Русский
+
 [![Verify](https://github.com/Spiceman161/fqdn-updater/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/Spiceman161/fqdn-updater/actions/workflows/verify.yml)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
 
-FQDN-updater is a production-oriented Python CLI for centrally synchronizing managed
-FQDN object-groups on Keenetic routers through the KeenDNS RCI API.
+**FQDN-updater** — source-available CLI-инструмент для централизованной синхронизации управляемых FQDN object-group на роутерах Keenetic через KeenDNS RCI API.
 
-The tool is built for a small VPS or home-server deployment: configure routers and service
-lists locally, preview changes with `dry-run`, apply only managed object-groups and route
-bindings with `sync`, and run the same one-shot job from Docker Compose under a systemd timer.
+Проект рассчитан на небольшой VPS или домашний сервер: оператор настраивает роутеры и списки локально, проверяет изменения через `dry-run`, применяет только явно управляемые object-group и route binding через `sync`, а регулярный запуск выполняет как одноразовый Docker/systemd job.
 
-## Features
+## Модель безопасности
 
-- Keenetic-only remote access through KeenDNS RCI over HTTPS.
-- HTTP Digest Auth with a low-privilege API user.
-- Managed-only updates: the tool changes only configured object-groups and route bindings.
-- Read-before-write sync planning with deterministic diffs.
-- Built-in service source registry and source normalization.
-- `status`, `dry-run`, and `sync` commands for operator-safe verification.
-- Rich terminal panel for local config maintenance.
-- Docker Compose runtime and config-driven systemd timer installation.
-- One-command Ubuntu 24.04 bootstrap installer.
+- Только Keenetic.
+- Только KeenDNS RCI API по HTTPS с HTTP Digest Auth.
+- Только low-privilege API-пользователь для опубликованного RCI web application.
+- Любой apply сначала читает текущее состояние роутера, строит детерминированный diff и только затем пишет изменения.
+- Инструмент меняет только object-group и route binding, явно описанные в конфиге как managed.
+- `status`, `dry-run`, экран журнала и проверки панели не выполняют удалённых write-операций.
+- В MVP нет web UI, daemon-процесса, уведомлений, шардирования за пределами реализованных Keenetic FQDN-групп и production SSH transport.
 
-## Safety Model
+## Установка
 
-FQDN-updater is intentionally narrow:
-
-- no web UI;
-- no daemon process;
-- no SSH transport in the production path;
-- no router-wide config mutation;
-- no hidden writes from read-only commands.
-
-All RCI transport details stay behind the infrastructure client. Domain and application logic
-operate on typed models rather than raw HTTP payloads.
-
-## Installation
-
-On a clean Ubuntu 24.04 host:
+На чистой Ubuntu 24.04:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash
 ```
 
-Install a specific release tag:
+Установка конкретного release tag:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash -s -- --version v0.1.0
 ```
 
-The installer deploys the selected release to `/opt/fqdn-updater`, preserves existing
-`config.json`, `.env*`, `data/`, `secrets/`, and `.venv`, installs host commands
-`fqdn-updater` and `domaingo`, builds the Docker image, and installs the systemd timer.
+Installer разворачивает проект в `/opt/fqdn-updater`, сохраняет существующие `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, ставит host-команды `fqdn-updater` и `domaingo`, собирает Docker image и устанавливает systemd timer.
 
-## First Run
+## Первый запуск
 
-Open the terminal panel:
+Откройте панель:
 
 ```bash
 fqdn-updater
 ```
 
-Useful command-line checks:
+Альтернативные входы:
+
+```bash
+domaingo
+fqdn-updater panel --config /opt/fqdn-updater/config.json
+```
+
+В панели можно создать конфиг, добавить роутер, сгенерировать пароль для RCI-пользователя, выбрать списки, обнаружить WireGuard-интерфейсы и выполнить `dry-run` перед синхронизацией.
+
+## Базовые команды
+
+Проверить конфиг:
 
 ```bash
 fqdn-updater config validate --config /opt/fqdn-updater/config.json
+```
+
+Проверить удалённые предусловия без записей на роутер:
+
+```bash
 fqdn-updater status --config /opt/fqdn-updater/config.json
+```
+
+Посмотреть план изменений:
+
+```bash
 fqdn-updater dry-run --config /opt/fqdn-updater/config.json
 ```
 
-Apply managed changes:
+Применить managed-изменения:
 
 ```bash
 fqdn-updater sync --config /opt/fqdn-updater/config.json
 ```
 
-The host wrapper runs `sync`, `dry-run`, and `status` through Docker Compose. Management commands
-such as `panel`, `init`, `config`, `router`, `mapping`, and `schedule` run through the local Python
-virtual environment in `/opt/fqdn-updater/.venv`.
+Host wrapper запускает `sync`, `dry-run` и `status` через Docker Compose. Команды управления (`panel`, `init`, `config`, `router`, `mapping`, `schedule`) выполняются через локальный Python venv в `/opt/fqdn-updater/.venv`.
 
-## Scheduling
+Docker Compose runtime использует `config.json`, `.env*`, `secrets/` и `data/` как runtime-файлы.
 
-Set a daily schedule and install systemd units:
+## Расписание
+
+Задать daily-расписание и установить systemd units:
 
 ```bash
 fqdn-updater schedule set-daily --config /opt/fqdn-updater/config.json --time 03:15 --timezone Europe/Moscow
 sudo fqdn-updater schedule install --config /opt/fqdn-updater/config.json
 ```
 
-Inspect the timer:
+Проверить timer и журнал:
 
 ```bash
 systemctl status fqdn-updater.timer --no-pager
 journalctl -u fqdn-updater.service -n 100 --no-pager
 ```
 
-## Keenetic RCI Setup
+## KeenDNS RCI
 
-For KeenDNS RCI access, use two different settings:
+В Keenetic web UI для `rci.<domain>` публикуется web application с protocol `HTTP` и портом `79`. В `config.json` хранится внешний endpoint вида `https://rci.<domain>/rci/`.
 
-- in the Keenetic web UI, publish the `rci.<domain>` web application with protocol `HTTP` and
-  port `79`;
-- in `config.json`, store the external endpoint as `https://rci.<domain>/rci/`.
+Используйте отдельного low-privilege пользователя для FQDN-updater. Реальные пароли храните в `.env`, `.env.secrets` или `secrets/`; не коммитьте production `config.json` и секреты.
 
-Use a dedicated low-privilege API user for FQDN-updater. Store real passwords in `.env` or
-`secrets/`; do not commit secrets or production configs.
+## Документация
 
-## Local Development
-
-Requirements:
-
-- Python 3.12+
-- Docker and Docker Compose plugin for packaging/runtime checks
-
-Set up a development environment:
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e .[dev]
-```
-
-Run the verification gate:
-
-```bash
-./scripts/verify.sh
-```
-
-The same script runs in GitHub Actions on push and pull request.
-
-## Documentation
-
-- [User quickstart](docs/USER_QUICKSTART.md)
-- [Product requirements](PRD.md)
-- [Architecture](ARCHITECTURE.md)
+- [Быстрый старт оператора](docs/USER_QUICKSTART.md)
+- [Панель](docs/PANEL.md)
+- [Установка и эксплуатация](docs/DEPLOYMENT.md)
+- [Конфигурация](docs/CONFIGURATION.md)
+- [CLI reference](docs/CLI_REFERENCE.md)
+- [Настройка KeenDNS RCI](docs/KEENETIC_RCI_SETUP.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Roadmap](docs/ROADMAP.md)
+- [PRD](PRD.md)
+- [Architecture](ARCHITECTURE.md)
 
-## Project Status
+## Лицензия
 
-FQDN-updater is usable for managed Keenetic FQDN object-group and route-binding synchronization.
-The deeper `doctor` diagnostics mode is not implemented yet.
+FQDN-updater распространяется по лицензии [PolyForm Noncommercial 1.0.0](LICENSE).
 
-## Security
+Это source-available/noncommercial проект, а не OSI-open-source лицензия. Некоммерческое использование, изучение и модификация разрешены условиями лицензии; коммерческое использование требует отдельного разрешения правообладателя.
 
-Please report security issues privately. See [SECURITY.md](SECURITY.md).
+Сторонние уведомления: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

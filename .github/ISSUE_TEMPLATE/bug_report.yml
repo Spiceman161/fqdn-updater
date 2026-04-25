@@ -1,56 +1,56 @@
-name: Bug report
-description: Report a reproducible problem in FQDN-updater.
+name: Отчёт об ошибке
+description: Сообщите о воспроизводимой проблеме в FQDN-updater.
 title: "bug: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Do not include real router credentials, `.env` values, or private KeenDNS hostnames.
+        Не добавляйте реальные пароли роутеров, значения `.env` или приватные KeenDNS hostnames.
   - type: textarea
     id: summary
     attributes:
-      label: Summary
-      description: What went wrong?
+      label: Краткое описание
+      description: Что пошло не так?
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
-      label: Reproduction steps
-      description: List the smallest steps that reproduce the issue.
+      label: Шаги воспроизведения
+      description: Минимальные шаги, которые воспроизводят проблему.
       placeholder: |
-        1. Run ...
-        2. Configure ...
-        3. Observe ...
+        1. Запустить ...
+        2. Настроить ...
+        3. Увидеть ...
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: Ожидаемое поведение
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
-      label: Actual behavior
+      label: Фактическое поведение
     validations:
       required: true
   - type: textarea
     id: environment
     attributes:
-      label: Environment
+      label: Окружение
       placeholder: |
         OS:
         Python:
         Docker:
-        FQDN-updater version:
+        Версия FQDN-updater:
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
-      label: Logs or artifacts
-      description: Paste only redacted logs or artifact excerpts.
+      label: Логи или artifacts
+      description: Вставляйте только отредактированные логи или фрагменты artifacts без секретов.
       render: text

@@ -122,8 +122,8 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp
     assert "1-1 из 1" in output
     assert "08.04.2026 13:01:00" in output
     assert "Main router" in output
-    assert "changed=1" in output
-    assert "failed=1" in output
+    assert "изменено=1" in output
+    assert "ошибок=1" in output
     assert "data/artifacts" in output
     assert "data/logs" in output
     assert "Пропущенные артефакты" in output
@@ -154,7 +154,7 @@ def test_runs_menu_dry_run_choice_calls_orchestrator_and_renders_summary(tmp_pat
     assert dry_run_orchestrator.calls[0][1] is RunTrigger.MANUAL
     output = console.export_text()
     assert "Dry-run: run_id=run-123 status=partial artifact=data/artifacts/run-123.json" in output
-    assert "changed=1 failed=1" in output
+    assert "изменено=1 ошибок=1" in output
     assert "router-1" in output
     assert "partial" in output
 

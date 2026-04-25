@@ -38,11 +38,11 @@ from fqdn_updater.infrastructure.systemd_scheduler import (
     SystemdScheduleInstallResult,
 )
 
-app = typer.Typer(help="Synchronize managed FQDN object-groups on Keenetic routers.")
-config_app = typer.Typer(help="Configuration management commands.")
-router_app = typer.Typer(help="Router config management commands.")
-mapping_app = typer.Typer(help="Router/service mapping config management commands.")
-schedule_app = typer.Typer(help="Schedule management commands.")
+app = typer.Typer(help="Синхронизация managed FQDN object-group на роутерах Keenetic.")
+config_app = typer.Typer(help="Команды управления конфигом.")
+router_app = typer.Typer(help="Команды управления роутерами в конфиге.")
+mapping_app = typer.Typer(help="Команды управления router/service mappings.")
+schedule_app = typer.Typer(help="Команды управления расписанием.")
 app.add_typer(config_app, name="config")
 app.add_typer(router_app, name="router")
 app.add_typer(mapping_app, name="mapping")
@@ -53,7 +53,7 @@ INIT_CONFIG_OPTION = typer.Option(
     DEFAULT_CONFIG_PATH,
     "--config",
     dir_okay=False,
-    help="Path to the JSON config file to create.",
+    help="Путь к создаваемому JSON config file.",
 )
 VALIDATE_CONFIG_OPTION = typer.Option(
     DEFAULT_CONFIG_PATH,
@@ -61,25 +61,25 @@ VALIDATE_CONFIG_OPTION = typer.Option(
     exists=True,
     dir_okay=False,
     readable=True,
-    help="Path to the JSON config file to validate.",
+    help="Путь к JSON config file для проверки.",
 )
 DRY_RUN_CONFIG_OPTION = typer.Option(
     DEFAULT_CONFIG_PATH,
     "--config",
     dir_okay=False,
-    help="Path to the JSON config file to use for the dry-run.",
+    help="Путь к JSON config file для dry-run.",
 )
 SYNC_CONFIG_OPTION = typer.Option(
     DEFAULT_CONFIG_PATH,
     "--config",
     dir_okay=False,
-    help="Path to the JSON config file to use for sync.",
+    help="Путь к JSON config file для sync.",
 )
 STATUS_CONFIG_OPTION = typer.Option(
     DEFAULT_CONFIG_PATH,
     "--config",
     dir_okay=False,
-    help="Path to the JSON config file to use for status diagnostics.",
+    help="Путь к JSON config file для status diagnostics.",
 )
 CONFIG_MANAGEMENT_CONFIG_OPTION = typer.Option(
     DEFAULT_CONFIG_PATH,
@@ -88,7 +88,7 @@ CONFIG_MANAGEMENT_CONFIG_OPTION = typer.Option(
     dir_okay=False,
     readable=True,
     writable=True,
-    help="Path to the JSON config file to manage.",
+    help="Путь к JSON config file для управления.",
 )
 CONFIG_MANAGEMENT_LIST_CONFIG_OPTION = typer.Option(
     DEFAULT_CONFIG_PATH,
@@ -96,7 +96,7 @@ CONFIG_MANAGEMENT_LIST_CONFIG_OPTION = typer.Option(
     exists=True,
     dir_okay=False,
     readable=True,
-    help="Path to the JSON config file to inspect.",
+    help="Путь к JSON config file для просмотра.",
 )
 
 
@@ -114,36 +114,36 @@ DRY_RUN_OUTPUT_OPTION = typer.Option(
     OutputMode.HUMAN,
     "--output",
     case_sensitive=False,
-    help="Output format for dry-run results.",
+    help="Формат вывода dry-run results.",
 )
 LIST_OUTPUT_OPTION = typer.Option(
     OutputMode.HUMAN,
     "--output",
     case_sensitive=False,
-    help="Output format for list results.",
+    help="Формат вывода list results.",
 )
 TRIGGER_OPTION = typer.Option(
     RunTrigger.MANUAL,
     "--trigger",
     case_sensitive=False,
-    help="Run trigger label stored in logs and artifacts.",
+    help="Run trigger label для logs и artifacts.",
 )
-ROUTER_TAGS_OPTION = typer.Option(None, "--tag", help="Router tag; repeatable.")
+ROUTER_TAGS_OPTION = typer.Option(None, "--tag", help="Router tag; можно повторять.")
 ROUTER_ALLOWED_SOURCE_IPS_OPTION = typer.Option(
     None,
     "--allowed-source-ip",
-    help="Allowed source IP or CIDR annotation; repeatable.",
+    help="Allowed source IP или CIDR annotation; можно повторять.",
 )
 SCHEDULE_TIME_OPTION = typer.Option(
     None,
     "--time",
-    help="Schedule time in HH:MM; repeatable.",
+    help="Время расписания в HH:MM; можно повторять.",
 )
 SCHEDULE_DAY_OPTION = typer.Option(
     None,
     "--day",
     case_sensitive=False,
-    help="Weekly schedule day; repeatable.",
+    help="День weekly schedule; можно повторять.",
 )
 MAPPING_ROUTE_TARGET_TYPE_OPTION = typer.Option(
     ...,
@@ -221,17 +221,17 @@ def _caching_source_loader(
 
 @app.command("init")
 def init_command(config: Path = INIT_CONFIG_OPTION) -> None:
-    """Create a new scaffold config file."""
+    """Создать стартовый config file."""
     try:
         created_path = _bootstrap_service().create_default_config(path=config)
     except RuntimeError as exc:
         _runtime_error_handler(exc)
-    typer.echo(f"Created scaffold config: {created_path}")
+    typer.echo(f"Стартовый config создан: {created_path}")
 
 
 @config_app.command("validate")
 def validate_command(config: Path = VALIDATE_CONFIG_OPTION) -> None:
-    """Validate an existing config file."""
+    """Проверить существующий config file."""
     try:
         validated_config = _validation_service().validate(path=config)
     except RuntimeError as exc:
@@ -242,30 +242,30 @@ def validate_command(config: Path = VALIDATE_CONFIG_OPTION) -> None:
 @router_app.command("add")
 def router_add_command(
     config: Path = CONFIG_MANAGEMENT_CONFIG_OPTION,
-    router_id: str = typer.Option(..., "--id", help="Unique router identifier."),
-    name: str = typer.Option(..., "--name", help="Human-readable router name."),
+    router_id: str = typer.Option(..., "--id", help="Уникальный router identifier."),
+    name: str = typer.Option(..., "--name", help="Понятное имя роутера."),
     rci_url: str = typer.Option(
         ...,
         "--rci-url",
-        help="KeenDNS RCI endpoint URL; copied http://rci... values are saved as https://.../rci/.",
+        help="KeenDNS RCI endpoint URL; скопированные http://rci... сохраняются как https://.../rci/.",
     ),
     username: str = typer.Option(..., "--username", help="Low-privilege RCI API username."),
     password_env: str | None = typer.Option(
         None,
         "--password-env",
-        help="Environment variable containing the router password.",
+        help="Environment variable с паролем роутера.",
     ),
     password_file: str | None = typer.Option(
         None,
         "--password-file",
-        help="File containing the router password.",
+        help="Файл с паролем роутера.",
     ),
-    enabled: bool = typer.Option(True, "--enabled/--disabled", help="Enable router sync."),
+    enabled: bool = typer.Option(True, "--enabled/--disabled", help="Включить sync роутера."),
     tags: list[str] | None = ROUTER_TAGS_OPTION,
-    timeout_seconds: int = typer.Option(10, "--timeout-seconds", help="RCI request timeout."),
+    timeout_seconds: int = typer.Option(10, "--timeout-seconds", help="Timeout RCI request."),
     allowed_source_ips: list[str] | None = ROUTER_ALLOWED_SOURCE_IPS_OPTION,
 ) -> None:
-    """Add a managed router to the config."""
+    """Добавить managed router в config."""
     try:
         router = _config_management_service().add_router(
             path=config,
@@ -282,7 +282,7 @@ def router_add_command(
         )
     except RuntimeError as exc:
         _runtime_error_handler(exc)
-    typer.echo(f"Router added: id={router.id} path={config}")
+    typer.echo(f"Роутер добавлен: id={router.id} path={config}")
 
 
 @router_app.command("list")
@@ -290,7 +290,7 @@ def router_list_command(
     config: Path = CONFIG_MANAGEMENT_LIST_CONFIG_OPTION,
     output: OutputMode = LIST_OUTPUT_OPTION,
 ) -> None:
-    """List configured routers."""
+    """Показать configured routers."""
     try:
         routers = _config_management_service().list_routers(path=config)
     except RuntimeError as exc:
@@ -305,24 +305,24 @@ def router_list_command(
 @mapping_app.command("set")
 def mapping_set_command(
     config: Path = CONFIG_MANAGEMENT_CONFIG_OPTION,
-    router_id: str = typer.Option(..., "--router-id", help="Existing router identifier."),
-    service_key: str = typer.Option(..., "--service-key", help="Existing service key."),
+    router_id: str = typer.Option(..., "--router-id", help="Существующий router identifier."),
+    service_key: str = typer.Option(..., "--service-key", help="Существующий service key."),
     object_group_name: str = typer.Option(..., "--object-group-name", help="Managed group name."),
     route_target_type: RouteTargetType = MAPPING_ROUTE_TARGET_TYPE_OPTION,
     route_target_value: str = typer.Option(..., "--route-target-value", help="Route target value."),
     route_interface: str | None = typer.Option(
         None,
         "--route-interface",
-        help="Optional interface for gateway routes.",
+        help="Optional interface для gateway routes.",
     ),
-    auto: bool = typer.Option(True, "--auto/--no-auto", help="Set route auto flag."),
+    auto: bool = typer.Option(True, "--auto/--no-auto", help="Установить route auto flag."),
     exclusive: bool = typer.Option(
         True,
         "--exclusive/--no-exclusive",
-        help="Set route exclusive flag.",
+        help="Установить route exclusive flag.",
     ),
 ) -> None:
-    """Create or replace one router/service mapping."""
+    """Создать или заменить один router/service mapping."""
     try:
         mapping = _config_management_service().set_mapping(
             path=config,
@@ -338,7 +338,7 @@ def mapping_set_command(
     except RuntimeError as exc:
         _runtime_error_handler(exc)
     typer.echo(
-        "Mapping set: "
+        "Mapping сохранён: "
         f"router_id={mapping.router_id} service_key={mapping.service_key} path={config}"
     )
 
@@ -348,7 +348,7 @@ def mapping_list_command(
     config: Path = CONFIG_MANAGEMENT_LIST_CONFIG_OPTION,
     output: OutputMode = LIST_OUTPUT_OPTION,
 ) -> None:
-    """List configured router/service mappings."""
+    """Показать configured router/service mappings."""
     try:
         mappings = _config_management_service().list_mappings(path=config)
     except RuntimeError as exc:
@@ -365,7 +365,7 @@ def schedule_show_command(
     config: Path = CONFIG_MANAGEMENT_LIST_CONFIG_OPTION,
     output: OutputMode = LIST_OUTPUT_OPTION,
 ) -> None:
-    """Show the configured schedule and systemd deployment settings."""
+    """Показать расписание и systemd deployment settings."""
     try:
         schedule = _validation_service().validate(path=config).runtime.schedule
     except RuntimeError as exc:
@@ -384,10 +384,10 @@ def schedule_set_daily_command(
     timezone: str | None = typer.Option(
         None,
         "--timezone",
-        help="IANA timezone used in the systemd OnCalendar lines.",
+        help="IANA timezone для systemd OnCalendar lines.",
     ),
 ) -> None:
-    """Persist a daily schedule in config.json."""
+    """Сохранить daily schedule в config.json."""
     try:
         existing_schedule = _config_management_service().get_schedule(path=config)
         schedule = RuntimeScheduleConfig(
@@ -403,7 +403,7 @@ def schedule_set_daily_command(
         )
     except RuntimeError as exc:
         _runtime_error_handler(exc)
-    typer.echo(f"Schedule updated: mode={updated_schedule.mode.value} path={config}")
+    typer.echo(f"Расписание обновлено: mode={updated_schedule.mode.value} path={config}")
 
 
 @schedule_app.command("set-weekly")
@@ -414,10 +414,10 @@ def schedule_set_weekly_command(
     timezone: str | None = typer.Option(
         None,
         "--timezone",
-        help="IANA timezone used in the systemd OnCalendar lines.",
+        help="IANA timezone для systemd OnCalendar lines.",
     ),
 ) -> None:
-    """Persist a weekly schedule in config.json."""
+    """Сохранить weekly schedule в config.json."""
     try:
         existing_schedule = _config_management_service().get_schedule(path=config)
         schedule = RuntimeScheduleConfig(
@@ -433,14 +433,14 @@ def schedule_set_weekly_command(
         )
     except RuntimeError as exc:
         _runtime_error_handler(exc)
-    typer.echo(f"Schedule updated: mode={updated_schedule.mode.value} path={config}")
+    typer.echo(f"Расписание обновлено: mode={updated_schedule.mode.value} path={config}")
 
 
 @schedule_app.command("disable")
 def schedule_disable_command(
     config: Path = CONFIG_MANAGEMENT_CONFIG_OPTION,
 ) -> None:
-    """Disable the schedule in config.json."""
+    """Отключить schedule в config.json."""
     try:
         existing_schedule = _config_management_service().get_schedule(path=config)
         updated_schedule = _config_management_service().replace_schedule(
@@ -455,14 +455,14 @@ def schedule_disable_command(
         )
     except RuntimeError as exc:
         _runtime_error_handler(exc)
-    typer.echo(f"Schedule updated: mode={updated_schedule.mode.value} path={config}")
+    typer.echo(f"Расписание обновлено: mode={updated_schedule.mode.value} path={config}")
 
 
 @schedule_app.command("install")
 def schedule_install_command(
     config: Path = CONFIG_MANAGEMENT_LIST_CONFIG_OPTION,
 ) -> None:
-    """Render and install systemd units from config.json."""
+    """Сгенерировать и установить systemd units из config.json."""
     try:
         validated_config = _validation_service().validate(path=config)
         result = _schedule_installer().install(
@@ -482,7 +482,7 @@ def dry_run_command(
     output: OutputMode = DRY_RUN_OUTPUT_OPTION,
     trigger: RunTrigger = TRIGGER_OPTION,
 ) -> None:
-    """Run a read-only sync preview against configured routers."""
+    """Запустить read-only sync preview для configured routers."""
     try:
         validated_config = _config_with_resolved_runtime_paths(
             config_path=config,
@@ -518,7 +518,7 @@ def sync_command(
     output: OutputMode = DRY_RUN_OUTPUT_OPTION,
     trigger: RunTrigger = TRIGGER_OPTION,
 ) -> None:
-    """Apply managed object-group changes against configured routers."""
+    """Применить managed object-group changes на configured routers."""
     try:
         validated_config = _config_with_resolved_runtime_paths(
             config_path=config,
@@ -553,7 +553,7 @@ def status_command(
     config: Path = STATUS_CONFIG_OPTION,
     output: OutputMode = DRY_RUN_OUTPUT_OPTION,
 ) -> None:
-    """Run read-only router diagnostics for configured enabled routers."""
+    """Запустить read-only diagnostics для enabled routers."""
     try:
         validated_config = _validation_service().validate(path=config)
     except RuntimeError as exc:
@@ -574,7 +574,7 @@ def status_command(
 
 @app.command("panel")
 def panel_command(config: Path = DRY_RUN_CONFIG_OPTION) -> None:
-    """Open the interactive terminal control panel."""
+    """Открыть интерактивную terminal panel."""
     try:
         PanelController(config_path=config).run()
     except RuntimeError as exc:
@@ -583,7 +583,7 @@ def panel_command(config: Path = DRY_RUN_CONFIG_OPTION) -> None:
 
 def _render_validation_success(config: AppConfig, path: Path) -> None:
     typer.echo(
-        "Config is valid: "
+        "Config корректен: "
         f"path={path} version={config.version} routers={len(config.routers)} "
         f"services={len(config.services)} mappings={len(config.mappings)}"
     )
@@ -591,7 +591,7 @@ def _render_validation_success(config: AppConfig, path: Path) -> None:
 
 def _render_dry_run_human(result: DryRunExecutionResult) -> str:
     return _render_operation_human(
-        operation_name="Dry run completed",
+        operation_name="Dry-run завершён",
         result=result,
         include_diff_details=True,
     )
@@ -599,7 +599,7 @@ def _render_dry_run_human(result: DryRunExecutionResult) -> str:
 
 def _render_sync_human(result: SyncExecutionResult) -> str:
     return _render_operation_human(
-        operation_name="Sync completed",
+        operation_name="Sync завершён",
         result=result,
         include_diff_details=False,
     )
@@ -636,17 +636,17 @@ def _render_operation_human(
     ]
 
     for router in artifact.router_results:
-        lines.append(f"Router {router.router_id}: status={router.status.value}")
+        lines.append(f"Роутер {router.router_id}: status={router.status.value}")
         for service in router.service_results:
             lines.append(
                 "  "
-                f"Service {service.service_key} group={service.object_group_name} "
+                f"Сервис {service.service_key} group={service.object_group_name} "
                 f"status={service.status.value} added={service.added_count} "
                 f"removed={service.removed_count} unchanged={service.unchanged_count} "
                 f"route_changed={'yes' if service.route_changed else 'no'}"
             )
             if service.error_message is not None:
-                lines.append(f"    error: {service.error_message}")
+                lines.append(f"    ошибка: {service.error_message}")
                 continue
 
             plan = plan_index.get(
@@ -681,7 +681,7 @@ def _render_status_human(result: StatusDiagnosticsResult) -> str:
     failed_count = sum(router.status.value == "failed" for router in result.router_results)
 
     lines = [
-        "Status completed: "
+        "Status завершён: "
         f"config_ready={'yes' if result.config_ready else 'no'} "
         f"overall_status={result.overall_status.value} "
         f"checked_routers={result.checked_router_count} "
@@ -697,24 +697,24 @@ def _render_status_human(result: StatusDiagnosticsResult) -> str:
             else "disabled"
         )
         lines.append(
-            f"Router {router.router_id}: status={router.status.value} dns_proxy={dns_proxy}"
+            f"Роутер {router.router_id}: status={router.status.value} dns_proxy={dns_proxy}"
         )
         if router.failure_step is not None:
             lines.append(f"  failure_step: {router.failure_step.value}")
         if router.error_message is not None:
-            lines.append(f"  error: {router.error_message}")
+            lines.append(f"  ошибка: {router.error_message}")
 
     return "\n".join(lines)
 
 
 def _render_routers_human(*, routers: list[RouterConfig]) -> str:
     if not routers:
-        return "Routers: none"
+        return "Роутеры: нет"
 
-    lines = [f"Routers: count={len(routers)}"]
+    lines = [f"Роутеры: count={len(routers)}"]
     for router in routers:
         lines.append(
-            f"Router {router.id}: enabled={'yes' if router.enabled else 'no'} "
+            f"Роутер {router.id}: enabled={'yes' if router.enabled else 'no'} "
             f"rci_url={router.rci_url} username={router.username}"
         )
     return "\n".join(lines)
@@ -722,7 +722,7 @@ def _render_routers_human(*, routers: list[RouterConfig]) -> str:
 
 def _render_mappings_human(*, mappings: list[RouterServiceMappingConfig]) -> str:
     if not mappings:
-        return "Mappings: none"
+        return "Mappings: нет"
 
     lines = [f"Mappings: count={len(mappings)}"]
     for mapping in mappings:
@@ -740,7 +740,7 @@ def _render_schedule_human(*, schedule: RuntimeScheduleConfig) -> str:
     weekdays = ", ".join(day.value for day in schedule.weekdays) if schedule.weekdays else "-"
     return "\n".join(
         [
-            "Schedule: "
+            "Расписание: "
             f"mode={schedule.mode.value} timezone={schedule.timezone} "
             f"times={times} weekdays={weekdays}",
             "Systemd: "
@@ -761,7 +761,7 @@ def _render_schedule_install_result(
     schedule: RuntimeScheduleConfig,
 ) -> str:
     return (
-        "Schedule installed: "
+        "Расписание установлено: "
         f"mode={schedule.mode.value} "
         f"timer_action={result.timer_action} "
         f"service_path={result.service_path} "

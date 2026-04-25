@@ -338,7 +338,7 @@ def test_router_add_writes_valid_router_and_leaves_file_unchanged_on_validation_
     )
 
     assert success.exit_code == 0
-    assert "Router added: id=router-1" in success.stdout
+    assert "Роутер добавлен: id=router-1" in success.stdout
     valid_contents = config_path.read_text(encoding="utf-8")
     valid_payload = json.loads(valid_contents)
     assert [router["id"] for router in valid_payload["routers"]] == ["router-1"]
@@ -430,9 +430,9 @@ def test_router_list_outputs_are_deterministic_in_human_and_json(tmp_path) -> No
 
     assert human.exit_code == 0
     assert human.stdout.strip().splitlines() == [
-        "Routers: count=2",
-        "Router router-1: enabled=yes rci_url=https://router-1.example/rci/ username=api-user",
-        "Router router-2: enabled=yes rci_url=https://router-2.example/rci/ username=api-user",
+        "Роутеры: count=2",
+        "Роутер router-1: enabled=yes rci_url=https://router-1.example/rci/ username=api-user",
+        "Роутер router-2: enabled=yes rci_url=https://router-2.example/rci/ username=api-user",
     ]
     assert json_result.exit_code == 0
     assert [router["id"] for router in json.loads(json_result.stdout)] == ["router-1", "router-2"]
@@ -491,9 +491,9 @@ def test_router_list_works_for_readable_only_config(tmp_path) -> None:
     result = runner.invoke(app, ["router", "list", "--config", str(config_path)])
 
     assert result.exit_code == 0
-    assert "Routers: count=1" in result.stdout
+    assert "Роутеры: count=1" in result.stdout
     assert (
-        "Router router-1: enabled=yes rci_url=https://router-1.example/rci/ username=api-user"
+        "Роутер router-1: enabled=yes rci_url=https://router-1.example/rci/ username=api-user"
         in result.stdout
     )
 
@@ -1170,7 +1170,7 @@ def test_validate_accepts_scaffold_config(tmp_path) -> None:
 
     assert init_result.exit_code == 0
     assert validate_result.exit_code == 0
-    assert "Config is valid" in validate_result.stdout
+    assert "Config корректен" in validate_result.stdout
 
 
 def test_validate_rejects_invalid_json(tmp_path) -> None:
@@ -1273,7 +1273,7 @@ def test_dry_run_returns_zero_for_no_changes(monkeypatch) -> None:
     result = runner.invoke(app, ["dry-run", "--config", "config.json"])
 
     assert result.exit_code == 0
-    assert "Dry run completed:" in result.stdout
+    assert "Dry-run завершён:" in result.stdout
     assert "planned_changes=0" in result.stdout
     assert "status=no_changes" in result.stdout
 
@@ -1493,7 +1493,7 @@ def test_dry_run_returns_twenty_for_partial_result(monkeypatch) -> None:
     assert result.exit_code == 20
     assert "status=partial" in result.stdout
     assert "failed_services=1" in result.stdout
-    assert "error: timeout" in result.stdout
+    assert "ошибка: timeout" in result.stdout
 
 
 def test_dry_run_returns_thirty_for_route_only_changes(monkeypatch) -> None:
@@ -1591,7 +1591,7 @@ def test_sync_returns_zero_for_no_changes(monkeypatch) -> None:
     result = runner.invoke(app, ["sync", "--config", "config.json"])
 
     assert result.exit_code == 0
-    assert "Sync completed:" in result.stdout
+    assert "Sync завершён:" in result.stdout
     assert "planned_changes=0" in result.stdout
     assert "skipped_services=0" in result.stdout
 
@@ -1708,7 +1708,7 @@ def test_sync_returns_twenty_for_partial_result(monkeypatch) -> None:
     assert result.exit_code == 20
     assert "status=partial" in result.stdout
     assert "skipped_services=1" in result.stdout
-    assert "error: Skipped after router write failure: timeout" in result.stdout
+    assert "ошибка: Skipped after router write failure: timeout" in result.stdout
 
 
 def test_sync_returns_ten_for_route_only_changes(monkeypatch) -> None:
@@ -1794,7 +1794,7 @@ def test_status_returns_zero_for_healthy_result(monkeypatch) -> None:
     result = runner.invoke(app, ["status", "--config", "config.json"])
 
     assert result.exit_code == 0
-    assert "Status completed:" in result.stdout
+    assert "Status завершён:" in result.stdout
     assert "overall_status=healthy" in result.stdout
     assert "dns_proxy=enabled" in result.stdout
 
@@ -1844,7 +1844,7 @@ def test_status_returns_twenty_for_failed_result(monkeypatch) -> None:
     assert result.exit_code == 20
     assert "status=failed" in result.stdout
     assert "failure_step: client_create" in result.stdout
-    assert "error: authentication failed" in result.stdout
+    assert "ошибка: authentication failed" in result.stdout
 
 
 def test_status_returns_forty_for_invalid_config(monkeypatch) -> None:

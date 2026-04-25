@@ -97,7 +97,7 @@ def test_discover_route_targets_reports_new_router_missing_secret_as_skipped(tmp
     assert candidates == ()
     assert fake_service.calls == [router.id]
     assert "WireGuard interface discovery skipped for new router." in console.export_text()
-    assert "WireGuard discovery failed" not in console.export_text()
+    assert "WireGuard discovery не прошёл" not in console.export_text()
 
 
 def test_discover_route_targets_returns_empty_candidates_when_result_is_empty(tmp_path) -> None:
@@ -172,7 +172,7 @@ def test_discover_route_targets_truncates_raw_error_preview_for_panel(tmp_path) 
 
     assert candidates == ()
     output = console.export_text()
-    assert "WireGuard discovery failed:" in output
+    assert "WireGuard discovery не прошёл:" in output
     assert "upstream rejected request" in output
     assert len(output) < 500
 

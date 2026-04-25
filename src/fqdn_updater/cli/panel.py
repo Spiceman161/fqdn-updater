@@ -299,9 +299,9 @@ class PanelController:
             default=True,
         )
         if not should_create:
-            raise RuntimeError(f"Config file does not exist: {self._config_path}")
+            raise RuntimeError(f"Config file не найден: {self._config_path}")
         self._bootstrap_service.create_default_config(path=self._config_path)
-        self._console.print(f"[green]Scaffold config создан:[/green] {self._config_path}")
+        self._console.print(f"[green]Стартовый config создан:[/green] {self._config_path}")
 
     def _load_config(self) -> AppConfig:
         return self._repository.load(path=self._config_path)
@@ -645,7 +645,7 @@ class PanelController:
                 ("RCI URL", normalize_rci_url_input(rci_url)),
                 ("Username", username),
                 ("Timeout", str(timeout_seconds)),
-                ("Статус", "enabled" if router.enabled else "disabled"),
+                ("Статус", "включён" if router.enabled else "выключен"),
                 ("Password env", password_env or "нет"),
                 ("Password file", password_file or "нет"),
             ],
@@ -1628,7 +1628,7 @@ class PanelController:
             self._load_runtime_secret_env_file(config=config)
             result = self._status_service.check(config=config)
         except RuntimeError as exc:
-            self._console.print(f"[red]Status diagnostics failed:[/red] {exc}")
+            self._console.print(f"[red]Status diagnostics не прошёл:[/red] {exc}")
             self._pause()
             return
 
@@ -1647,7 +1647,7 @@ class PanelController:
                 trigger=RunTrigger.MANUAL,
             )
         except RuntimeError as exc:
-            self._console.print(f"[red]Dry-run preview failed:[/red] {exc}")
+            self._console.print(f"[red]Dry-run preview не прошёл:[/red] {exc}")
             self._pause()
             return
 
@@ -1667,7 +1667,7 @@ class PanelController:
                 trigger=RunTrigger.MANUAL,
             )
         except RuntimeError as exc:
-            self._console.print(f"[red]Sync failed:[/red] {exc}")
+            self._console.print(f"[red]Sync не прошёл:[/red] {exc}")
             self._pause()
             return
 
@@ -1701,7 +1701,7 @@ class PanelController:
         table.add_column("Маршрутизатор")
         table.add_column("Статус")
         table.add_column("Сервисов")
-        table.add_column("Summary")
+        table.add_column("Итог")
         for router in artifact.router_results:
             changed_services = sum(
                 service.added_count > 0 or service.removed_count > 0 or service.route_changed
@@ -1714,7 +1714,7 @@ class PanelController:
                 router.router_id,
                 router.status.value,
                 str(len(router.service_results)),
-                f"changed={changed_services} failed={failed_services}",
+                f"изменено={changed_services} ошибок={failed_services}",
             )
         if not artifact.router_results:
             table.add_row("[dim]нет[/dim]", "-", "-", "-")
@@ -1731,7 +1731,7 @@ class PanelController:
         table.add_column("Маршрутизатор")
         table.add_column("Статус")
         table.add_column("Сервисов")
-        table.add_column("Summary")
+        table.add_column("Итог")
         for router in artifact.router_results:
             changed_services = sum(
                 service.added_count > 0 or service.removed_count > 0 or service.route_changed
@@ -1744,7 +1744,7 @@ class PanelController:
                 router.router_id,
                 router.status.value,
                 str(len(router.service_results)),
-                f"changed={changed_services} failed={failed_services}",
+                f"изменено={changed_services} ошибок={failed_services}",
             )
         if not artifact.router_results:
             table.add_row("[dim]нет[/dim]", "-", "-", "-")
@@ -1762,9 +1762,9 @@ class PanelController:
     ) -> None:
         table = Table(show_header=True, header_style="bold white")
         table.add_column("Интерфейс")
-        table.add_column("Connected")
+        table.add_column("Подключён")
         table.add_column("Status")
-        table.add_column("Detail")
+        table.add_column("Деталь")
         for candidate in candidates:
             table.add_row(
                 candidate.display_name or candidate.value,
@@ -1793,7 +1793,7 @@ class PanelController:
     def _print_discovery_error(self, message: str) -> None:
         self._console.print(
             Text.assemble(
-                ("WireGuard discovery failed: ", "yellow"),
+                ("WireGuard discovery не прошёл: ", "yellow"),
                 (_truncate_discovery_error_message(message), "red"),
             )
         )
@@ -2129,12 +2129,12 @@ def _sum_entry_counts(values: Iterable[int | None]) -> int | None:
 
 def _router_state_label(enabled: bool) -> str:
     if enabled:
-        return "[bold green]enabled[/bold green]"
-    return "[bold yellow]disabled[/bold yellow]"
+        return "[bold green]включён[/bold green]"
+    return "[bold yellow]выключен[/bold yellow]"
 
 
 def _router_state_plain(enabled: bool) -> str:
-    return "enabled" if enabled else "disabled"
+    return "включён" if enabled else "выключен"
 
 
 def _router_selection_column_widths(routers: Iterable[RouterConfig]) -> tuple[int, int]:
@@ -2177,7 +2177,7 @@ def _router_toggle_header(*, router_id_width: int, router_name_width: int) -> st
 def _router_toggle_summary(*, selected_values: tuple[str, ...], total: int) -> str:
     enabled_count = len(selected_values)
     disabled_count = total - enabled_count
-    return f"Будет enabled: {enabled_count} | disabled: {disabled_count}"
+    return f"Будет включено: {enabled_count} | выключено: {disabled_count}"
 
 
 def _pad_display(value: str, *, width: int) -> str:
@@ -2242,7 +2242,7 @@ def _ensure_password_env_available(
         existing_password_env = _router_password_env_reference(router)
         if router.id != router_id and existing_password_env == password_env:
             raise RuntimeError(
-                f"Password env '{password_env}' is already used by router '{router.id}'"
+                f"Password env '{password_env}' уже используется роутером '{router.id}'"
             )
 
 
@@ -2328,8 +2328,8 @@ def _format_connected(value: bool | None) -> str:
     if value is None:
         return "[dim]-[/dim]"
     if value:
-        return "[green]yes[/green]"
-    return "[yellow]no[/yellow]"
+        return "[green]да[/green]"
+    return "[yellow]нет[/yellow]"
 
 
 def _format_router_diagnostic_error(error_message: str | None) -> Text:
@@ -2412,12 +2412,12 @@ def _format_artifact_summary(artifact: RunArtifact) -> str:
                 failed_services += 1
             if service.added_count > 0 or service.removed_count > 0 or service.route_changed:
                 changed_services += 1
-    return f"changed={changed_services} failed={failed_services}"
+    return f"изменено={changed_services} ошибок={failed_services}"
 
 
 def _format_dns_proxy(value: bool | None) -> str:
     if value is None:
         return "[dim]unknown[/dim]"
     if value:
-        return "[green]enabled[/green]"
-    return "[yellow]disabled[/yellow]"
+        return "[green]включён[/green]"
+    return "[yellow]выключен[/yellow]"
