@@ -109,6 +109,7 @@ def test_install_script_covers_expected_installation_contract() -> None:
         "domaingo",
         "docker-compose-plugin",
         "systemctl enable --now docker",
+        "docker_runtime_available",
         "require_ubuntu_22_or_later",
         "This installer supports Ubuntu 22.04 and later only.",
         "${VERSION_CODENAME} stable",
@@ -125,6 +126,29 @@ def test_install_script_covers_expected_installation_contract() -> None:
 
     assert "Ubuntu 24.04 only" not in install_script
     assert "noble stable" not in install_script
+
+
+def test_install_script_preserves_existing_docker_runtime() -> None:
+    install_script = _read("install.sh")
+
+    runtime_check_start = install_script.index("docker_runtime_available()")
+    install_start = install_script.index("install_docker_packages()")
+    install_end = install_script.index("resolve_release_version()")
+    runtime_check_block = install_script[runtime_check_start:install_start]
+    install_block = install_script[install_start:install_end]
+
+    assert "docker compose version" in runtime_check_block
+    assert "if docker_runtime_available; then" in install_block
+    assert "systemctl enable --now docker" in install_block
+    assert "return" in install_block
+    assert install_block.index("if docker_runtime_available; then") < install_block.index(
+        "install_docker_repository"
+    )
+    assert "apt_install docker-buildx-plugin docker-compose-plugin" in install_block
+    assert (
+        "apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin "
+        "docker-compose-plugin" in install_block
+    )
 
 
 def test_install_script_uses_clean_deploy_while_preserving_operator_state() -> None:

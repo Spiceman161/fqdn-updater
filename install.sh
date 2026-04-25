@@ -123,11 +123,27 @@ deb [arch=${architecture} signed-by=/etc/apt/keyrings/docker.asc] https://downlo
 EOF
 }
 
+docker_runtime_available() {
+    command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1
+}
+
 install_docker_packages() {
+    if docker_runtime_available; then
+        systemctl enable --now docker
+        return
+    fi
+
     install_docker_repository
     apt-get update
-    apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+    if command -v docker >/dev/null 2>&1; then
+        apt_install docker-buildx-plugin docker-compose-plugin
+    else
+        apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    fi
+
     systemctl enable --now docker
+    docker_runtime_available || fail "Docker with Compose plugin is required."
 }
 
 resolve_release_version() {
