@@ -106,6 +106,55 @@ def test_service_definition_accepts_per_source_mixed_sources() -> None:
     ]
 
 
+def test_service_source_accepts_domain_suffix_filters() -> None:
+    payload = _config_payload(
+        services=[
+            {
+                "key": "telegram",
+                "sources": [
+                    {
+                        "url": "https://example.com/telegram.lst",
+                        "format": "raw_domain_list",
+                        "include_domain_suffixes": ["Telegram.ORG", "api.telegram.org."],
+                        "exclude_domain_suffixes": ["ads.telegram.org"],
+                    }
+                ],
+                "enabled": True,
+            }
+        ]
+    )
+
+    config = AppConfig.model_validate(payload)
+    source = config.services[0].resolved_sources[0]
+
+    assert source.include_domain_suffixes == ["telegram.org", "api.telegram.org"]
+    assert source.exclude_domain_suffixes == ["ads.telegram.org"]
+
+
+def test_service_source_rejects_domain_suffix_filters_for_cidr_sources() -> None:
+    payload = _config_payload(
+        services=[
+            {
+                "key": "telegram",
+                "sources": [
+                    {
+                        "url": "https://example.com/telegram-v4.lst",
+                        "format": "raw_cidr_list",
+                        "include_domain_suffixes": ["telegram.org"],
+                    }
+                ],
+                "enabled": True,
+            }
+        ]
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="domain suffix filters are only available for domain sources",
+    ):
+        AppConfig.model_validate(payload)
+
+
 def test_service_definition_rejects_sources_and_source_urls_together() -> None:
     payload = _config_payload(
         services=[

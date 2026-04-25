@@ -8,7 +8,28 @@ def test_builtin_service_registry_contains_expected_v1_services() -> None:
     services_by_key = {service.key: service for service in services}
 
     assert [service.key for service in services] == [
+        "anime",
+        "block",
+        "block_p2p_streaming",
+        "block_vpn_proxy_privacy",
+        "block_dev_hosting_security",
+        "block_finance_shopping",
+        "block_social_creators",
+        "block_news_politics",
+        "block_other",
+        "geoblock",
+        "geoblock_ai",
+        "geoblock_dev_cloud_saas",
+        "geoblock_media_games",
+        "geoblock_shopping_travel",
+        "geoblock_enterprise_hardware",
+        "geoblock_security_networking",
+        "geoblock_finance_payments",
+        "geoblock_health_reference",
+        "geoblock_other",
+        "hodca",
         "news",
+        "porn",
         "cloudflare",
         "cloudfront",
         "digitalocean",
@@ -26,6 +47,44 @@ def test_builtin_service_registry_contains_expected_v1_services() -> None:
         "twitter",
         "youtube",
     ]
+    for category_key in ("anime", "block", "geoblock", "hodca", "news", "porn"):
+        assert [str(source.url) for source in services_by_key[category_key].resolved_sources] == [
+            f"https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/"
+            f"Categories/{category_key}.lst"
+        ]
+        assert [source.format for source in services_by_key[category_key].resolved_sources] == [
+            "raw_domain_list"
+        ]
+    block_p2p_source = services_by_key["block_p2p_streaming"].resolved_sources[0]
+    assert str(block_p2p_source.url) == (
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/"
+        "Categories/block.lst"
+    )
+    assert block_p2p_source.include_domain_suffixes[:3] == [
+        "1337x.to",
+        "anidub.com",
+        "annas-archive.org",
+    ]
+    assert block_p2p_source.exclude_domain_suffixes == []
+    block_other_source = services_by_key["block_other"].resolved_sources[0]
+    assert str(block_other_source.url) == (
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/"
+        "Categories/block.lst"
+    )
+    assert "1337x.to" in block_other_source.exclude_domain_suffixes
+    assert block_other_source.include_domain_suffixes == []
+    geoblock_ai_source = services_by_key["geoblock_ai"].resolved_sources[0]
+    assert str(geoblock_ai_source.url) == (
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/"
+        "Categories/geoblock.lst"
+    )
+    assert "openai.com" in geoblock_ai_source.include_domain_suffixes
+    geoblock_other_source = services_by_key["geoblock_other"].resolved_sources[0]
+    assert str(geoblock_other_source.url) == (
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/"
+        "Categories/geoblock.lst"
+    )
+    assert "openai.com" in geoblock_other_source.exclude_domain_suffixes
     assert [str(source.url) for source in services_by_key["cloudflare"].resolved_sources] == [
         "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/cloudflare.lst",
         "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/cloudflare.lst",
@@ -56,6 +115,10 @@ def test_builtin_service_registry_contains_expected_v1_services() -> None:
         "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/ovh.lst",
         "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/ovh.lst",
         "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/ovh.lst",
+    ]
+    assert [str(source.url) for source in services_by_key["roblox"].resolved_sources] == [
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/roblox.lst",
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/roblox.lst",
     ]
     assert [str(source.url) for source in services_by_key["telegram"].resolved_sources] == [
         "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/telegram.lst",

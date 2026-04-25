@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from fqdn_updater.domain.config_schema import ServiceDefinitionConfig
+from fqdn_updater.domain.config_schema import ServiceDefinitionConfig, ServiceSourceConfig
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry, sort_object_group_entries
 from fqdn_updater.domain.source_loading import (
     NormalizedServiceSource,
@@ -56,6 +56,10 @@ class SourceLoadingService:
                     raw_text=raw_text,
                     source_format=source.format,
                 )
+                normalized_entries = _filter_source_entries(
+                    entries=normalized_entries,
+                    source=source,
+                )
             except Exception as exc:
                 raise _ServiceLoadFailure(
                     source_url=source_url_text,
@@ -77,3 +81,36 @@ class _ServiceLoadFailure(Exception):
         super().__init__(message)
         self.source_url = source_url
         self.message = message
+
+
+def _filter_source_entries(
+    *,
+    entries: tuple[ObjectGroupEntry, ...],
+    source: ServiceSourceConfig,
+) -> tuple[ObjectGroupEntry, ...]:
+    if not source.include_domain_suffixes and not source.exclude_domain_suffixes:
+        return entries
+
+    return tuple(entry for entry in entries if _entry_matches_source_filters(entry, source))
+
+
+def _entry_matches_source_filters(
+    entry: ObjectGroupEntry,
+    source: ServiceSourceConfig,
+) -> bool:
+    if entry.kind != "domain":
+        return False
+
+    if source.include_domain_suffixes and not _matches_any_domain_suffix(
+        entry.value, source.include_domain_suffixes
+    ):
+        return False
+    if source.exclude_domain_suffixes and _matches_any_domain_suffix(
+        entry.value, source.exclude_domain_suffixes
+    ):
+        return False
+    return True
+
+
+def _matches_any_domain_suffix(domain: str, suffixes: list[str]) -> bool:
+    return any(domain == suffix or domain.endswith(f".{suffix}") for suffix in suffixes)

@@ -20,12 +20,57 @@
   },
   "services": [
     {
+      "description": "Anime category domains from itdoginfo/allow-domains.",
+      "enabled": true,
+      "format": "raw_domain_list",
+      "key": "anime",
+      "source_urls": [
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Categories/anime.lst"
+      ]
+    },
+    {
+      "description": "Blocked category domains from itdoginfo/allow-domains.",
+      "enabled": true,
+      "format": "raw_domain_list",
+      "key": "block",
+      "source_urls": [
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Categories/block.lst"
+      ]
+    },
+    {
+      "description": "GeoBlock category domains from itdoginfo/allow-domains.",
+      "enabled": true,
+      "format": "raw_domain_list",
+      "key": "geoblock",
+      "source_urls": [
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Categories/geoblock.lst"
+      ]
+    },
+    {
+      "description": "H.O.D.C.A category domains from itdoginfo/allow-domains.",
+      "enabled": true,
+      "format": "raw_domain_list",
+      "key": "hodca",
+      "source_urls": [
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Categories/hodca.lst"
+      ]
+    },
+    {
       "description": "Blocked news domains from itdoginfo/allow-domains.",
       "enabled": true,
       "format": "raw_domain_list",
       "key": "news",
       "source_urls": [
         "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Categories/news.lst"
+      ]
+    },
+    {
+      "description": "Porn category domains from itdoginfo/allow-domains.",
+      "enabled": true,
+      "format": "raw_domain_list",
+      "key": "porn",
+      "source_urls": [
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Categories/porn.lst"
       ]
     },
     {
@@ -214,7 +259,7 @@
       ]
     },
     {
-      "description": "Roblox domains and subnets from itdoginfo/allow-domains.",
+      "description": "Roblox domains and IPv4 subnets from itdoginfo/allow-domains.",
       "enabled": true,
       "key": "roblox",
       "sources": [
@@ -225,10 +270,6 @@
         {
           "format": "raw_cidr_list",
           "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/roblox.lst"
-        },
-        {
-          "format": "raw_cidr_list",
-          "url": "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/roblox.lst"
         }
       ]
     },

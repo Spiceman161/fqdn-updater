@@ -137,10 +137,15 @@ Responsibilities:
 Критично: запись конфига должна быть atomic, например через temp file + rename.
 
 ### 5.3 Source Registry
-Хранит mapping между логическими сервисами и upstream-URL.
+Хранит mapping между логическими сервисами/категориями и upstream-URL.
 
 Встроенные сервисы v1:
+- `anime`
+- `block`
+- `geoblock`
+- `hodca`
 - `news`
+- `porn`
 - `cloudflare`
 - `cloudfront`
 - `digitalocean`
@@ -161,6 +166,7 @@ Responsibilities:
 Responsibilities:
 - знать source URL;
 - знать source format;
+- подключать category-списки из `Categories/<category>.lst`;
 - объединять `Services/<service>.lst` с соответствующими `Subnets/IPv4/<service>.lst` и
   `Subnets/IPv6/<service>.lst`, если subnet-файлы есть для этого сервиса;
 - вернуть unified service definition.

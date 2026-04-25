@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+from fqdn_updater.domain.object_group_entry import canonicalize_domain
 from fqdn_updater.domain.object_group_sharding import managed_shard_names
 from fqdn_updater.domain.schedule import RuntimeScheduleConfig
 from fqdn_updater.domain.source_normalizer import SourceFormat
@@ -111,6 +112,29 @@ class ServiceSourceConfig(BaseModel):
 
     url: HttpUrl
     format: SourceFormat
+    include_domain_suffixes: list[str] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
+    exclude_domain_suffixes: list[str] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
+
+    @field_validator("include_domain_suffixes", "exclude_domain_suffixes")
+    @classmethod
+    def _validate_domain_suffixes(cls, values: list[str], info: Any) -> list[str]:
+        normalized_values = [
+            canonicalize_domain(_require_non_blank(value, f"{info.field_name} item"))
+            for value in values
+        ]
+        return _require_unique(normalized_values, info.field_name)
+
+    @model_validator(mode="after")
+    def _validate_filter_shape(self) -> ServiceSourceConfig:
+        if self.format == "raw_cidr_list" and (
+            self.include_domain_suffixes or self.exclude_domain_suffixes
+        ):
+            raise ValueError("domain suffix filters are only available for domain sources")
+        return self
 
 
 class ServiceDefinitionConfig(BaseModel):

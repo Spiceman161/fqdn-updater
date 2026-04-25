@@ -99,6 +99,35 @@ def test_load_enabled_services_supports_per_source_mixed_formats() -> None:
     ]
 
 
+def test_load_enabled_services_applies_domain_suffix_filters() -> None:
+    service = ServiceDefinitionConfig.model_validate(
+        {
+            "key": "geoblock_ai",
+            "sources": [
+                {
+                    "url": "https://example.com/geoblock.lst",
+                    "format": "raw_domain_list",
+                    "include_domain_suffixes": ["openai.com"],
+                    "exclude_domain_suffixes": ["status.openai.com"],
+                }
+            ],
+            "enabled": True,
+        }
+    )
+    fetcher = FakeFetcher(
+        payloads={
+            "https://example.com/geoblock.lst": (
+                "openai.com\nchat.openai.com\nstatus.openai.com\nexample.org\n"
+            )
+        }
+    )
+
+    report = SourceLoadingService(fetcher=fetcher).load_enabled_services([service])
+
+    assert report.failed == ()
+    assert report.loaded[0].entries == ("chat.openai.com", "openai.com")
+
+
 def test_load_enabled_services_fails_service_atomically_when_any_url_fails() -> None:
     service = ServiceDefinitionConfig.model_validate(
         {

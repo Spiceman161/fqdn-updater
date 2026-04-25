@@ -10,12 +10,17 @@ from fqdn_updater.domain.object_group_sharding import managed_shard_names
 from fqdn_updater.domain.static_route_diff import StaticRouteState
 
 
-def _mapping(*, managed: bool = True) -> RouterServiceMappingConfig:
+def _mapping(
+    *,
+    managed: bool = True,
+    service_key: str = "telegram",
+    object_group_name: str = "svc-telegram",
+) -> RouterServiceMappingConfig:
     return RouterServiceMappingConfig.model_validate(
         {
             "router_id": "router-1",
-            "service_key": "telegram",
-            "object_group_name": "svc-telegram",
+            "service_key": service_key,
+            "object_group_name": object_group_name,
             "route_target_type": "gateway",
             "route_target_value": "10.0.0.1",
             "route_interface": "Wireguard0",
@@ -130,6 +135,42 @@ def test_service_sync_planner_shards_large_mapping_plans() -> None:
     assert plans[1].desired_route_binding is not None
     assert plans[1].desired_route_binding.object_group_name == "svc-telegram-2"
     assert [plan.remove_route for plan in plans] == [False, False]
+
+
+@pytest.mark.parametrize(
+    ("service_key", "entry_count", "expected_shard_sizes"),
+    (
+        ("block", 335, [300, 35]),
+        ("geoblock", 446, [300, 146]),
+    ),
+)
+def test_service_sync_planner_shards_large_category_mapping_plans(
+    service_key: str,
+    entry_count: int,
+    expected_shard_sizes: list[int],
+) -> None:
+    planner = ServiceSyncPlanner()
+    object_group_name = f"fqdn-{service_key}"
+    desired_entries = [f"{service_key}-{index:03d}.example" for index in range(entry_count)]
+
+    plans = planner.plan_mapping(
+        mapping=_mapping(service_key=service_key, object_group_name=object_group_name),
+        desired_entries=desired_entries,
+        actual_states={
+            name: ObjectGroupState(name=name, entries=(), exists=False)
+            for name in managed_shard_names(object_group_name)
+        },
+        actual_route_bindings={
+            name: RouteBindingState(object_group_name=name, exists=False)
+            for name in managed_shard_names(object_group_name)
+        },
+    )
+
+    assert [plan.object_group_name for plan in plans] == [
+        object_group_name,
+        f"{object_group_name}-2",
+    ]
+    assert [len(plan.object_group_diff.to_add) for plan in plans] == expected_shard_sizes
 
 
 def test_service_sync_planner_cleans_stale_shard_route() -> None:
