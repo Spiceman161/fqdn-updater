@@ -287,6 +287,12 @@ install_schedule() {
     "${VENV_DIR}/bin/fqdn-updater" schedule install --config "${CONFIG_PATH}"
 }
 
+set_config_permissions() {
+    if [[ -f "${CONFIG_PATH}" ]]; then
+        chmod 0644 "${CONFIG_PATH}"
+    fi
+}
+
 build_runtime_image() {
     (
         cd "${INSTALL_DIR}"
@@ -347,6 +353,7 @@ main() {
     deploy_release "${DOWNLOAD_RELEASE_DIR}"
     install_virtualenv
     initialize_config_if_missing
+    set_config_permissions
     install_schedule
     build_runtime_image
     install_wrapper

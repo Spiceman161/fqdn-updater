@@ -56,6 +56,7 @@ class ConfigRepository:
                 temp_path = Path(handle.name)
             if temp_path is None:
                 raise RuntimeError(f"Temporary file was not created for {path}")
+            temp_path.chmod(0o644)
             temp_path.replace(path)
         except OSError as exc:
             if temp_path is not None and temp_path.exists():

@@ -49,6 +49,15 @@ def test_overwrite_uses_atomic_replace_path(tmp_path, monkeypatch) -> None:
     assert json.loads(target_path.read_text(encoding="utf-8")) == config.model_dump(mode="json")
 
 
+def test_write_sets_config_readable_permissions(tmp_path) -> None:
+    repository = ConfigRepository()
+    target_path = tmp_path / "config.json"
+
+    repository.write_new(path=target_path, config=AppConfig.default())
+
+    assert target_path.stat().st_mode & 0o777 == 0o644
+
+
 def test_overwrite_refuses_missing_config(tmp_path) -> None:
     repository = ConfigRepository()
     target_path = tmp_path / "missing.json"

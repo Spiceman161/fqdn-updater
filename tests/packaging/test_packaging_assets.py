@@ -119,6 +119,8 @@ def test_install_script_covers_expected_installation_contract() -> None:
         'printf \'heads/%s\\n\' "${DEFAULT_BRANCH}"',
         'archive/refs/${release_ref}.tar.gz',
         "Downloaded archive does not contain pyproject.toml.",
+        "set_config_permissions",
+        'chmod 0644 "${CONFIG_PATH}"',
         '"${VENV_DIR}/bin/fqdn-updater" init --config "${CONFIG_PATH}"',
         '"${VENV_DIR}/bin/fqdn-updater" schedule set-daily \\',
         '"${VENV_DIR}/bin/fqdn-updater" schedule install --config "${CONFIG_PATH}"',
