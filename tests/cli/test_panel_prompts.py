@@ -211,6 +211,48 @@ def test_checkbox_question_renders_table_header_and_live_summary_only_while_acti
     assert "Итого выбрано" not in history
 
 
+def test_checkbox_question_syncs_group_parent_and_children() -> None:
+    table_meta = CheckboxTableMeta(
+        header="Сервис                 | домены |   IPv4 |   IPv6",
+        summary=lambda selected: f"Итого выбрано         | {len(selected):>7} | {0:>7} | {0:>7}",
+        selection_groups={"block": ("block_p2p_streaming", "block_other")},
+    )
+
+    result, _rendered, _raw = _run_question(
+        lambda *, input, output: _build_checkbox_question(
+            message="Сервисы",
+            choices=[
+                PromptChoice("block (full)", "block"),
+                PromptChoice("   p2p/media", "block_p2p_streaming"),
+                PromptChoice("   other", "block_other"),
+            ],
+            table_meta=table_meta,
+            style=_style(),
+            input=input,
+            output=output,
+        ),
+        user_input=" \r",
+    )
+    assert result == ["block", "block_p2p_streaming", "block_other"]
+
+    result, _rendered, _raw = _run_question(
+        lambda *, input, output: _build_checkbox_question(
+            message="Сервисы",
+            choices=[
+                PromptChoice("block (full)", "block", checked=True),
+                PromptChoice("   p2p/media", "block_p2p_streaming", checked=True),
+                PromptChoice("   other", "block_other", checked=True),
+            ],
+            table_meta=table_meta,
+            style=_style(),
+            input=input,
+            output=output,
+        ),
+        user_input="\x1b[B \r",
+    )
+    assert result == ["block_other"]
+
+
 def test_render_checkbox_answer_uses_display_titles_for_table_mode() -> None:
     assert (
         _render_checkbox_answer(

@@ -80,7 +80,12 @@ class ScriptedPromptAdapter:
                 "hint_lines": hint_lines,
                 "table_header": table_meta.header if table_meta is not None else None,
                 "table_summary": (
-                    table_meta.summary(checked_values) if table_meta is not None else None
+                    _plain_table_summary(table_meta.summary(checked_values))
+                    if table_meta is not None
+                    else None
+                ),
+                "selection_groups": (
+                    table_meta.selection_groups if table_meta is not None else None
                 ),
             }
         )
@@ -136,6 +141,12 @@ class ScriptedPromptAdapter:
         if not queue:
             raise AssertionError(f"Missing scripted prompt answer for {label}")
         return queue.popleft()
+
+
+def _plain_table_summary(summary: str | list[tuple[str, str]]) -> str:
+    if isinstance(summary, str):
+        return summary
+    return "".join(text for _style, text in summary)
 
 
 class ScriptedSourceLoadingService:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -37,7 +37,8 @@ class PromptChoice:
 @dataclass(frozen=True)
 class CheckboxTableMeta:
     header: str
-    summary: Callable[[tuple[str, ...]], str]
+    summary: Callable[[tuple[str, ...]], str | list[tuple[str, str]]]
+    selection_groups: dict[str, tuple[str, ...]] | None = None
 
 
 class PromptAdapter(Protocol):
@@ -274,6 +275,11 @@ def _build_checkbox_question(
     )
     if table_meta is not None:
         _install_checkbox_table_meta(question=question, table_meta=table_meta)
+        if table_meta.selection_groups:
+            _install_checkbox_selection_groups(
+                question=question,
+                selection_groups=table_meta.selection_groups,
+            )
     return _decorate_question(
         question=question,
         hint_lines=hint_lines,
@@ -434,12 +440,9 @@ def _install_checkbox_table_meta(
             height=1,
             dont_extend_height=True,
             content=FormattedTextControl(
-                lambda: [
-                    (
-                        "class:footer",
-                        f"     {table_meta.summary(tuple(inquirer_control.selected_options))}",
-                    )
-                ]
+                lambda: _checkbox_summary_tokens(
+                    table_meta.summary(tuple(inquirer_control.selected_options))
+                )
             ),
         ),
         filter=~IsDone(),
@@ -447,6 +450,133 @@ def _install_checkbox_table_meta(
 
     container.children.insert(inquirer_index, header_window)
     container.children.insert(inquirer_index + 2, summary_window)
+
+
+def _install_checkbox_selection_groups(
+    *,
+    question: Question,
+    selection_groups: dict[str, tuple[str, ...]],
+) -> None:
+    inquirer_control = _find_inquirer_control(question)
+    if inquirer_control is None:
+        return
+
+    choice_order = [choice.value for choice in inquirer_control.choices]
+    bindings = KeyBindings()
+
+    @bindings.add(" ", eager=True)
+    def _toggle_grouped_selection(_event) -> None:
+        pointed_choice = inquirer_control.get_pointed_at().value
+        inquirer_control.selected_options = _toggle_checkbox_group_value(
+            selected_values=inquirer_control.selected_options,
+            pointed_value=pointed_choice,
+            selection_groups=selection_groups,
+            choice_order=choice_order,
+        )
+
+    @bindings.add("a", eager=True)
+    def _toggle_all_grouped_selection(_event) -> None:
+        enabled_values = [
+            choice.value for choice in inquirer_control.choices if not choice.disabled
+        ]
+        if set(enabled_values).issubset(inquirer_control.selected_options):
+            inquirer_control.selected_options = []
+            return
+        inquirer_control.selected_options = enabled_values
+
+    @bindings.add("i", eager=True)
+    def _invert_grouped_selection(_event) -> None:
+        selected = set(inquirer_control.selected_options)
+        inverted = [
+            choice.value
+            for choice in inquirer_control.choices
+            if not choice.disabled and choice.value not in selected
+        ]
+        inquirer_control.selected_options = _complete_checkbox_group_selection(
+            selected_values=inverted,
+            selection_groups=selection_groups,
+            choice_order=choice_order,
+        )
+
+    question.application.key_bindings = merge_key_bindings(
+        [question.application.key_bindings, bindings]
+    )
+
+
+def _find_inquirer_control(question: Question) -> InquirerControl | None:
+    container = question.application.layout.container
+    if not isinstance(container, HSplit):
+        return None
+
+    for child in container.children:
+        if not isinstance(child, ConditionalContainer):
+            continue
+        if not isinstance(child.content, Window):
+            continue
+        if isinstance(child.content.content, InquirerControl):
+            return child.content.content
+    return None
+
+
+def _toggle_checkbox_group_value(
+    *,
+    selected_values: Sequence[Any],
+    pointed_value: Any,
+    selection_groups: dict[str, tuple[str, ...]],
+    choice_order: Sequence[Any],
+) -> list[Any]:
+    selected = set(selected_values)
+    parent_by_child = {
+        child: parent for parent, children in selection_groups.items() for child in children
+    }
+
+    if pointed_value in selection_groups:
+        children = selection_groups[pointed_value]
+        if pointed_value in selected:
+            selected.discard(pointed_value)
+            selected.difference_update(children)
+        else:
+            selected.add(pointed_value)
+            selected.update(children)
+    elif pointed_value in parent_by_child:
+        parent = parent_by_child[pointed_value]
+        children = selection_groups[parent]
+        if pointed_value in selected:
+            selected.discard(pointed_value)
+            selected.discard(parent)
+        else:
+            selected.add(pointed_value)
+            if all(child in selected for child in children):
+                selected.add(parent)
+    elif pointed_value in selected:
+        selected.discard(pointed_value)
+    else:
+        selected.add(pointed_value)
+
+    return [value for value in choice_order if value in selected]
+
+
+def _complete_checkbox_group_selection(
+    *,
+    selected_values: Sequence[Any],
+    selection_groups: dict[str, tuple[str, ...]],
+    choice_order: Sequence[Any],
+) -> list[Any]:
+    selected = set(selected_values)
+    for parent, children in selection_groups.items():
+        if parent in selected:
+            selected.update(children)
+        elif all(child in selected for child in children):
+            selected.add(parent)
+    return [value for value in choice_order if value in selected]
+
+
+def _checkbox_summary_tokens(
+    summary: str | list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    if isinstance(summary, str):
+        return [("class:footer", f"     {summary}")]
+    return [("class:footer", "     "), *summary]
 
 
 def _compose_footer(*, instruction: str | None, default_footer: str) -> str:
