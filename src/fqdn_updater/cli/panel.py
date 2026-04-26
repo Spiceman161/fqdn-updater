@@ -43,11 +43,12 @@ from fqdn_updater.domain.config_schema import (
     ServiceDefinitionConfig,
 )
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
-from fqdn_updater.domain.keenetic_limits import (
-    KEENETIC_MAX_FQDN_OBJECT_GROUP_ENTRIES,
-    KEENETIC_MAX_TOTAL_FQDN_ENTRIES,
+from fqdn_updater.domain.run_artifact import (
+    RouterResultStatus,
+    RunArtifact,
+    RunStatus,
+    RunTrigger,
 )
-from fqdn_updater.domain.run_artifact import RunArtifact, RunStatus, RunTrigger
 from fqdn_updater.domain.schedule import RuntimeScheduleConfig, ScheduleWeekday
 from fqdn_updater.domain.source_loading import SourceLoadReport
 from fqdn_updater.domain.status_diagnostics import StatusDiagnosticsResult
@@ -87,34 +88,79 @@ ROOT_PANEL_WIDTH = 86
 DISCOVERY_ERROR_MESSAGE_LIMIT = 280
 SERVICE_SELECTION_SERVICE_WIDTH = 22
 SERVICE_SELECTION_COUNT_WIDTH = 7
+KEENETIC_DOMAIN_SELECTION_LIMIT = 1024
+SERVICE_SELECTION_GROUPS = {
+    "block": (
+        "block_p2p_streaming",
+        "block_vpn_proxy_privacy",
+        "block_dev_hosting_security",
+        "block_finance_shopping",
+        "block_social_creators",
+        "block_news_politics",
+        "block_other",
+    ),
+    "geoblock": (
+        "geoblock_ai",
+        "geoblock_dev_cloud_saas",
+        "geoblock_media_games",
+        "geoblock_shopping_travel",
+        "geoblock_enterprise_hardware",
+        "geoblock_security_networking",
+        "geoblock_finance_payments",
+        "geoblock_health_reference",
+        "geoblock_other",
+    ),
+    "hodca": (
+        "hodca_dev_cloud_saas",
+        "hodca_network_os_tools",
+        "hodca_media_games",
+        "hodca_ai_education_research",
+        "hodca_social_lifestyle",
+        "hodca_finance_shopping",
+        "hodca_other",
+    ),
+}
 SERVICE_DISPLAY_LABELS = {
     "block": "block (full)",
-    "block_p2p_streaming": "block: p2p/media",
-    "block_vpn_proxy_privacy": "block: vpn/privacy",
-    "block_dev_hosting_security": "block: dev/hosting",
-    "block_finance_shopping": "block: finance/shop",
-    "block_social_creators": "block: social/media",
-    "block_news_politics": "block: news/politics",
-    "block_other": "block: other",
+    "block_p2p_streaming": "   p2p/media",
+    "block_vpn_proxy_privacy": "   vpn/privacy",
+    "block_dev_hosting_security": "   dev/hosting",
+    "block_finance_shopping": "   finance/shop",
+    "block_social_creators": "   social/media",
+    "block_news_politics": "   news/politics",
+    "block_other": "   other",
     "geoblock": "geoblock (full)",
-    "geoblock_ai": "geo: AI tools",
-    "geoblock_dev_cloud_saas": "geo: dev/SaaS",
-    "geoblock_media_games": "geo: media/games",
-    "geoblock_shopping_travel": "geo: shopping/travel",
-    "geoblock_enterprise_hardware": "geo: enterprise",
-    "geoblock_security_networking": "geo: security/net",
-    "geoblock_finance_payments": "geo: payments",
-    "geoblock_health_reference": "geo: health/ref",
-    "geoblock_other": "geo: other",
+    "geoblock_ai": "   AI tools",
+    "geoblock_dev_cloud_saas": "   dev/SaaS",
+    "geoblock_media_games": "   media/games",
+    "geoblock_shopping_travel": "   shopping/travel",
+    "geoblock_enterprise_hardware": "   enterprise",
+    "geoblock_security_networking": "   security/net",
+    "geoblock_finance_payments": "   payments",
+    "geoblock_health_reference": "   health/ref",
+    "geoblock_other": "   other",
+    "hodca": "H.O.D.C.A (full)",
+    "hodca_dev_cloud_saas": "   dev/cloud/SaaS",
+    "hodca_network_os_tools": "   network/OS/tools",
+    "hodca_media_games": "   media/games",
+    "hodca_ai_education_research": "   AI/education",
+    "hodca_social_lifestyle": "   social/lifestyle",
+    "hodca_finance_shopping": "   finance/shop",
+    "hodca_other": "   other",
     "meta": "meta (whatsapp)",
 }
 MAIN_MENU_HINT_LINES = (
-    "Панель редактирует локальный config и preview-flow.",
-    "Изменения на маршрутизаторах применяются только через dry-run и sync.",
+    "Для начала работы добавьте маршрутизатор Keenetic с ОС версии 5 и выше.",
+    "Затем настройте обновление списков по расписанию.",
 )
 SCHEDULE_MENU_HINT_LINES = (
     "Расписание хранится в config и разворачивается только через systemd timer.",
     "Команда установки обновляет host-level unit/timer из сохранённых параметров.",
+)
+MANUAL_RUN_HINT_LINES = (
+    "Выберите один или несколько маршрутизаторов для немедленного обновления списков.",
+    "Будут применены только сохранённые managed mappings; перед записью панель прочитает "
+    "текущее состояние Keenetic.",
 )
 ROUTER_MENU_HINT_LINES = (
     "Здесь можно добавить новый маршрутизатор, изменить его параметры, проверить связь "
@@ -123,9 +169,8 @@ ROUTER_MENU_HINT_LINES = (
 )
 SERVICE_SELECTION_HINT_LINES = (
     "Для каждого выбранного сервиса будет создан свой список в разделе «Маршрутизация» Keenetic.",
-    f"Лимиты доменов: до {KEENETIC_MAX_FQDN_OBJECT_GROUP_ENTRIES} записей в одном "
-    f"object-group fqdn и до {KEENETIC_MAX_TOTAL_FQDN_ENTRIES} managed FQDN-записей "
-    "суммарно на роутер.",
+    "Лимит доменов роутеров Keenetic составляет 1024 записи. "
+    "Вам необходимо выбрать не более этого количества записей.",
     "Для IPv4+IPv6 действует отдельный лимит: около 4000 subnet-записей суммарно на роутер.",
 )
 ADD_ROUTER_HINT_LINES = ("Введите имя нового маршрутизатора.",)
@@ -203,6 +248,12 @@ class ServiceEntryCounts:
     ipv6: int | None
 
 
+@dataclass(frozen=True)
+class RouterLastRun:
+    finished_at: datetime
+    status: RouterResultStatus
+
+
 class PanelController:
     """Interactive terminal control panel for local config management."""
 
@@ -265,6 +316,7 @@ class PanelController:
                 choices=[
                     PromptChoice("Маршрутизаторы", "routers"),
                     PromptChoice("Списки и маршруты", "lists"),
+                    PromptChoice("Ручной запуск", "manual-run"),
                     PromptChoice("Расписание", "schedule"),
                     PromptChoice("Журнал", "runs"),
                     PromptChoice("Проверка конфига", "config"),
@@ -281,6 +333,8 @@ class PanelController:
                 self._router_menu()
             elif choice == "lists":
                 self._lists_menu()
+            elif choice == "manual-run":
+                self._manual_run_menu()
             elif choice == "schedule":
                 self._schedule_menu()
             elif choice == "runs":
@@ -311,31 +365,35 @@ class PanelController:
         title = Text("FQDN-updater", style="bold white")
         subtitle = Text("операторская панель", style="bold cyan")
         header = Text.assemble(title, "  ", subtitle)
-        self._console.print(Panel(header, border_style="bright_cyan", width=ROOT_PANEL_WIDTH))
+        self._console.print(Panel(header, border_style="bright_cyan"))
 
         router_table = Table(show_header=True, header_style="bold white", box=None)
-        router_table.add_column("Маршрутизатор")
-        router_table.add_column("Статус")
-        router_table.add_column("Сервисы")
+        router_table.add_column("Маршрутизатор", no_wrap=True)
+        router_table.add_column("Состояние", no_wrap=True)
         router_table.add_column("RCI")
+        router_table.add_column("Последний запуск", no_wrap=True)
+        router_table.add_column("Статус", no_wrap=True)
+        last_runs = self._last_router_runs(config=config)
         for router in config.routers:
-            selected_services = sorted(
-                mapping.service_key for mapping in config.mappings if mapping.router_id == router.id
-            )
+            last_run = last_runs.get(router.id)
             router_table.add_row(
                 router.id,
                 _router_state_label(router.enabled),
-                _format_service_list(selected_services) if selected_services else "[dim]нет[/dim]",
                 str(router.rci_url),
+                _format_dashboard_last_run_at(last_run.finished_at) if last_run else "[dim]-[/dim]",
+                (
+                    _format_dashboard_router_run_status(last_run.status)
+                    if last_run
+                    else "[dim]-[/dim]"
+                ),
             )
         if not config.routers:
-            router_table.add_row("[dim]нет[/dim]", "-", "-", "-")
+            router_table.add_row("[dim]нет[/dim]", "-", "-", "-", "-")
         self._console.print(
             Panel(
                 router_table,
                 title="Маршрутизаторы",
                 border_style="bright_black",
-                width=ROOT_PANEL_WIDTH,
             )
         )
         self._console.print(
@@ -343,9 +401,26 @@ class PanelController:
                 _schedule_summary_table(config.runtime.schedule),
                 title="Расписание",
                 border_style="bright_black",
-                width=ROOT_PANEL_WIDTH,
             )
         )
+
+    def _last_router_runs(self, *, config: AppConfig) -> dict[str, RouterLastRun]:
+        history = self._run_history_service.list_recent(
+            config=config,
+            config_path=self._config_path,
+            limit=50,
+        )
+        last_runs: dict[str, RouterLastRun] = {}
+        for run in history.runs:
+            artifact = run.artifact
+            for router_result in artifact.router_results:
+                existing = last_runs.get(router_result.router_id)
+                if existing is None or artifact.finished_at > existing.finished_at:
+                    last_runs[router_result.router_id] = RouterLastRun(
+                        finished_at=artifact.finished_at,
+                        status=router_result.status,
+                    )
+        return last_runs
 
     def _router_menu(self) -> None:
         while True:
@@ -917,6 +992,52 @@ class PanelController:
                 default_choice = "dry-run"
                 self._run_dry_run_preview()
 
+    def _manual_run_menu(self) -> None:
+        config = self._load_config()
+        if not config.routers:
+            self._console.print("[yellow]Нет настроенных маршрутизаторов.[/yellow]")
+            self._pause()
+            return
+
+        router_id_width, router_name_width = _router_selection_column_widths(config.routers)
+        selected_router_ids = self._prompts.checkbox(
+            message="Ручной запуск",
+            choices=[
+                PromptChoice(
+                    title=_router_selection_title(
+                        router=router,
+                        router_id_width=router_id_width,
+                        router_name_width=router_name_width,
+                    ),
+                    value=router.id,
+                    checked=router.enabled,
+                    answer_title=router.id,
+                )
+                for router in config.routers
+            ],
+            instruction=(
+                "Стрелки выбирают, Пробел отмечает, Enter запускает, Esc возвращает назад."
+            ),
+            hint_lines=MANUAL_RUN_HINT_LINES,
+            table_meta=CheckboxTableMeta(
+                header=_router_selection_header(
+                    router_id_width=router_id_width,
+                    router_name_width=router_name_width,
+                ),
+                summary=lambda selected_values: _manual_run_selection_summary(
+                    selected_values=selected_values,
+                ),
+            ),
+        )
+        if selected_router_ids is None:
+            return
+        if not selected_router_ids:
+            self._console.print("[yellow]Маршрутизаторы для запуска не выбраны.[/yellow]")
+            self._pause()
+            return
+
+        self._run_sync_for_routers(router_ids=tuple(selected_router_ids))
+
     def _schedule_menu(self) -> None:
         while True:
             schedule = self._load_config().runtime.schedule
@@ -1124,9 +1245,19 @@ class PanelController:
 
     def _about_menu(self) -> None:
         self._console.print("[bold]FQDN-updater panel[/bold]")
-        self._console.print("Локальная терминальная панель для управления config и preview-flow.")
         self._console.print(
-            "Изменения на маршрутизаторах выполняются только через dry-run/sync с явным выбором."
+            "Панель предназначена для обновления списков маршрутизации маршрутизаторов "
+            "Keenetic (Netcraze) на основе репозитория "
+            "https://github.com/itdoginfo/allow-domains."
+        )
+        self._console.print(
+            "FQDN-updater поддерживает эти списки в актуальном состоянии: загружает "
+            "домены и подсети, обновляет managed FQDN-группы и применяет сохранённые "
+            "маршруты на выбранных маршрутизаторах."
+        )
+        self._console.print(
+            "Панель помогает безопасно настроить маршрутизаторы, списки, маршруты, "
+            "расписание и ручной запуск без прямого редактирования config."
         )
         self._pause()
 
@@ -1165,6 +1296,8 @@ class PanelController:
         hint_lines: tuple[str, ...] | None = None,
     ) -> set[str] | None:
         service_counts = self._load_service_entry_counts(config=config)
+        enabled_service_keys = {service.key for service in config.services if service.enabled}
+        selection_groups = _enabled_service_selection_groups(enabled_service_keys)
         service_choices = [
             PromptChoice(
                 title=_service_selection_title(
@@ -1196,11 +1329,12 @@ class PanelController:
                     selected_values=selected_values,
                     service_counts=service_counts,
                 ),
+                selection_groups=selection_groups,
             ),
         )
         if result is None:
             return None
-        return set(result)
+        return _effective_service_selection(result)
 
     def _load_service_entry_counts(self, *, config: AppConfig) -> dict[str, ServiceEntryCounts]:
         enabled_services = [service for service in config.services if service.enabled]
@@ -1657,13 +1791,21 @@ class PanelController:
     def _run_sync_for_router(self, *, router_id: str) -> None:
         config = self._config_with_resolved_runtime_paths(config=self._load_config())
         router_config = _config_for_router(config=config, router_id=router_id)
+        self._run_sync_with_config(config=router_config)
+
+    def _run_sync_for_routers(self, *, router_ids: tuple[str, ...]) -> None:
+        config = self._config_with_resolved_runtime_paths(config=self._load_config())
+        router_config = _config_for_routers(config=config, router_ids=router_ids)
+        self._run_sync_with_config(config=router_config)
+
+    def _run_sync_with_config(self, *, config: AppConfig) -> None:
         try:
-            self._load_runtime_secret_env_file(config=router_config)
+            self._load_runtime_secret_env_file(config=config)
             orchestrator = self._sync_orchestrator
             if isinstance(orchestrator, SyncOrchestrator):
-                orchestrator = self._build_sync_orchestrator(config=router_config)
+                orchestrator = self._build_sync_orchestrator(config=config)
             result = orchestrator.run(
-                config=router_config,
+                config=config,
                 trigger=RunTrigger.MANUAL,
             )
         except RuntimeError as exc:
@@ -1886,8 +2028,6 @@ def _schedule_summary_table(schedule: RuntimeScheduleConfig) -> Table:
     )
     table.add_row("Timezone", schedule.timezone)
     table.add_row("Unit", schedule.systemd.unit_name)
-    table.add_row("Deployment root", schedule.systemd.deployment_root)
-    table.add_row("Compose service", schedule.systemd.compose_service)
     return table
 
 
@@ -1916,6 +2056,23 @@ def _config_for_router(*, config: AppConfig, router_id: str) -> AppConfig:
         update={
             "routers": [router],
             "mappings": [mapping for mapping in config.mappings if mapping.router_id == router_id],
+        }
+    )
+
+
+def _config_for_routers(*, config: AppConfig, router_ids: tuple[str, ...]) -> AppConfig:
+    selected_router_ids = set(router_ids)
+    routers = [router for router in config.routers if router.id in selected_router_ids]
+    found_router_ids = {router.id for router in routers}
+    missing_router_ids = sorted(selected_router_ids - found_router_ids)
+    if missing_router_ids:
+        raise RuntimeError(f"Router '{missing_router_ids[0]}' does not exist")
+    return config.model_copy(
+        update={
+            "routers": routers,
+            "mappings": [
+                mapping for mapping in config.mappings if mapping.router_id in selected_router_ids
+            ],
         }
     )
 
@@ -2091,31 +2248,68 @@ def _service_selection_totals_line(
     *,
     selected_values: tuple[str, ...],
     service_counts: dict[str, ServiceEntryCounts],
-) -> str:
-    if not selected_values:
+) -> str | list[tuple[str, str]]:
+    effective_selected_values = tuple(_effective_service_selection(selected_values))
+    if not effective_selected_values:
         totals = ServiceEntryCounts(domains=0, ipv4=0, ipv6=0)
     else:
         totals = ServiceEntryCounts(
             domains=_sum_entry_counts(
                 service_counts.get(service_key, ServiceEntryCounts(None, None, None)).domains
-                for service_key in selected_values
+                for service_key in effective_selected_values
             ),
             ipv4=_sum_entry_counts(
                 service_counts.get(service_key, ServiceEntryCounts(None, None, None)).ipv4
-                for service_key in selected_values
+                for service_key in effective_selected_values
             ),
             ipv6=_sum_entry_counts(
                 service_counts.get(service_key, ServiceEntryCounts(None, None, None)).ipv6
-                for service_key in selected_values
+                for service_key in effective_selected_values
             ),
         )
 
+    domain_count = _format_entry_count(totals.domains)
+    prefix = f"{'Итого выбрано':<{SERVICE_SELECTION_SERVICE_WIDTH}} | "
+    suffix = (
+        f" | {_format_entry_count(totals.ipv4):>{SERVICE_SELECTION_COUNT_WIDTH}} "
+        f"| {_format_entry_count(totals.ipv6):>{SERVICE_SELECTION_COUNT_WIDTH}}"
+    )
+    if totals.domains is not None and totals.domains > KEENETIC_DOMAIN_SELECTION_LIMIT:
+        return [
+            ("class:footer", prefix),
+            ("fg:#ff5f5f bold", f"{domain_count:>{SERVICE_SELECTION_COUNT_WIDTH}}"),
+            ("class:footer", suffix),
+        ]
+
     return (
         f"{'Итого выбрано':<{SERVICE_SELECTION_SERVICE_WIDTH}} "
-        f"| {_format_entry_count(totals.domains):>{SERVICE_SELECTION_COUNT_WIDTH}} "
+        f"| {domain_count:>{SERVICE_SELECTION_COUNT_WIDTH}} "
         f"| {_format_entry_count(totals.ipv4):>{SERVICE_SELECTION_COUNT_WIDTH}} "
         f"| {_format_entry_count(totals.ipv6):>{SERVICE_SELECTION_COUNT_WIDTH}}"
     )
+
+
+def _enabled_service_selection_groups(
+    enabled_service_keys: set[str],
+) -> dict[str, tuple[str, ...]]:
+    return {
+        parent: children
+        for parent, children in SERVICE_SELECTION_GROUPS.items()
+        if parent in enabled_service_keys
+        and all(child in enabled_service_keys for child in children)
+    }
+
+
+def _effective_service_selection(selected_values: Iterable[str]) -> set[str]:
+    selected = set(selected_values)
+    for parent, children in SERVICE_SELECTION_GROUPS.items():
+        child_set = set(children)
+        if parent in selected:
+            selected.difference_update(child_set)
+        elif child_set.issubset(selected):
+            selected.difference_update(child_set)
+            selected.add(parent)
+    return selected
 
 
 def _sum_entry_counts(values: Iterable[int | None]) -> int | None:
@@ -2158,6 +2352,13 @@ def _router_selection_title(
     )
 
 
+def _router_selection_header(*, router_id_width: int, router_name_width: int) -> str:
+    return (
+        f"{'Маршрутизатор':<{router_id_width}} | "
+        f"{'Имя':<{router_name_width}} | Статус"
+    )
+
+
 def _router_toggle_title(
     *,
     router: RouterConfig,
@@ -2178,6 +2379,10 @@ def _router_toggle_summary(*, selected_values: tuple[str, ...], total: int) -> s
     enabled_count = len(selected_values)
     disabled_count = total - enabled_count
     return f"Будет включено: {enabled_count} | выключено: {disabled_count}"
+
+
+def _manual_run_selection_summary(*, selected_values: tuple[str, ...]) -> str:
+    return f"Будет запущено: {len(selected_values)}"
 
 
 def _pad_display(value: str, *, width: int) -> str:
@@ -2368,6 +2573,18 @@ def _format_run_status(status: RunStatus) -> str:
     if status is RunStatus.PARTIAL:
         return "[yellow]partial[/yellow]"
     return "[red]failed[/red]"
+
+
+def _format_dashboard_last_run_at(value: datetime) -> str:
+    return value.strftime("%d.%m.%Y %H:%M")
+
+
+def _format_dashboard_router_run_status(status: RouterResultStatus) -> str:
+    if status in {RouterResultStatus.UPDATED, RouterResultStatus.NO_CHANGES}:
+        return "[green]ok[/green]"
+    if status is RouterResultStatus.PARTIAL:
+        return "[yellow]partial[/yellow]"
+    return "[red]fail[/red]"
 
 
 def _format_history_finished_at(value) -> str:

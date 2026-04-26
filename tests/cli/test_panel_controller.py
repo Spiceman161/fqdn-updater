@@ -8,6 +8,7 @@ import pytest
 
 import fqdn_updater.cli.panel as panel_module
 from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryResult
+from fqdn_updater.application.run_history import RecentRun, RunHistoryResult
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult
 from fqdn_updater.domain.config_schema import AppConfig
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
@@ -86,6 +87,29 @@ class _RecordingSyncOrchestrator:
         return self.result
 
 
+class _RecordingRunHistoryService:
+    def __init__(self, *, artifacts_dir: Path, runs: tuple[RecentRun, ...]) -> None:
+        self.artifacts_dir = artifacts_dir
+        self.runs = runs
+        self.calls: list[tuple[str, Path, int, int]] = []
+
+    def list_recent(
+        self,
+        *,
+        config: AppConfig,
+        config_path: Path,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> RunHistoryResult:
+        self.calls.append((config.runtime.artifacts_dir, config_path, limit, offset))
+        return RunHistoryResult(
+            artifacts_dir=self.artifacts_dir,
+            runs=self.runs,
+            warnings=(),
+            total_count=len(self.runs),
+        )
+
+
 def _sync_result(*, router_id: str = "router-1") -> SyncExecutionResult:
     timestamp = datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc)
     artifact = RunArtifact(
@@ -128,6 +152,10 @@ def test_main_menu_passes_dashboard_hint_lines_to_prompt(tmp_path) -> None:
     output = console.export_text()
     assert "Подсказка" not in output
     assert prompts.select_calls[0]["hint_lines"] == panel_module.MAIN_MENU_HINT_LINES
+    assert prompts.select_calls[0]["hint_lines"] == (
+        "Для начала работы добавьте маршрутизатор Keenetic с ОС версии 5 и выше.",
+        "Затем настройте обновление списков по расписанию.",
+    )
 
 
 def test_panel_run_adds_missing_builtin_services_to_existing_config(tmp_path) -> None:
@@ -150,7 +178,7 @@ def test_panel_run_adds_missing_builtin_services_to_existing_config(tmp_path) ->
     assert service_keys.index("news") < service_keys.index("cloudflare")
 
 
-def test_dashboard_renders_meta_service_as_meta_whatsapp(tmp_path) -> None:
+def test_dashboard_omits_old_workspace_and_services_column(tmp_path) -> None:
     prompts = ScriptedPromptAdapter(select_answers=["exit"])
     controller, console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(
@@ -189,16 +217,86 @@ def test_dashboard_renders_meta_service_as_meta_whatsapp(tmp_path) -> None:
 
     output = console.export_text()
     assert "Рабочий контекст" not in output
-    assert "meta (whatsapp)" in output
+    assert "Сервисы" not in output
+    assert "meta (whatsapp)" not in output
+    assert "Deployment root" not in output
+    assert "Compose service" not in output
 
 
-def test_main_menu_includes_schedule_section(tmp_path) -> None:
+def test_dashboard_renders_router_last_run_columns_without_services_column(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["exit"])
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            },
+            {
+                "id": "router-2",
+                "name": "Router 2",
+                "rci_url": "https://router-2.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_TWO_SECRET",
+                "enabled": False,
+            },
+        ],
+    )
+    artifacts_dir = tmp_path / "data" / "artifacts"
+    run_history_service = _RecordingRunHistoryService(
+        artifacts_dir=artifacts_dir,
+        runs=(
+            RecentRun(
+                path=artifacts_dir / "run-001.json",
+                artifact=RunArtifact(
+                    run_id="run-001",
+                    trigger=RunTrigger.MANUAL,
+                    mode=RunMode.APPLY,
+                    status=RunStatus.PARTIAL,
+                    started_at=datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc),
+                    finished_at=datetime(2026, 4, 25, 12, 3, tzinfo=timezone.utc),
+                    log_path=Path("data/logs/run-001.log"),
+                    router_results=[
+                        RouterRunResult(
+                            router_id="router-1",
+                            status=RouterResultStatus.UPDATED,
+                        ),
+                        RouterRunResult(
+                            router_id="router-2",
+                            status=RouterResultStatus.FAILED,
+                            error_message="router rejected update",
+                        ),
+                    ],
+                ),
+            ),
+        ),
+    )
+    controller._run_history_service = run_history_service  # type: ignore[method-assign]
+
+    controller.run()
+
+    output = console.export_text()
+    assert run_history_service.calls == [("data/artifacts", controller._config_path, 50, 0)]
+    assert "Сервисы" not in output
+    assert "Последний запуск" in output
+    assert "25.04.2026 12:03" in output
+    assert "ok" in output
+    assert "fail" in output
+
+
+def test_main_menu_includes_manual_run_and_schedule_sections(tmp_path) -> None:
     prompts = ScriptedPromptAdapter(select_answers=["exit"])
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(controller._config_path)
 
     controller.run()
 
+    assert "Ручной запуск" in prompts.select_calls[0]["choice_titles"]
     assert "Расписание" in prompts.select_calls[0]["choice_titles"]
 
 
@@ -234,6 +332,89 @@ def test_schedule_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
 
     assert prompts.select_calls[0]["message"] == "Расписание"
     assert prompts.select_calls[0]["hint_lines"] == panel_module.SCHEDULE_MENU_HINT_LINES
+
+
+def test_about_menu_describes_project_scope_and_source_repository(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter()
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+
+    controller._about_menu()
+
+    output = console.export_text()
+    assert "FQDN-updater panel" in output
+    assert "Keenetic (Netcraze)" in output
+    assert "https://github.com/itdoginfo/allow-domains" in output
+    assert "поддерживает эти списки в актуальном состоянии" in output
+    assert "ручной запуск" in output
+    assert prompts.pause_messages == ["Нажмите любую клавишу для продолжения..."]
+
+
+def test_manual_run_menu_selects_routers_and_runs_sync(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(checkbox_answers=[["router-1", "router-2"]])
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            },
+            {
+                "id": "router-2",
+                "name": "Router 2",
+                "rci_url": "https://router-2.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_TWO_SECRET",
+                "enabled": False,
+            },
+        ],
+        mappings=[
+            {
+                "router_id": "router-1",
+                "service_key": "telegram",
+                "object_group_name": "fqdn-telegram",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+            },
+            {
+                "router_id": "router-2",
+                "service_key": "youtube",
+                "object_group_name": "fqdn-youtube",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard9",
+                "managed": True,
+            },
+        ],
+    )
+    sync_orchestrator = _RecordingSyncOrchestrator(result=_sync_result())
+    controller._sync_orchestrator = sync_orchestrator  # type: ignore[attr-defined]
+    controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
+
+    controller._manual_run_menu()
+
+    checkbox_call = prompts.checkbox_calls[0]
+    assert checkbox_call["message"] == "Ручной запуск"
+    assert checkbox_call["hint_lines"] == panel_module.MANUAL_RUN_HINT_LINES
+    assert checkbox_call["instruction"] == (
+        "Стрелки выбирают, Пробел отмечает, Enter запускает, Esc возвращает назад."
+    )
+    assert checkbox_call["table_summary"] == "Будет запущено: 1"
+    assert checkbox_call["choices"][0]["checked"] is True
+    assert checkbox_call["choices"][1]["checked"] is False
+    assert len(sync_orchestrator.calls) == 1
+    sync_config, trigger = sync_orchestrator.calls[0]
+    assert trigger is RunTrigger.MANUAL
+    assert [router.id for router in sync_config.routers] == ["router-1", "router-2"]
+    assert {mapping.router_id for mapping in sync_config.mappings} == {"router-1", "router-2"}
+    assert all(Path(path).is_absolute() for path in (sync_config.runtime.artifacts_dir,))
+
+    output = console.export_text()
+    assert "Sync: run_id=run-sync status=success artifact=data/artifacts/run-sync.json" in output
 
 
 def test_schedule_menu_saves_daily_schedule_and_systemd_defaults(tmp_path) -> None:
@@ -479,6 +660,15 @@ def test_add_router_service_selection_uses_source_counts_and_fixed_hint_lines(
     ]
     checkbox_call = prompts.checkbox_calls[0]
     assert checkbox_call["hint_lines"] == panel_module.SERVICE_SELECTION_HINT_LINES
+    assert checkbox_call["hint_lines"] == (
+        (
+            "Для каждого выбранного сервиса будет создан свой список в разделе "
+            "«Маршрутизация» Keenetic."
+        ),
+        "Лимит доменов роутеров Keenetic составляет 1024 записи. "
+        "Вам необходимо выбрать не более этого количества записей.",
+        "Для IPv4+IPv6 действует отдельный лимит: около 4000 subnet-записей суммарно на роутер.",
+    )
     assert checkbox_call["table_header"] == panel_module._service_selection_header()
     assert checkbox_call["table_summary"] == (f"{'Итого выбрано':<22} | {3:>7} | {3:>7} | {2:>7}")
     assert [choice["value"] for choice in checkbox_call["choices"]] == [
@@ -489,6 +679,98 @@ def test_add_router_service_selection_uses_source_counts_and_fixed_hint_lines(
     assert checkbox_call["choices"][0]["title"].endswith("|       1 |       1 |       1")
     assert checkbox_call["choices"][1]["title"].endswith("|       0 |       2 |       0")
     assert checkbox_call["choices"][2]["title"].endswith("|       2 |       0 |       1")
+
+
+def test_service_selection_groups_composite_services_and_collapses_full_selection(
+    tmp_path,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        checkbox_answers=[
+            [
+                "block",
+                "block_p2p_streaming",
+                "block_vpn_proxy_privacy",
+                "block_dev_hosting_security",
+                "block_finance_shopping",
+                "block_social_creators",
+                "block_news_politics",
+                "block_other",
+                "hodca",
+                "hodca_dev_cloud_saas",
+                "hodca_network_os_tools",
+                "hodca_media_games",
+                "hodca_ai_education_research",
+                "hodca_social_lifestyle",
+                "hodca_finance_shopping",
+                "hodca_other",
+            ]
+        ]
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    service_keys = [
+        "block",
+        "block_p2p_streaming",
+        "block_vpn_proxy_privacy",
+        "block_dev_hosting_security",
+        "block_finance_shopping",
+        "block_social_creators",
+        "block_news_politics",
+        "block_other",
+        "hodca",
+        "hodca_dev_cloud_saas",
+        "hodca_network_os_tools",
+        "hodca_media_games",
+        "hodca_ai_education_research",
+        "hodca_social_lifestyle",
+        "hodca_finance_shopping",
+        "hodca_other",
+    ]
+    write_config(
+        controller._config_path,
+        services=[
+            {
+                "key": service_key,
+                "source_urls": [f"https://example.com/{service_key}.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            }
+            for service_key in service_keys
+        ],
+    )
+
+    selected = controller._prompt_service_selection(
+        config=controller._load_config(),
+        selected=set(),
+    )
+
+    assert selected == {"block", "hodca"}
+    checkbox_call = prompts.checkbox_calls[0]
+    assert (
+        checkbox_call["selection_groups"]["block"]
+        == panel_module.SERVICE_SELECTION_GROUPS["block"]
+    )
+    assert (
+        checkbox_call["selection_groups"]["hodca"]
+        == panel_module.SERVICE_SELECTION_GROUPS["hodca"]
+    )
+    choice_titles = [choice["title"] for choice in checkbox_call["choices"]]
+    assert choice_titles[0].startswith("block (full)")
+    assert choice_titles[1].startswith("   p2p/media")
+    assert choice_titles[8].startswith("H.O.D.C.A (full)")
+    assert choice_titles[9].startswith("   dev/cloud/SaaS")
+
+
+def test_service_selection_totals_marks_domain_limit_overflow_red() -> None:
+    summary = panel_module._service_selection_totals_line(
+        selected_values=("large",),
+        service_counts={"large": panel_module.ServiceEntryCounts(domains=1025, ipv4=0, ipv6=0)},
+    )
+
+    assert isinstance(summary, list)
+    assert ("fg:#ff5f5f bold", "   1025") in summary
+    assert "".join(text for _style, text in summary) == (
+        f"{'Итого выбрано':<22} | {1025:>7} | {0:>7} | {0:>7}"
+    )
 
 
 def test_add_router_service_selection_renders_meta_as_meta_whatsapp(
