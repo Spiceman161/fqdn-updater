@@ -41,9 +41,12 @@ def test_dockerfile_and_compose_contracts_are_static_and_minimal() -> None:
     assert "fqdn-updater:" in compose
     assert "build:" in compose
     assert "context: ." in compose
+    assert "path: ./.env" in compose
     assert "source: ./config.json" in compose
     assert "target: /work/config.json" in compose
     assert "create_host_path: false" in compose
+    assert "source: ./.env.secrets" in compose
+    assert "target: /work/.env.secrets" in compose
     assert "./data:/work/data" in compose
     assert 'command: ["sync", "--config", "/work/config.json"]' in compose
 
@@ -120,6 +123,7 @@ def test_install_script_covers_expected_installation_contract() -> None:
         'archive/refs/${release_ref}.tar.gz',
         "Downloaded archive does not contain pyproject.toml.",
         "set_config_permissions",
+        'install -m 0600 /dev/null "${INSTALL_DIR}/.env.secrets"',
         'chmod 0644 "${CONFIG_PATH}"',
         '"${VENV_DIR}/bin/fqdn-updater" init --config "${CONFIG_PATH}"',
         '"${VENV_DIR}/bin/fqdn-updater" schedule set-daily \\',

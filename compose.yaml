@@ -13,6 +13,12 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ./.env.secrets
+        target: /work/.env.secrets
+        read_only: true
+        bind:
+          create_host_path: false
       - ./data:/work/data
       - ./secrets:/run/secrets/fqdn-updater:ro
     command: ["sync", "--config", "/work/config.json"]

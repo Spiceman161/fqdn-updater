@@ -197,6 +197,9 @@ prepare_install_root() {
     install -d -m 0755 "${INSTALL_DIR}"
     install -d -m 0755 "${INSTALL_DIR}/data"
     install -d -m 0700 "${INSTALL_DIR}/secrets"
+    if [[ ! -e "${INSTALL_DIR}/.env.secrets" ]]; then
+        install -m 0600 /dev/null "${INSTALL_DIR}/.env.secrets"
+    fi
 }
 
 stage_preserved_paths() {

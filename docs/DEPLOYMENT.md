@@ -13,7 +13,7 @@ curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/insta
 Рабочие файлы:
 
 - `config.json` монтируется в контейнер как `/work/config.json` только для чтения;
-- `.env` и `.env.secrets` передают env-секреты;
+- `.env` передаёт Docker env-переменные, а `.env.secrets` монтируется как `/work/.env.secrets` и читается приложением;
 - `secrets/` монтируется как `/run/secrets/fqdn-updater`;
 - `data/` монтируется как writable volume для artifacts, logs и state.
 
