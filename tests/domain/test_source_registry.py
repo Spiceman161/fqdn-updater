@@ -28,6 +28,13 @@ def test_builtin_service_registry_contains_expected_v1_services() -> None:
         "geoblock_health_reference",
         "geoblock_other",
         "hodca",
+        "hodca_dev_cloud_saas",
+        "hodca_network_os_tools",
+        "hodca_media_games",
+        "hodca_ai_education_research",
+        "hodca_social_lifestyle",
+        "hodca_finance_shopping",
+        "hodca_other",
         "news",
         "porn",
         "cloudflare",
@@ -85,6 +92,20 @@ def test_builtin_service_registry_contains_expected_v1_services() -> None:
         "Categories/geoblock.lst"
     )
     assert "openai.com" in geoblock_other_source.exclude_domain_suffixes
+    hodca_dev_source = services_by_key["hodca_dev_cloud_saas"].resolved_sources[0]
+    assert str(hodca_dev_source.url) == (
+        "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/"
+        "Categories/hodca.lst"
+    )
+    assert "hetzner.com" in hodca_dev_source.include_domain_suffixes
+    hodca_media_source = services_by_key["hodca_media_games"].resolved_sources[0]
+    assert "rutracker.org" in hodca_media_source.include_domain_suffixes
+    hodca_finance_source = services_by_key["hodca_finance_shopping"].resolved_sources[0]
+    assert "amazonaws.com" in hodca_finance_source.include_domain_suffixes
+    hodca_other_source = services_by_key["hodca_other"].resolved_sources[0]
+    assert "hetzner.com" in hodca_other_source.exclude_domain_suffixes
+    assert "rutracker.org" in hodca_other_source.exclude_domain_suffixes
+    assert "amazonaws.com" in hodca_other_source.exclude_domain_suffixes
     assert [str(source.url) for source in services_by_key["cloudflare"].resolved_sources] == [
         "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/cloudflare.lst",
         "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/cloudflare.lst",
