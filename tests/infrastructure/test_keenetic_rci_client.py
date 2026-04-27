@@ -1149,40 +1149,60 @@ def test_write_operations_wrap_http_errors_as_runtime_errors(router_config) -> N
         client.add_entries("svc-telegram", ["a.example"])
 
 
-def test_request_retries_transient_transport_failures(router_config) -> None:
+def test_request_retries_transient_transport_failures(monkeypatch, router_config) -> None:
     client = KeeneticRciClientFactory().create(router=router_config, password="secret")
     opener = _FlakyTransportOpener(
         failures_before_success=2,
         payload=[{"show": {"dns-proxy": {"proxy-status": True}}}],
     )
     client._opener = opener  # type: ignore[attr-defined]
+    sleep_delays: list[float] = []
+    monkeypatch.setattr(
+        "fqdn_updater.infrastructure.keenetic_rci_client.time.sleep",
+        lambda delay: sleep_delays.append(delay),
+    )
+    monkeypatch.setattr(
+        "fqdn_updater.infrastructure.keenetic_rci_client.random.uniform",
+        lambda start, end: 0.0,  # noqa: ARG005
+    )
 
     status = client.get_dns_proxy_status()
 
     assert status.enabled is True
     assert len(opener.requests) == 3
     assert opener.timeouts == [15, 15, 15]
+    assert sleep_delays == [1.0, 2.0]
 
 
-def test_request_reports_transport_failure_after_three_attempts(router_config) -> None:
+def test_request_reports_transport_failure_after_five_attempts(monkeypatch, router_config) -> None:
     client = KeeneticRciClientFactory().create(router=router_config, password="secret")
     opener = _FlakyTransportOpener(
-        failures_before_success=3,
+        failures_before_success=5,
         payload=[{"show": {"dns-proxy": {"proxy-status": True}}}],
     )
     client._opener = opener  # type: ignore[attr-defined]
+    sleep_delays: list[float] = []
+    monkeypatch.setattr(
+        "fqdn_updater.infrastructure.keenetic_rci_client.time.sleep",
+        lambda delay: sleep_delays.append(delay),
+    )
+    monkeypatch.setattr(
+        "fqdn_updater.infrastructure.keenetic_rci_client.random.uniform",
+        lambda start, end: 0.0,  # noqa: ARG005
+    )
 
     with pytest.raises(
         RuntimeError,
         match=(
             r"Router 'router-1' get_dns_proxy_status failed: "
-            r"transport failed after 3 attempts: temporary TLS failure"
+            r"transport failed after 5 attempts: temporary TLS failure"
         ),
     ):
         client.get_dns_proxy_status()
 
-    assert len(opener.requests) == 3
-    assert opener.timeouts == [15, 15, 15]
+    assert len(opener.requests) == 5
+    assert opener.timeouts == [15, 15, 15, 15, 15]
+    assert sleep_delays == [1.0, 2.0, 4.0, 8.0]
 
 
 def test_request_reports_tls_diagnostics_for_certificate_failures(
@@ -1208,6 +1228,14 @@ def test_request_reports_tls_diagnostics_for_certificate_failures(
 
     opener = _CertificateFailingOpener()
     client._opener = opener  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        "fqdn_updater.infrastructure.keenetic_rci_client.time.sleep",
+        lambda delay: None,  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "fqdn_updater.infrastructure.keenetic_rci_client.random.uniform",
+        lambda start, end: 0.0,  # noqa: ARG005
+    )
 
     monkeypatch.setattr(
         "fqdn_updater.infrastructure.keenetic_rci_client.socket.getaddrinfo",
@@ -1238,14 +1266,15 @@ def test_request_reports_tls_diagnostics_for_certificate_failures(
         client.get_dns_proxy_status()
 
     message = str(exc_info.value)
-    assert "transport failed after 3 attempts" in message
+    assert "transport failed after 5 attempts" in message
     assert "certificate verify failed: Hostname mismatch" in message
+    assert "attempt_errors=1:SSLCertVerificationError:" in message
     assert "tls_diagnostics host=router-1.example port=443 sni=router-1.example" in message
     assert "resolved_endpoints=ipv4/203.0.113.10:443,ipv4/203.0.113.11:443" in message
     assert "tls_probe ipv4/203.0.113.10:443 verify=failed" in message
     assert "cert=subject=wrong.example issuer=Test CA san=wrong.example" in message
-    assert len(opener.requests) == 3
-    assert opener.timeouts == [15, 15, 15]
+    assert len(opener.requests) == 5
+    assert opener.timeouts == [15, 15, 15, 15, 15]
 
 
 def test_write_operations_raise_runtime_error_for_rci_status_errors(router_config) -> None:

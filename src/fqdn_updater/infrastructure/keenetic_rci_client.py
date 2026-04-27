@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import random
 import socket
 import ssl
 import tempfile
+import time
 from collections.abc import Sequence
 from typing import Any
 from urllib import error, parse, request
@@ -27,8 +29,12 @@ from fqdn_updater.domain.static_route_diff import (
 )
 
 _MAX_COMMANDS_PER_BATCH = 200
-_MAX_REQUEST_ATTEMPTS = 3
+_MAX_REQUEST_ATTEMPTS = 5
+_REQUEST_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0, 8.0)
+_REQUEST_RETRY_JITTER_RATIO = 0.25
 _TLS_DIAGNOSTIC_TIMEOUT_SECONDS = 5
+
+_TransportError = TimeoutError | error.URLError | OSError | ssl.SSLError
 
 
 def _require_non_blank(value: str, field_name: str) -> str:
@@ -293,6 +299,7 @@ class KeeneticRciClient(KeeneticClient):
         operation: str,
         http_request: request.Request,
     ) -> tuple[str, bytes]:
+        transport_errors: list[BaseException] = []
         for attempt in range(1, _MAX_REQUEST_ATTEMPTS + 1):
             try:
                 with self._opener.open(
@@ -311,24 +318,69 @@ class KeeneticRciClient(KeeneticClient):
                     operation,
                     f"request failed with HTTP {exc.code}: {exc.reason}",
                 ) from exc
-            except (TimeoutError, error.URLError) as exc:
+            except (TimeoutError, error.URLError, OSError, ssl.SSLError) as exc:
+                transport_errors.append(exc)
                 if attempt == _MAX_REQUEST_ATTEMPTS:
                     reason = self._transport_error_reason(exc)
-                    tls_diagnostics = self._build_tls_failure_diagnostics(exc)
-                    detail = f"{reason}; {tls_diagnostics}" if tls_diagnostics else f"{reason}"
+                    attempt_history = self._format_transport_attempt_history(transport_errors)
+                    certificate_error = self._first_certificate_verification_error(
+                        transport_errors
+                    )
+                    tls_diagnostics = (
+                        self._build_tls_failure_diagnostics(certificate_error)
+                        if certificate_error is not None
+                        else None
+                    )
+                    detail = (
+                        f"{reason}; {attempt_history}; {tls_diagnostics}"
+                        if tls_diagnostics
+                        else f"{reason}; {attempt_history}"
+                    )
                     raise self._runtime_error(
                         operation,
                         f"transport failed after {_MAX_REQUEST_ATTEMPTS} attempts: {detail}",
                     ) from exc
+                self._sleep_before_retry(attempt)
 
         raise self._runtime_error(operation, "transport failed without response")
 
-    def _transport_error_reason(self, exc: TimeoutError | error.URLError) -> object:
+    def _sleep_before_retry(self, failed_attempt: int) -> None:
+        delay = _REQUEST_RETRY_DELAYS_SECONDS[
+            min(failed_attempt - 1, len(_REQUEST_RETRY_DELAYS_SECONDS) - 1)
+        ]
+        jitter = random.uniform(0, delay * _REQUEST_RETRY_JITTER_RATIO)
+        time.sleep(delay + jitter)
+
+    def _transport_error_reason(self, exc: _TransportError) -> object:
         if isinstance(exc, error.URLError):
             return getattr(exc, "reason", exc)
         return exc
 
-    def _build_tls_failure_diagnostics(self, exc: TimeoutError | error.URLError) -> str | None:
+    def _format_transport_attempt_history(self, errors: Sequence[BaseException]) -> str:
+        if not errors:
+            return "attempt_errors=none"
+        return "attempt_errors=" + "|".join(
+            f"{index}:{self._format_transport_error(exc)}"
+            for index, exc in enumerate(errors, start=1)
+        )
+
+    def _format_transport_error(self, exc: BaseException) -> str:
+        reason = self._transport_error_reason(exc) if self._is_transport_error(exc) else exc
+        return f"{type(reason).__name__}:{reason}"
+
+    def _first_certificate_verification_error(
+        self,
+        errors: Sequence[BaseException],
+    ) -> _TransportError | None:
+        for exc in errors:
+            if self._is_transport_error(exc) and self._is_certificate_verification_error(exc):
+                return exc
+        return None
+
+    def _is_transport_error(self, exc: BaseException) -> bool:
+        return isinstance(exc, (TimeoutError, error.URLError, OSError, ssl.SSLError))
+
+    def _build_tls_failure_diagnostics(self, exc: _TransportError) -> str | None:
         if not self._is_certificate_verification_error(exc):
             return None
 
@@ -374,7 +426,7 @@ class KeeneticRciClient(KeeneticClient):
             )
         return "; ".join(diagnostics)
 
-    def _is_certificate_verification_error(self, exc: TimeoutError | error.URLError) -> bool:
+    def _is_certificate_verification_error(self, exc: _TransportError) -> bool:
         reason = self._transport_error_reason(exc)
         if isinstance(reason, ssl.SSLCertVerificationError):
             return True
