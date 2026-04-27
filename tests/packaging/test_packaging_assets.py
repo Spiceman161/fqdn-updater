@@ -119,8 +119,8 @@ def test_install_script_covers_expected_installation_contract() -> None:
         "This installer supports Ubuntu 22.04 and later only.",
         "${VERSION_CODENAME} stable",
         '"${GITHUB_API_URL}/releases/latest"',
-        'printf \'heads/%s\\n\' "${DEFAULT_BRANCH}"',
-        'archive/refs/${release_ref}.tar.gz',
+        "printf 'heads/%s\\n' \"${DEFAULT_BRANCH}\"",
+        "archive/refs/${release_ref}.tar.gz",
         "Downloaded archive does not contain pyproject.toml.",
         "set_config_permissions",
         'install -m 0600 /dev/null "${INSTALL_DIR}/.env.secrets"',
@@ -168,11 +168,11 @@ def test_install_script_installs_main_when_no_github_release_exists() -> None:
     download_start = install_script.index("download_release_tarball()")
     resolve_block = install_script[resolve_start:download_start]
 
-    assert 'printf \'tags/%s\\n\' "${RELEASE_VERSION}"' in resolve_block
+    assert "printf 'tags/%s\\n' \"${RELEASE_VERSION}\"" in resolve_block
     assert '"${GITHUB_API_URL}/releases/latest"' in resolve_block
     assert "2>/dev/null" in resolve_block
-    assert 'printf \'tags/%s\\n\' "${latest_version}"' in resolve_block
-    assert 'printf \'heads/%s\\n\' "${DEFAULT_BRANCH}"' in resolve_block
+    assert "printf 'tags/%s\\n' \"${latest_version}\"" in resolve_block
+    assert "printf 'heads/%s\\n' \"${DEFAULT_BRANCH}\"" in resolve_block
     assert "git ls-remote" not in resolve_block
 
 
@@ -237,6 +237,10 @@ def test_install_script_wrapper_routes_and_security_constraints() -> None:
     for text in [
         "sync|dry-run|status)",
         'exec docker compose run --rm fqdn-updater "${command_name}" "$@"',
+        'readonly INSTALLER_URL="https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh"',
+        "update)",
+        'run_update "$@"',
+        'exec bash -c \'curl -fsSL "$0" | sudo bash -s -- "$@"\' "${INSTALLER_URL}" "$@"',
         "panel|init|config|router|mapping|schedule)",
         'exec "${VENV_CLI}" "${command_name}" "$@"',
     ]:

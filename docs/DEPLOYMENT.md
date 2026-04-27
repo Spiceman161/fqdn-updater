@@ -8,6 +8,28 @@ curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/insta
 
 По умолчанию используется `/opt/fqdn-updater`. Host-команда `fqdn-updater` открывает панель без аргументов, а `sync`, `dry-run` и `status` запускает через Docker Compose.
 
+## Обновление
+
+На установленном сервере:
+
+```bash
+fqdn-updater update
+```
+
+Команда запускает тот же installer, что и первичная установка. Installer скачивает актуальный release, заменяет код в `/opt/fqdn-updater`, пересобирает Docker image и переустанавливает systemd units. Перед заменой он сохраняет пользовательские `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, затем возвращает их обратно.
+
+Можно повторно выполнить и прямую команду установки:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash
+```
+
+Для конкретного release tag:
+
+```bash
+fqdn-updater update --version v0.1.0
+```
+
 ## Docker Compose runtime
 
 Рабочие файлы:

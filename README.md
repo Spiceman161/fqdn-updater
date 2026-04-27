@@ -35,6 +35,20 @@ curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/insta
 
 Installer разворачивает проект в `/opt/fqdn-updater`, сохраняет существующие `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, ставит host-команды `fqdn-updater` и `domaingo`, собирает Docker image и устанавливает systemd timer.
 
+## Обновление
+
+После первой установки обновляйте проект командой:
+
+```bash
+fqdn-updater update
+```
+
+Она повторно запускает официальный installer, пересобирает Docker image и переустанавливает wrapper/systemd units. Пользовательские файлы остаются на месте: `config.json`, `.env*`, `data/`, `secrets/` и `.venv` сохраняются перед заменой релиза и возвращаются обратно. Для фиксации на конкретном release tag можно передать версию:
+
+```bash
+fqdn-updater update --version v0.1.0
+```
+
 ## Первый запуск
 
 Откройте панель:

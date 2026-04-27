@@ -10,6 +10,14 @@ curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/insta
 
 Проект будет установлен в `/opt/fqdn-updater`. Installer сохранит существующие `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, если они уже есть.
 
+Для обновления после первой установки используйте:
+
+```bash
+fqdn-updater update
+```
+
+Обновление использует тот же installer и оставляет пользовательские настройки на месте.
+
 ## 2. Откройте панель
 
 ```bash

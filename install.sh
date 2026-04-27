@@ -310,6 +310,20 @@ set -euo pipefail
 
 readonly INSTALL_DIR="/opt/fqdn-updater"
 readonly VENV_CLI="${INSTALL_DIR}/.venv/bin/fqdn-updater"
+readonly INSTALLER_URL="https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh"
+
+run_update() {
+    if [[ "${EUID}" -eq 0 ]]; then
+        exec bash -c 'curl -fsSL "$0" | bash -s -- "$@"' "${INSTALLER_URL}" "$@"
+    fi
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        printf 'Error: sudo is required to update fqdn-updater. Re-run as root.\n' >&2
+        exit 1
+    fi
+
+    exec bash -c 'curl -fsSL "$0" | sudo bash -s -- "$@"' "${INSTALLER_URL}" "$@"
+}
 
 cd "${INSTALL_DIR}"
 
@@ -321,6 +335,9 @@ command_name="$1"
 shift
 
 case "${command_name}" in
+    update)
+        run_update "$@"
+        ;;
     sync|dry-run|status)
         exec docker compose run --rm fqdn-updater "${command_name}" "$@"
         ;;
