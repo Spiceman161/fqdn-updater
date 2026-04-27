@@ -80,6 +80,17 @@ class PromptAdapter(Protocol):
         hint_lines: tuple[str, ...] | None = None,
     ) -> bool | None: ...
 
+    def history_select(
+        self,
+        *,
+        message: str,
+        choices: list[PromptChoice],
+        default: str | None = None,
+        page_label: str,
+        has_previous_page: bool,
+        has_next_page: bool,
+    ) -> str | None: ...
+
     def pause(self, *, message: str, hint_lines: tuple[str, ...] | None = None) -> None: ...
 
 
@@ -200,6 +211,33 @@ class QuestionaryPromptAdapter:
             ),
         )
 
+    def history_select(
+        self,
+        *,
+        message: str,
+        choices: list[PromptChoice],
+        default: str | None = None,
+        page_label: str,
+        has_previous_page: bool,
+        has_next_page: bool,
+    ) -> str | None:
+        choice_titles = {choice.value: (choice.answer_title or choice.title) for choice in choices}
+        return _ask_and_echo(
+            question=_build_select_question(
+                message=f"{message}\n{page_label}",
+                choices=choices,
+                default=default,
+                instruction="↑/↓ запись, Enter открыть, ←/→ страницы, Esc главное меню.",
+                hint_lines=None,
+                style=self._style,
+                left_result="prev-page" if has_previous_page else None,
+                right_result="next-page" if has_next_page else None,
+            ),
+            console=self._console,
+            message=message,
+            render_answer=lambda result: choice_titles.get(result),
+        )
+
     def pause(self, *, message: str, hint_lines: tuple[str, ...] | None = None) -> None:
         _ask_and_echo(
             question=_build_pause_question(
@@ -229,6 +267,8 @@ def _build_select_question(
     instruction: str | None = None,
     hint_lines: tuple[str, ...] | None = None,
     style: Style,
+    left_result: str | None = None,
+    right_result: str | None = None,
     **kwargs: Any,
 ) -> Question:
     question = questionary.select(
@@ -248,6 +288,8 @@ def _build_select_question(
         question=question,
         hint_lines=hint_lines,
         footer=instruction or DEFAULT_SELECT_FOOTER,
+        left_result=left_result,
+        right_result=right_result,
     )
 
 
@@ -362,6 +404,8 @@ def _decorate_question(
     hint_lines: tuple[str, ...] | None,
     footer: str,
     escape_returns_none: bool = True,
+    left_result: str | None = None,
+    right_result: str | None = None,
 ) -> Question:
     if escape_returns_none:
         bindings = KeyBindings()
@@ -369,6 +413,22 @@ def _decorate_question(
         @bindings.add(Keys.Escape)
         def _cancel(event) -> None:
             event.app.exit(result=None)
+
+        @bindings.add(Keys.Left, eager=True)
+        def _previous_page(event) -> None:
+            if left_result is not None:
+                event.app.exit(result=left_result)
+                return
+            if _question_has_choice_value(question, "prev-page"):
+                event.app.exit(result="prev-page")
+
+        @bindings.add(Keys.Right, eager=True)
+        def _next_page(event) -> None:
+            if right_result is not None:
+                event.app.exit(result=right_result)
+                return
+            if _question_has_choice_value(question, "next-page"):
+                event.app.exit(result="next-page")
 
         question.application.key_bindings = merge_key_bindings(
             [question.application.key_bindings, bindings]
@@ -516,6 +576,13 @@ def _find_inquirer_control(question: Question) -> InquirerControl | None:
         if isinstance(child.content.content, InquirerControl):
             return child.content.content
     return None
+
+
+def _question_has_choice_value(question: Question, value: str) -> bool:
+    inquirer_control = _find_inquirer_control(question)
+    if inquirer_control is None:
+        return False
+    return any(choice.value == value for choice in inquirer_control.choices)
 
 
 def _toggle_checkbox_group_value(

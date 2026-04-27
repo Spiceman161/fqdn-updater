@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -25,7 +26,7 @@ from fqdn_updater.application.dry_run_orchestration import (
 )
 from fqdn_updater.application.password_generation import RciPasswordGenerator
 from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryService
-from fqdn_updater.application.run_history import RunHistoryResult, RunHistoryService
+from fqdn_updater.application.run_history import RecentRun, RunHistoryResult, RunHistoryService
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.application.source_loading import SourceLoadingService
 from fqdn_updater.application.status_diagnostics import StatusDiagnosticsService
@@ -45,6 +46,7 @@ from fqdn_updater.domain.config_schema import (
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
 from fqdn_updater.domain.run_artifact import (
     RouterResultStatus,
+    RouterRunResult,
     RunArtifact,
     RunStatus,
     RunTrigger,
@@ -935,7 +937,6 @@ class PanelController:
     def _runs_menu(self) -> None:
         page_index = 0
         page_size = 10
-        default_choice = "back"
         while True:
             config = self._load_config()
             history = self._run_history_service.list_recent(
@@ -950,36 +951,62 @@ class PanelController:
 
             has_previous_page = page_index > 0
             has_next_page = (page_index + 1) * page_size < history.total_count
-            self._render_runs_screen(
-                config=config,
-                history=history,
-                page_index=page_index,
-                page_size=page_size,
-            )
-            choices: list[PromptChoice] = []
-            if has_previous_page:
-                choices.append(PromptChoice("Назад", "prev-page"))
-            if has_next_page:
-                choices.append(PromptChoice("Далее", "next-page"))
-            choices.append(PromptChoice("Главное меню", "back"))
-            choice = self._prompts.select(
+            displayed_runs = tuple(reversed(history.runs))
+            if not displayed_runs:
+                self._render_runs_screen(
+                    config=config,
+                    history=history,
+                    page_index=page_index,
+                    page_size=page_size,
+                )
+                choice = self._prompts.select(
+                    message="Журнал",
+                    choices=[PromptChoice("Главное меню", "back")],
+                    default="back",
+                )
+                if choice in {None, "back"}:
+                    return
+                continue
+
+            choices = [
+                PromptChoice(
+                    _format_history_run_choice_title(config=config, run=run),
+                    f"run:{index}",
+                )
+                for index, run in enumerate(displayed_runs)
+            ]
+            choice = self._prompts.history_select(
                 message="Журнал",
                 choices=choices,
-                default=(
-                    default_choice
-                    if any(item.value == default_choice for item in choices)
-                    else "back"
+                default="run:0",
+                page_label=_format_history_page_text(
+                    total_count=history.total_count,
+                    page_index=page_index,
+                    page_size=page_size,
                 ),
+                has_previous_page=has_previous_page,
+                has_next_page=has_next_page,
             )
             if choice in {None, "back"}:
                 return
             if choice == "prev-page":
-                default_choice = "prev-page"
                 page_index -= 1
                 continue
             if choice == "next-page":
-                default_choice = "next-page"
                 page_index += 1
+                continue
+            if choice.startswith("run:"):
+                run_index = int(choice.removeprefix("run:"))
+                if 0 <= run_index < len(displayed_runs):
+                    self._render_run_details_screen(
+                        config=config,
+                        run=displayed_runs[run_index],
+                    )
+                    self._prompts.select(
+                        message="Запись журнала",
+                        choices=[PromptChoice("Назад к журналу", "back")],
+                        default="back",
+                    )
                 continue
 
     def _manual_run_menu(self) -> None:
@@ -1669,50 +1696,31 @@ class PanelController:
             Panel(
                 "[bold]Журнал[/bold]",
                 border_style="bright_cyan",
-                width=ROOT_PANEL_WIDTH,
             )
         )
-
-        context = Table.grid(padding=(0, 2))
-        context.add_column(style="bold white")
-        context.add_column(style="bright_cyan")
-        context.add_row("Артефакты", self._display_path(history.artifacts_dir))
-        context.add_row("Логи", self._display_path(config.runtime.logs_dir))
-        context.add_row(
-            "Страница",
-            _format_history_page_label(
-                total_count=history.total_count,
-                page_index=page_index,
-                page_size=page_size,
-            ),
-        )
-        context.add_row(
-            "Показано",
-            _format_history_page_range(
-                total_count=history.total_count,
-                page_index=page_index,
-                page_size=page_size,
-                page_item_count=len(history.runs),
-            ),
-        )
-        context.add_row("Предупреждения", str(len(history.warnings)))
         self._console.print(
-            Panel(
-                context,
-                title="Контекст журнала",
-                border_style="cyan",
-                width=ROOT_PANEL_WIDTH,
+            Text(
+                _format_history_page_text(
+                    total_count=history.total_count,
+                    page_index=page_index,
+                    page_size=page_size,
+                ),
+                style="bright_cyan",
             )
         )
+        self._console.print()
 
-        table = Table(show_header=True, header_style="bold white", box=None)
+        if history.warnings:
+            self._console.print(f"[yellow]Пропущено записей: {len(history.warnings)}[/yellow]")
+
+        table = Table(show_header=True, header_style="bold white", box=None, expand=True)
         table.add_column("Режим", no_wrap=True)
         table.add_column("Запуск", no_wrap=True)
         table.add_column("Статус", no_wrap=True)
         table.add_column("Завершён", no_wrap=True)
-        table.add_column("Маршрутизаторы")
-        table.add_column("Результат", no_wrap=True)
-        for run in history.runs:
+        table.add_column("Роутеры", overflow="fold")
+        table.add_column("Итог", overflow="fold")
+        for run in reversed(history.runs):
             artifact = run.artifact
             table.add_row(
                 artifact.mode.value,
@@ -1727,14 +1735,18 @@ class PanelController:
         self._console.print(
             Panel(
                 table,
-                title="Последние локальные артефакты",
+                title="Записи журнала",
                 border_style="bright_black",
-                width=ROOT_PANEL_WIDTH,
             )
         )
 
         if history.warnings:
-            warning_table = Table(show_header=True, header_style="bold white", box=None)
+            warning_table = Table(
+                show_header=True,
+                header_style="bold white",
+                box=None,
+                expand=True,
+            )
             warning_table.add_column("Файл")
             warning_table.add_column("Причина")
             for warning in history.warnings[:3]:
@@ -1748,11 +1760,99 @@ class PanelController:
             self._console.print(
                 Panel(
                     warning_table,
-                    title="Пропущенные артефакты",
+                    title="Пропущенные записи",
                     border_style="yellow",
-                    width=ROOT_PANEL_WIDTH,
                 )
             )
+
+    def _render_run_details_screen(self, *, config: AppConfig, run: RecentRun) -> None:
+        artifact = run.artifact
+        self._console.clear()
+        self._console.print(
+            Panel(
+                f"[bold]Запись журнала[/bold] {run.path.name}",
+                border_style="bright_cyan",
+            )
+        )
+
+        summary = Table.grid(padding=(0, 2), expand=True)
+        summary.add_column(style="bold white")
+        summary.add_column(style="bright_cyan")
+        summary.add_row("Файл записи", self._display_path(run.path))
+        summary.add_row("Полный лог", self._display_path(artifact.log_path))
+        summary.add_row("Run ID", artifact.run_id)
+        summary.add_row("Режим", artifact.mode.value)
+        summary.add_row("Запуск", artifact.trigger.value)
+        summary.add_row("Статус", _format_run_status(artifact.status))
+        summary.add_row("Начало", _format_history_finished_at(artifact.started_at))
+        summary.add_row("Завершён", _format_history_finished_at(artifact.finished_at))
+        summary.add_row("Итог", _format_artifact_summary(artifact))
+        self._console.print(
+            Panel(
+                summary,
+                title="Итог прогона",
+                border_style="cyan",
+            )
+        )
+
+        router_table = Table(show_header=True, header_style="bold white", box=None, expand=True)
+        router_table.add_column("Роутер")
+        router_table.add_column("Статус", no_wrap=True)
+        router_table.add_column("Сервисов", no_wrap=True)
+        router_table.add_column("Итог")
+        for router_result in artifact.router_results:
+            router = _find_router(config=config, router_id=router_result.router_id)
+            router_name = router.name if router is not None else router_result.router_id
+            router_table.add_row(
+                router_name,
+                router_result.status.value,
+                str(len(router_result.service_results)),
+                _format_router_result_summary(router_result),
+            )
+        if not artifact.router_results:
+            router_table.add_row("[dim]нет[/dim]", "-", "-", "-")
+        self._console.print(
+            Panel(
+                router_table,
+                title="Маршрутизаторы",
+                border_style="bright_black",
+            )
+        )
+
+        errors = _run_error_rows(config=config, artifact=artifact)
+        if errors:
+            error_table = Table(show_header=True, header_style="bold white", box=None, expand=True)
+            error_table.add_column("Источник")
+            error_table.add_column("Шаг", no_wrap=True)
+            error_table.add_column("Ошибка")
+            for source, step, message in errors:
+                error_table.add_row(source, step, message)
+            self._console.print(
+                Panel(
+                    error_table,
+                    title="Ошибки",
+                    border_style="red",
+                )
+            )
+        else:
+            self._console.print(
+                Panel(
+                    "[green]Ошибок в записи нет.[/green]",
+                    title="Ошибки",
+                    border_style="green",
+                )
+            )
+
+        self._console.print(
+            Panel(
+                (
+                    "Чтобы посмотреть полный лог этой записи, откройте новое окно терминала "
+                    f"и выполните: [bold]{self._log_cat_command(artifact.log_path)}[/bold]"
+                ),
+                title="Подсказка",
+                border_style="yellow",
+            )
+        )
 
     def _render_schedule_screen(self, *, schedule: RuntimeScheduleConfig) -> None:
         self._console.clear()
@@ -2030,6 +2130,12 @@ class PanelController:
             return str(candidate.relative_to(self._config_path.parent))
         except ValueError:
             return str(candidate)
+
+    def _log_cat_command(self, path: Path | str) -> str:
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = self._resolve_config_relative_path(str(path))
+        return f"cat {_shell_quote_path(candidate)}"
 
 
 def _schedule_summary_table(schedule: RuntimeScheduleConfig) -> Table:
@@ -2604,25 +2710,11 @@ def _format_history_finished_at(value) -> str:
     return value.strftime("%d.%m.%Y %H:%M:%S")
 
 
-def _format_history_page_label(*, total_count: int, page_index: int, page_size: int) -> str:
+def _format_history_page_text(*, total_count: int, page_index: int, page_size: int) -> str:
     if total_count <= 0:
-        return "нет записей"
+        return "Страница 0 из 0"
     page_count = ((total_count - 1) // page_size) + 1
-    return f"{page_index + 1}/{page_count}"
-
-
-def _format_history_page_range(
-    *,
-    total_count: int,
-    page_index: int,
-    page_size: int,
-    page_item_count: int,
-) -> str:
-    if total_count <= 0 or page_item_count <= 0:
-        return "0 из 0"
-    start = (page_index * page_size) + 1
-    end = start + page_item_count - 1
-    return f"{start}-{end} из {total_count}"
+    return f"Страница {page_index + 1} из {page_count}"
 
 
 def _format_history_router_names(*, config: AppConfig, artifact: RunArtifact) -> str:
@@ -2631,6 +2723,18 @@ def _format_history_router_names(*, config: AppConfig, artifact: RunArtifact) ->
         router = _find_router(config=config, router_id=router_result.router_id)
         router_names.append(router.name if router is not None else router_result.router_id)
     return ", ".join(router_names) if router_names else "-"
+
+
+def _format_history_run_choice_title(*, config: AppConfig, run: RecentRun) -> str:
+    artifact = run.artifact
+    return (
+        f"{artifact.mode.value:<8}  "
+        f"{artifact.trigger.value:<9}  "
+        f"{artifact.status.value:<7}  "
+        f"{_format_history_finished_at(artifact.finished_at)}  "
+        f"{_format_history_router_names(config=config, artifact=artifact)}  "
+        f"{_format_artifact_summary(artifact)}"
+    )
 
 
 def _format_artifact_summary(artifact: RunArtifact) -> str:
@@ -2643,6 +2747,57 @@ def _format_artifact_summary(artifact: RunArtifact) -> str:
             if service.added_count > 0 or service.removed_count > 0 or service.route_changed:
                 changed_services += 1
     return f"изменено={changed_services} ошибок={failed_services}"
+
+
+def _format_router_result_summary(router: RouterRunResult) -> str:
+    changed_services = 0
+    failed_services = 0
+    for service in router.service_results:
+        if service.error_message is not None:
+            failed_services += 1
+        if service.added_count > 0 or service.removed_count > 0 or service.route_changed:
+            changed_services += 1
+    return f"изменено={changed_services} ошибок={failed_services}"
+
+
+def _run_error_rows(
+    *,
+    config: AppConfig,
+    artifact: RunArtifact,
+) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
+    for router_result in artifact.router_results:
+        router = _find_router(config=config, router_id=router_result.router_id)
+        router_name = router.name if router is not None else router_result.router_id
+        if router_result.error_message is not None:
+            rows.append(
+                (
+                    router_name,
+                    _format_failure_step(router_result.failure_detail),
+                    router_result.error_message,
+                )
+            )
+        for service_result in router_result.service_results:
+            if service_result.error_message is None:
+                continue
+            rows.append(
+                (
+                    f"{router_name} / {service_result.service_key}",
+                    _format_failure_step(service_result.failure_detail),
+                    service_result.error_message,
+                )
+            )
+    return rows
+
+
+def _format_failure_step(failure_detail) -> str:
+    if failure_detail is None:
+        return "-"
+    return failure_detail.step.value
+
+
+def _shell_quote_path(path: Path | str) -> str:
+    return shlex.quote(str(path))
 
 
 def _format_dns_proxy(value: bool | None) -> str:

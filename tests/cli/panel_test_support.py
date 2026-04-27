@@ -32,6 +32,7 @@ class ScriptedPromptAdapter:
         self.checkbox_calls: list[dict[str, Any]] = []
         self.text_calls: list[dict[str, Any]] = []
         self.confirm_calls: list[dict[str, Any]] = []
+        self.history_select_calls: list[dict[str, Any]] = []
         self.pause_messages: list[str] = []
 
     def select(
@@ -126,6 +127,29 @@ class ScriptedPromptAdapter:
             }
         )
         return self._pop(self._confirm_answers, f"confirm:{message}")
+
+    def history_select(
+        self,
+        *,
+        message: str,
+        choices: list[PromptChoice],
+        default: str | None = None,
+        page_label: str,
+        has_previous_page: bool,
+        has_next_page: bool,
+    ) -> str | None:
+        self.history_select_calls.append(
+            {
+                "message": message,
+                "choices": [choice.value for choice in choices],
+                "choice_titles": [choice.title for choice in choices],
+                "default": default,
+                "page_label": page_label,
+                "has_previous_page": has_previous_page,
+                "has_next_page": has_next_page,
+            }
+        )
+        return self._pop(self._select_answers, f"history_select:{message}")
 
     def pause(self, *, message: str, hint_lines: tuple[str, ...] | None = None) -> None:
         self.pause_messages.append(message)
