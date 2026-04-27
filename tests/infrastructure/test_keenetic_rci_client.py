@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import socket
+import ssl
 from dataclasses import dataclass
 from urllib import error, request
 
@@ -1179,6 +1181,69 @@ def test_request_reports_transport_failure_after_three_attempts(router_config) -
     ):
         client.get_dns_proxy_status()
 
+    assert len(opener.requests) == 3
+    assert opener.timeouts == [15, 15, 15]
+
+
+def test_request_reports_tls_diagnostics_for_certificate_failures(
+    monkeypatch,
+    router_config,
+) -> None:
+    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
+
+    class _CertificateFailingOpener:
+        requests: list[object]
+        timeouts: list[int]
+
+        def __init__(self) -> None:
+            self.requests = []
+            self.timeouts = []
+
+        def open(self, http_request, timeout: int) -> _FakeResponse:
+            self.requests.append(http_request)
+            self.timeouts.append(timeout)
+            raise error.URLError(
+                ssl.SSLCertVerificationError("certificate verify failed: Hostname mismatch")
+            )
+
+    opener = _CertificateFailingOpener()
+    client._opener = opener  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(
+        "fqdn_updater.infrastructure.keenetic_rci_client.socket.getaddrinfo",
+        lambda host, port, type: (  # noqa: A002, ARG005
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.11", port)),
+        ),
+    )
+
+    def fake_probe_tls_endpoint(
+        *,
+        host: str,
+        ip: str,
+        port: int,
+        timeout: int,
+        family_name: str,
+    ) -> str:
+        return (
+            f"tls_probe {family_name}/{ip}:{port} verify=failed "
+            f"error=certificate mismatch for {host} timeout={timeout} "
+            "cert=subject=wrong.example issuer=Test CA san=wrong.example"
+        )
+
+    monkeypatch.setattr(client, "_probe_tls_endpoint", fake_probe_tls_endpoint)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        client.get_dns_proxy_status()
+
+    message = str(exc_info.value)
+    assert "transport failed after 3 attempts" in message
+    assert "certificate verify failed: Hostname mismatch" in message
+    assert "tls_diagnostics host=router-1.example port=443 sni=router-1.example" in message
+    assert "resolved_endpoints=ipv4/203.0.113.10:443,ipv4/203.0.113.11:443" in message
+    assert "tls_probe ipv4/203.0.113.10:443 verify=failed" in message
+    assert "cert=subject=wrong.example issuer=Test CA san=wrong.example" in message
     assert len(opener.requests) == 3
     assert opener.timeouts == [15, 15, 15]
 

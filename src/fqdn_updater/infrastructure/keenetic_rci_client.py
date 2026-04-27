@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import socket
+import ssl
+import tempfile
 from collections.abc import Sequence
 from typing import Any
-from urllib import error, request
+from urllib import error, parse, request
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -25,6 +28,7 @@ from fqdn_updater.domain.static_route_diff import (
 
 _MAX_COMMANDS_PER_BATCH = 200
 _MAX_REQUEST_ATTEMPTS = 3
+_TLS_DIAGNOSTIC_TIMEOUT_SECONDS = 5
 
 
 def _require_non_blank(value: str, field_name: str) -> str:
@@ -309,11 +313,12 @@ class KeeneticRciClient(KeeneticClient):
                 ) from exc
             except (TimeoutError, error.URLError) as exc:
                 if attempt == _MAX_REQUEST_ATTEMPTS:
+                    reason = self._transport_error_reason(exc)
+                    tls_diagnostics = self._build_tls_failure_diagnostics(exc)
+                    detail = f"{reason}; {tls_diagnostics}" if tls_diagnostics else f"{reason}"
                     raise self._runtime_error(
                         operation,
-                        "transport failed after "
-                        f"{_MAX_REQUEST_ATTEMPTS} attempts: "
-                        f"{self._transport_error_reason(exc)}",
+                        f"transport failed after {_MAX_REQUEST_ATTEMPTS} attempts: {detail}",
                     ) from exc
 
         raise self._runtime_error(operation, "transport failed without response")
@@ -322,6 +327,156 @@ class KeeneticRciClient(KeeneticClient):
         if isinstance(exc, error.URLError):
             return getattr(exc, "reason", exc)
         return exc
+
+    def _build_tls_failure_diagnostics(self, exc: TimeoutError | error.URLError) -> str | None:
+        if not self._is_certificate_verification_error(exc):
+            return None
+
+        endpoint = parse.urlparse(self.profile.endpoint_url)
+        host = endpoint.hostname
+        if host is None:
+            return (
+                f"tls_diagnostics=unavailable endpoint_host=missing url={self.profile.endpoint_url}"
+            )
+        port = endpoint.port or (443 if endpoint.scheme == "https" else 80)
+        timeout = min(self.profile.timeout_seconds, _TLS_DIAGNOSTIC_TIMEOUT_SECONDS)
+
+        diagnostics: list[str] = [
+            f"tls_diagnostics host={host} port={port} sni={host} timeout={timeout}s"
+        ]
+        try:
+            addrinfos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError as dns_exc:
+            diagnostics.append(f"dns_error={dns_exc}")
+            return "; ".join(diagnostics)
+
+        endpoints = self._deduplicate_socket_addresses(addrinfos)
+        if not endpoints:
+            diagnostics.append("resolved_endpoints=none")
+            return "; ".join(diagnostics)
+
+        diagnostics.append(
+            "resolved_endpoints="
+            + ",".join(
+                f"{family_name}/{ip}:{resolved_port}"
+                for family_name, ip, resolved_port in endpoints
+            )
+        )
+        for family_name, ip, resolved_port in endpoints:
+            diagnostics.append(
+                self._probe_tls_endpoint(
+                    host=host,
+                    ip=ip,
+                    port=resolved_port,
+                    timeout=timeout,
+                    family_name=family_name,
+                )
+            )
+        return "; ".join(diagnostics)
+
+    def _is_certificate_verification_error(self, exc: TimeoutError | error.URLError) -> bool:
+        reason = self._transport_error_reason(exc)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return True
+        if isinstance(reason, ssl.SSLError):
+            message = str(reason)
+            return "CERTIFICATE_VERIFY_FAILED" in message or "certificate verify" in message
+        message = str(reason)
+        return "CERTIFICATE_VERIFY_FAILED" in message or "certificate verify" in message
+
+    def _deduplicate_socket_addresses(
+        self,
+        addrinfos: Sequence[tuple[int, int, int, str, tuple[str, int] | tuple[str, int, int, int]]],
+    ) -> tuple[tuple[str, str, int], ...]:
+        endpoints: list[tuple[str, str, int]] = []
+        seen: set[tuple[str, int]] = set()
+        for family, _socktype, _proto, _canonname, sockaddr in addrinfos:
+            ip = sockaddr[0]
+            port = sockaddr[1]
+            key = (ip, port)
+            if key in seen:
+                continue
+            seen.add(key)
+            family_name = "ipv6" if family == socket.AF_INET6 else "ipv4"
+            endpoints.append((family_name, ip, port))
+        return tuple(endpoints)
+
+    def _probe_tls_endpoint(
+        self,
+        *,
+        host: str,
+        ip: str,
+        port: int,
+        timeout: int,
+        family_name: str,
+    ) -> str:
+        prefix = f"tls_probe {family_name}/{ip}:{port}"
+        try:
+            verified_context = ssl.create_default_context()
+            with socket.create_connection((ip, port), timeout=timeout) as sock:
+                with verified_context.wrap_socket(sock, server_hostname=host) as tls_sock:
+                    cert = tls_sock.getpeercert()
+                    return f"{prefix} verify=ok cert={self._format_peer_certificate(cert)}"
+        except Exception as verify_exc:  # noqa: BLE001 - best-effort diagnostics.
+            cert_summary = self._fetch_unverified_certificate_summary(
+                host=host,
+                ip=ip,
+                port=port,
+                timeout=timeout,
+            )
+            return f"{prefix} verify=failed error={verify_exc} cert={cert_summary}"
+
+    def _fetch_unverified_certificate_summary(
+        self,
+        *,
+        host: str,
+        ip: str,
+        port: int,
+        timeout: int,
+    ) -> str:
+        try:
+            unverified_context = ssl._create_unverified_context()
+            with socket.create_connection((ip, port), timeout=timeout) as sock:
+                with unverified_context.wrap_socket(sock, server_hostname=host) as tls_sock:
+                    der = tls_sock.getpeercert(binary_form=True)
+            if der is None:
+                return "unavailable error=peer did not provide a certificate"
+            pem = ssl.DER_cert_to_PEM_cert(der)
+            with tempfile.NamedTemporaryFile("w", encoding="ascii", suffix=".pem") as cert_file:
+                cert_file.write(pem)
+                cert_file.flush()
+                decoded = ssl._ssl._test_decode_cert(cert_file.name)  # type: ignore[attr-defined]
+            return self._format_peer_certificate(decoded)
+        except Exception as cert_exc:  # noqa: BLE001 - best-effort diagnostics.
+            return f"unavailable error={cert_exc}"
+
+    def _format_peer_certificate(self, cert: dict[str, Any]) -> str:
+        subject = self._format_certificate_name(cert.get("subject"))
+        issuer = self._format_certificate_name(cert.get("issuer"))
+        subject_alt_names = [
+            str(value)
+            for kind, value in cert.get("subjectAltName", ())
+            if str(kind).lower() == "dns"
+        ]
+        san = ",".join(subject_alt_names) if subject_alt_names else "-"
+        not_after = cert.get("notAfter", "-")
+        return f"subject={subject} issuer={issuer} san={san} notAfter={not_after}"
+
+    def _format_certificate_name(self, value: object) -> str:
+        if not isinstance(value, tuple):
+            return "-"
+        parts: list[str] = []
+        for rdn in value:
+            if not isinstance(rdn, tuple):
+                continue
+            for attribute in rdn:
+                if (
+                    isinstance(attribute, tuple)
+                    and len(attribute) == 2
+                    and attribute[0] == "commonName"
+                ):
+                    parts.append(str(attribute[1]))
+        return ",".join(parts) if parts else "-"
 
     def _post_batched_commands(
         self,
