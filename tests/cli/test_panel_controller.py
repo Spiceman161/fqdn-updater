@@ -321,6 +321,7 @@ def test_router_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
 
     assert prompts.select_calls[0]["message"] == "Маршрутизаторы"
     assert prompts.select_calls[0]["hint_lines"] == panel_module.ROUTER_MENU_HINT_LINES
+    assert prompts.select_calls[0]["choice_titles"][-1] == "Главное меню"
 
 
 def test_schedule_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
@@ -332,6 +333,7 @@ def test_schedule_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
 
     assert prompts.select_calls[0]["message"] == "Расписание"
     assert prompts.select_calls[0]["hint_lines"] == panel_module.SCHEDULE_MENU_HINT_LINES
+    assert prompts.select_calls[0]["choice_titles"][-1] == "Главное меню"
 
 
 def test_about_menu_describes_project_scope_and_source_repository(tmp_path) -> None:
@@ -350,7 +352,10 @@ def test_about_menu_describes_project_scope_and_source_repository(tmp_path) -> N
 
 
 def test_manual_run_menu_selects_routers_and_runs_sync(tmp_path) -> None:
-    prompts = ScriptedPromptAdapter(checkbox_answers=[["router-1", "router-2"]])
+    prompts = ScriptedPromptAdapter(
+        select_answers=["sync"],
+        checkbox_answers=[["router-1", "router-2"]],
+    )
     controller, console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(
         controller._config_path,
@@ -397,6 +402,14 @@ def test_manual_run_menu_selects_routers_and_runs_sync(tmp_path) -> None:
 
     controller._manual_run_menu()
 
+    assert prompts.select_calls[0]["message"] == "Ручной запуск"
+    assert prompts.select_calls[0]["choices"] == ["dry-run", "sync", "back"]
+    assert prompts.select_calls[0]["choice_titles"] == [
+        "Dry-run (тестовый запуск без изменения списков)",
+        "Sync (применить изменения в Keenetic)",
+        "Главное меню",
+    ]
+    assert prompts.select_calls[0]["hint_lines"] == panel_module.MANUAL_RUN_HINT_LINES
     checkbox_call = prompts.checkbox_calls[0]
     assert checkbox_call["message"] == "Ручной запуск"
     assert checkbox_call["hint_lines"] == panel_module.MANUAL_RUN_HINT_LINES
@@ -746,12 +759,10 @@ def test_service_selection_groups_composite_services_and_collapses_full_selectio
     assert selected == {"block", "hodca"}
     checkbox_call = prompts.checkbox_calls[0]
     assert (
-        checkbox_call["selection_groups"]["block"]
-        == panel_module.SERVICE_SELECTION_GROUPS["block"]
+        checkbox_call["selection_groups"]["block"] == panel_module.SERVICE_SELECTION_GROUPS["block"]
     )
     assert (
-        checkbox_call["selection_groups"]["hodca"]
-        == panel_module.SERVICE_SELECTION_GROUPS["hodca"]
+        checkbox_call["selection_groups"]["hodca"] == panel_module.SERVICE_SELECTION_GROUPS["hodca"]
     )
     choice_titles = [choice["title"] for choice in checkbox_call["choices"]]
     assert choice_titles[0].startswith("block (full)")
@@ -1318,9 +1329,11 @@ def test_edit_router_selection_aligns_router_columns(tmp_path) -> None:
     assert [[part.strip() for part in title.split("|")] for title in choice_titles] == [
         ["main", "Тестовый роутер", "включён"],
         ["main-2", "main", "включён"],
+        ["Назад"],
     ]
-    assert [title.index("|") for title in choice_titles] == [7, 7]
-    assert [title.rindex("|") for title in choice_titles] == [25, 25]
+    router_choice_titles = choice_titles[:2]
+    assert [title.index("|") for title in router_choice_titles] == [7, 7]
+    assert [title.rindex("|") for title in router_choice_titles] == [25, 25]
 
 
 def test_toggle_router_enabled_preserves_existing_mappings(tmp_path) -> None:
@@ -1519,6 +1532,10 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
 
     controller._lists_menu()
 
+    assert prompts.select_calls[0]["message"] == "Выберите маршрутизатор для списков и маршрутов"
+    assert prompts.select_calls[0]["choice_titles"][-1] == "Главное меню"
+    assert prompts.select_calls[1]["message"] == "Базовый интерфейс маршрутизации"
+    assert prompts.select_calls[1]["choice_titles"][-1] == "Назад"
     payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
     mappings = sorted(payload["mappings"], key=lambda item: item["service_key"])
     assert mappings == [
@@ -1650,7 +1667,7 @@ def test_lists_menu_can_run_sync_for_selected_router_after_save(tmp_path) -> Non
     assert prompts.select_calls[-1]["message"] == "Списки и маршруты сохранены"
     assert prompts.select_calls[-1]["choice_titles"] == [
         "Запустить обновление на этом маршрутизаторе",
-        "Вернуться без запуска",
+        "Главное меню",
     ]
     assert len(sync_orchestrator.calls) == 1
     sync_config, trigger = sync_orchestrator.calls[0]

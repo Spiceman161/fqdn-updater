@@ -158,8 +158,9 @@ SCHEDULE_MENU_HINT_LINES = (
     "Команда установки обновляет host-level unit/timer из сохранённых параметров.",
 )
 MANUAL_RUN_HINT_LINES = (
-    "Выберите один или несколько маршрутизаторов для немедленного обновления списков.",
-    "Будут применены только сохранённые managed mappings; перед записью панель прочитает "
+    "Dry-run проверит план без записи в Keenetic; sync сразу применит сохранённые mappings.",
+    "Для sync выберите один или несколько маршрутизаторов для немедленного обновления списков.",
+    "При sync будут применены только сохранённые managed mappings; перед записью панель прочитает "
     "текущее состояние Keenetic.",
 )
 ROUTER_MENU_HINT_LINES = (
@@ -324,7 +325,7 @@ class PanelController:
                     PromptChoice("Выход", "exit"),
                 ],
                 default="routers",
-                instruction="Стрелки выбирают, Enter открывает, Esc возвращает назад.",
+                instruction="Стрелки выбирают, Enter открывает, Esc выходит.",
                 hint_lines=MAIN_MENU_HINT_LINES,
             )
             if choice in {None, "exit"}:
@@ -445,7 +446,7 @@ class PanelController:
                         "status",
                         disabled=None if has_routers else "Нет настроенных маршрутизаторов",
                     ),
-                    PromptChoice("Назад", "back"),
+                    PromptChoice("Главное меню", "back"),
                 ],
                 default="add",
                 hint_lines=ROUTER_MENU_HINT_LINES,
@@ -632,6 +633,7 @@ class PanelController:
         router = self._select_router(
             config=config,
             message="Выберите маршрутизатор для редактирования",
+            back_title="Назад",
         )
         if router is None:
             return
@@ -832,6 +834,7 @@ class PanelController:
         router = self._select_router(
             config=config,
             message="Выберите маршрутизатор для списков и маршрутов",
+            back_title="Главное меню",
         )
         if router is None:
             return
@@ -918,7 +921,7 @@ class PanelController:
             message="Списки и маршруты сохранены",
             choices=[
                 PromptChoice("Запустить обновление на этом маршрутизаторе", "sync-router"),
-                PromptChoice("Вернуться без запуска", "back"),
+                PromptChoice("Главное меню", "back"),
             ],
             default="sync-router",
             hint_lines=(
@@ -928,13 +931,11 @@ class PanelController:
         )
         if choice == "sync-router":
             self._run_sync_for_router(router_id=router.id)
-        elif choice == "back":
-            self._pause()
 
     def _runs_menu(self) -> None:
         page_index = 0
         page_size = 10
-        default_choice = "dry-run"
+        default_choice = "back"
         while True:
             config = self._load_config()
             history = self._run_history_service.list_recent(
@@ -960,22 +961,14 @@ class PanelController:
                 choices.append(PromptChoice("Назад", "prev-page"))
             if has_next_page:
                 choices.append(PromptChoice("Далее", "next-page"))
-            choices.extend(
-                [
-                    PromptChoice(
-                        "Выполнить Dry-run (тестовый запуск без изменения списков)",
-                        "dry-run",
-                    ),
-                    PromptChoice("В главное меню", "back"),
-                ]
-            )
+            choices.append(PromptChoice("Главное меню", "back"))
             choice = self._prompts.select(
                 message="Журнал",
                 choices=choices,
                 default=(
                     default_choice
                     if any(item.value == default_choice for item in choices)
-                    else "dry-run"
+                    else "back"
                 ),
             )
             if choice in {None, "back"}:
@@ -988,15 +981,28 @@ class PanelController:
                 default_choice = "next-page"
                 page_index += 1
                 continue
-            if choice == "dry-run":
-                default_choice = "dry-run"
-                self._run_dry_run_preview()
 
     def _manual_run_menu(self) -> None:
         config = self._load_config()
         if not config.routers:
             self._console.print("[yellow]Нет настроенных маршрутизаторов.[/yellow]")
             self._pause()
+            return
+
+        action = self._prompts.select(
+            message="Ручной запуск",
+            choices=[
+                PromptChoice("Dry-run (тестовый запуск без изменения списков)", "dry-run"),
+                PromptChoice("Sync (применить изменения в Keenetic)", "sync"),
+                PromptChoice("Главное меню", "back"),
+            ],
+            default="dry-run",
+            hint_lines=MANUAL_RUN_HINT_LINES,
+        )
+        if action in {None, "back"}:
+            return
+        if action == "dry-run":
+            self._run_dry_run_preview()
             return
 
         router_id_width, router_name_width = _router_selection_column_widths(config.routers)
@@ -1052,7 +1058,7 @@ class PanelController:
                         disabled=("Расписание уже выключено" if not schedule.is_enabled else None),
                     ),
                     PromptChoice("Установить/обновить в systemd", "install"),
-                    PromptChoice("Назад", "back"),
+                    PromptChoice("Главное меню", "back"),
                 ],
                 default="edit",
                 hint_lines=SCHEDULE_MENU_HINT_LINES,
@@ -1261,7 +1267,13 @@ class PanelController:
         )
         self._pause()
 
-    def _select_router(self, *, config: AppConfig, message: str) -> RouterConfig | None:
+    def _select_router(
+        self,
+        *,
+        config: AppConfig,
+        message: str,
+        back_title: str = "Назад",
+    ) -> RouterConfig | None:
         if not config.routers:
             self._console.print("[yellow]Нет настроенных маршрутизаторов.[/yellow]")
             self._pause()
@@ -1279,12 +1291,13 @@ class PanelController:
             )
             for router in config.routers
         ]
+        choices.append(PromptChoice(back_title, "__back__"))
         selected_router_id = self._prompts.select(
             message=message,
             choices=choices,
             default=config.routers[0].id,
         )
-        if selected_router_id is None:
+        if selected_router_id in {None, "__back__"}:
             return None
         return _find_router(config=config, router_id=selected_router_id)
 
@@ -1474,6 +1487,7 @@ class PanelController:
                 for candidate in candidates
             ]
             choices.append(PromptChoice("Ввести интерфейс вручную", "manual"))
+            choices.append(PromptChoice("Назад", "__back__"))
             default_choice = (
                 default_value
                 if any(candidate.value == default_value for candidate in candidates)
@@ -1485,7 +1499,7 @@ class PanelController:
                 default=default_choice,
                 hint_lines=hint_lines,
             )
-            if selected_value is None:
+            if selected_value in {None, "__back__"}:
                 return None
             if selected_value != "manual":
                 return RouteTargetDraft(
@@ -1693,6 +1707,7 @@ class PanelController:
 
         table = Table(show_header=True, header_style="bold white", box=None)
         table.add_column("Режим", no_wrap=True)
+        table.add_column("Запуск", no_wrap=True)
         table.add_column("Статус", no_wrap=True)
         table.add_column("Завершён", no_wrap=True)
         table.add_column("Маршрутизаторы")
@@ -1701,13 +1716,14 @@ class PanelController:
             artifact = run.artifact
             table.add_row(
                 artifact.mode.value,
+                artifact.trigger.value,
                 _format_run_status(artifact.status),
                 _format_history_finished_at(artifact.finished_at),
                 _format_history_router_names(config=config, artifact=artifact),
                 _format_artifact_summary(artifact),
             )
         if not history.runs:
-            table.add_row("[dim]нет[/dim]", "-", "-", "-", "-")
+            table.add_row("[dim]нет[/dim]", "-", "-", "-", "-", "-")
         self._console.print(
             Panel(
                 table,
@@ -2353,10 +2369,7 @@ def _router_selection_title(
 
 
 def _router_selection_header(*, router_id_width: int, router_name_width: int) -> str:
-    return (
-        f"{'Маршрутизатор':<{router_id_width}} | "
-        f"{'Имя':<{router_name_width}} | Статус"
-    )
+    return f"{'Маршрутизатор':<{router_id_width}} | {'Имя':<{router_name_width}} | Статус"
 
 
 def _router_toggle_title(

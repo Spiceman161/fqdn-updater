@@ -108,11 +108,8 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp
     controller._runs_menu()
 
     assert run_history_service.calls == [("data/artifacts", controller._config_path, 10, 0)]
-    assert prompts.select_calls[0]["choices"] == ["dry-run", "back"]
-    assert prompts.select_calls[0]["choice_titles"] == [
-        "Выполнить Dry-run (тестовый запуск без изменения списков)",
-        "В главное меню",
-    ]
+    assert prompts.select_calls[0]["choices"] == ["back"]
+    assert prompts.select_calls[0]["choice_titles"] == ["Главное меню"]
     output = console.export_text()
     assert "Журнал" in output
     assert "Контекст журнала" in output
@@ -121,6 +118,8 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp
     assert "1/1" in output
     assert "1-1 из 1" in output
     assert "08.04.2026 13:01:00" in output
+    assert "manual" in output
+    assert "dry_run" in output
     assert "Main router" in output
     assert "изменено=1" in output
     assert "ошибок=1" in output
@@ -133,23 +132,20 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp
     assert "fqdn-updater sync --config" not in output
 
 
-def test_runs_menu_dry_run_choice_calls_orchestrator_and_renders_summary(tmp_path) -> None:
-    prompts = ScriptedPromptAdapter(select_answers=["dry-run", "back"])
+def test_manual_run_menu_dry_run_choice_calls_orchestrator_and_renders_summary(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["dry-run"])
     controller, console = _panel_controller(tmp_path, prompts=prompts)
     config = _config()
-    run_history_service = _RecordingRunHistoryService(
-        artifacts_dir=tmp_path / "data" / "artifacts",
-        runs=(),
-    )
     dry_run_result = _dry_run_result()
     dry_run_orchestrator = _RecordingDryRunOrchestrator(result=dry_run_result)
     controller._load_config = lambda: config  # type: ignore[method-assign]
-    controller._run_history_service = run_history_service  # type: ignore[method-assign]
     controller._dry_run_orchestrator = dry_run_orchestrator  # type: ignore[method-assign]
     controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
 
-    controller._runs_menu()
+    controller._manual_run_menu()
 
+    assert prompts.select_calls[0]["message"] == "Ручной запуск"
+    assert prompts.select_calls[0]["choices"] == ["dry-run", "sync", "back"]
     assert len(dry_run_orchestrator.calls) == 1
     assert dry_run_orchestrator.calls[0][1] is RunTrigger.MANUAL
     output = console.export_text()
@@ -206,35 +202,31 @@ def test_runs_menu_supports_pagination_with_next_and_previous_actions(tmp_path) 
         ("data/artifacts", controller._config_path, 10, 10),
     ]
     assert clear_calls == [True, True, True, True]
-    assert prompts.select_calls[0]["choices"] == ["next-page", "dry-run", "back"]
-    assert prompts.select_calls[0]["default"] == "dry-run"
+    assert prompts.select_calls[0]["choices"] == ["next-page", "back"]
+    assert prompts.select_calls[0]["default"] == "back"
     assert prompts.select_calls[0]["choice_titles"] == [
         "Далее",
-        "Выполнить Dry-run (тестовый запуск без изменения списков)",
-        "В главное меню",
+        "Главное меню",
     ]
-    assert prompts.select_calls[1]["choices"] == ["prev-page", "next-page", "dry-run", "back"]
+    assert prompts.select_calls[1]["choices"] == ["prev-page", "next-page", "back"]
     assert prompts.select_calls[1]["default"] == "next-page"
     assert prompts.select_calls[1]["choice_titles"] == [
         "Назад",
         "Далее",
-        "Выполнить Dry-run (тестовый запуск без изменения списков)",
-        "В главное меню",
+        "Главное меню",
     ]
-    assert prompts.select_calls[2]["choices"] == ["prev-page", "dry-run", "back"]
-    assert prompts.select_calls[2]["default"] == "dry-run"
+    assert prompts.select_calls[2]["choices"] == ["prev-page", "back"]
+    assert prompts.select_calls[2]["default"] == "back"
     assert prompts.select_calls[2]["choice_titles"] == [
         "Назад",
-        "Выполнить Dry-run (тестовый запуск без изменения списков)",
-        "В главное меню",
+        "Главное меню",
     ]
-    assert prompts.select_calls[3]["choices"] == ["prev-page", "next-page", "dry-run", "back"]
+    assert prompts.select_calls[3]["choices"] == ["prev-page", "next-page", "back"]
     assert prompts.select_calls[3]["default"] == "prev-page"
     assert prompts.select_calls[3]["choice_titles"] == [
         "Назад",
         "Далее",
-        "Выполнить Dry-run (тестовый запуск без изменения списков)",
-        "В главное меню",
+        "Главное меню",
     ]
     output = console.export_text()
     assert "1/3" in output
