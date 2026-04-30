@@ -6,10 +6,12 @@ from pathlib import Path
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.application.sync_orchestration import SyncOrchestrator
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
-from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
+from fqdn_updater.domain.keenetic import DnsProxyStatus, ObjectGroupState, RouteBindingState
 from fqdn_updater.domain.run_artifact import (
+    FailureCategory,
     RouterResultStatus,
     RunStatus,
+    RunStep,
     RunTrigger,
     ServiceResultStatus,
 )
@@ -437,6 +439,110 @@ def test_sync_orchestrator_stops_current_router_after_write_failure_and_skips_re
     assert result.artifact.status is RunStatus.PARTIAL
 
 
+def test_sync_orchestrator_preflight_failure_marks_router_failed_without_service_reads() -> None:
+    config = _config_with_two_services_one_router()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(service_key="telegram", entries=("keep.example",)),
+                NormalizedServiceSource(service_key="youtube", entries=("keep.example",)),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={},
+        route_bindings={},
+        preflight_errors={
+            "router-1": (
+                "transport failed after 5 attempts: [Errno -2] Name or service not known"
+            )
+        },
+    )
+    orchestrator = SyncOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
+            ]
+        ),
+        run_id_factory=lambda: "run-103-preflight",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    router_result = result.artifact.router_results[0]
+    assert client.read_calls == []
+    assert client.write_calls == []
+    assert router_result.status is RouterResultStatus.FAILED
+    assert router_result.failure_detail is not None
+    assert router_result.failure_detail.step is RunStep.READ_DNS_PROXY_STATUS
+    assert router_result.failure_detail.category is FailureCategory.DNS_RESOLUTION_FAILED
+    assert [service.status for service in router_result.service_results] == [
+        ServiceResultStatus.FAILED,
+        ServiceResultStatus.FAILED,
+    ]
+    assert result.artifact.status is RunStatus.FAILED
+
+
+def test_sync_orchestrator_circuit_breaks_remaining_services_after_transport_read_failure() -> None:
+    config = _config_with_two_services_one_router()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(service_key="telegram", entries=("keep.example",)),
+                NormalizedServiceSource(service_key="youtube", entries=("keep.example",)),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={},
+        route_bindings={},
+        read_errors={
+            (
+                "router-1",
+                "svc-telegram",
+            ): "transport failed after 5 attempts: _ssl.c:993: The handshake operation timed out"
+        },
+    )
+    orchestrator = SyncOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
+            ]
+        ),
+        run_id_factory=lambda: "run-103-circuit",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    router_result = result.artifact.router_results[0]
+    assert client.read_calls == ["svc-telegram"]
+    assert client.write_calls == []
+    assert router_result.failure_detail is not None
+    assert router_result.failure_detail.category is FailureCategory.TLS_HANDSHAKE_TIMEOUT
+    assert [service.status for service in router_result.service_results] == [
+        ServiceResultStatus.FAILED,
+        ServiceResultStatus.SKIPPED,
+    ]
+    assert "Skipped after router transport failure" in (
+        router_result.service_results[1].error_message or ""
+    )
+    assert result.artifact.status is RunStatus.PARTIAL
+
+
 def test_sync_orchestrator_continues_other_routers_after_partial_failures() -> None:
     config = _config_with_two_routers()
     source_loader = StubSourceLoader(
@@ -715,6 +821,7 @@ class RecordingClientFactory:
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
         static_routes: dict[str, tuple[StaticRouteState, ...]] | None = None,
+        preflight_errors: dict[str, str] | None = None,
         read_errors: dict[tuple[str, str], str] | None = None,
         write_errors: dict[tuple[str, str, str], str] | None = None,
         save_errors: dict[str, str] | None = None,
@@ -722,6 +829,7 @@ class RecordingClientFactory:
         self.states = states
         self.route_bindings = route_bindings
         self.static_routes = static_routes or {}
+        self.preflight_errors = preflight_errors or {}
         self.read_errors = read_errors or {}
         self.write_errors = write_errors or {}
         self.save_errors = save_errors or {}
@@ -733,6 +841,7 @@ class RecordingClientFactory:
             states=self.states,
             route_bindings=self.route_bindings,
             static_routes=self.static_routes.get(router.id, ()),
+            preflight_errors=self.preflight_errors,
             read_errors=self.read_errors,
             write_errors=self.write_errors,
             save_errors=self.save_errors,
@@ -749,6 +858,7 @@ class RecordingClient:
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
         static_routes: tuple[StaticRouteState, ...],
+        preflight_errors: dict[str, str],
         read_errors: dict[tuple[str, str], str],
         write_errors: dict[tuple[str, str, str], str],
         save_errors: dict[str, str],
@@ -757,6 +867,7 @@ class RecordingClient:
         self.states = states
         self.route_bindings = route_bindings
         self.static_routes = static_routes
+        self.preflight_errors = preflight_errors
         self.read_errors = read_errors
         self.write_errors = write_errors
         self.save_errors = save_errors
@@ -821,8 +932,10 @@ class RecordingClient:
         if self.router_id in self.save_errors:
             raise RuntimeError(self.save_errors[self.router_id])
 
-    def get_dns_proxy_status(self):
-        raise AssertionError("get_dns_proxy_status is not used in sync orchestration")
+    def get_dns_proxy_status(self) -> DnsProxyStatus:
+        if self.router_id in self.preflight_errors:
+            raise RuntimeError(self.preflight_errors[self.router_id])
+        return DnsProxyStatus(enabled=True)
 
     def _raise_write_error(self, operation: str, name: str) -> None:
         key = (self.router_id, operation, name)

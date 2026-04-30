@@ -59,12 +59,24 @@ class RunStep(StrEnum):
     SAVE_CONFIG = "save_config"
 
 
+class FailureCategory(StrEnum):
+    DNS_RESOLUTION_FAILED = "dns_resolution_failed"
+    TLS_HANDSHAKE_TIMEOUT = "tls_handshake_timeout"
+    TLS_CERT_HOSTNAME_MISMATCH = "tls_cert_hostname_mismatch"
+    TLS_CERT_CHAIN_UNTRUSTED = "tls_cert_chain_untrusted"
+    TLS_CERT_VERIFY_FAILED = "tls_cert_verify_failed"
+    CONNECTION_RESET = "connection_reset"
+    TLS_UNEXPECTED_EOF = "tls_unexpected_eof"
+    TRANSPORT_FAILED = "transport_failed"
+
+
 class FailureDetail(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     step: RunStep
     message: str
     occurred_at: datetime
+    category: FailureCategory | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ServiceRunResult(BaseModel):

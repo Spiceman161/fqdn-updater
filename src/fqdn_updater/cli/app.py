@@ -262,7 +262,7 @@ def router_add_command(
     ),
     enabled: bool = typer.Option(True, "--enabled/--disabled", help="Включить sync роутера."),
     tags: list[str] | None = ROUTER_TAGS_OPTION,
-    timeout_seconds: int = typer.Option(10, "--timeout-seconds", help="Timeout RCI request."),
+    timeout_seconds: int = typer.Option(30, "--timeout-seconds", help="Timeout RCI request."),
     allowed_source_ips: list[str] | None = ROUTER_ALLOWED_SOURCE_IPS_OPTION,
 ) -> None:
     """Добавить managed router в config."""

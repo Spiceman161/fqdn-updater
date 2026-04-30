@@ -22,6 +22,7 @@ from fqdn_updater.application.run_support import (
     validate_router_desired_fqdn_total,
 )
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
+from fqdn_updater.application.transport_failure import classify_transport_failure
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
 from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
@@ -222,6 +223,18 @@ class SyncOrchestrator:
                 message=str(exc),
             )
 
+        try:
+            client.get_dns_proxy_status()
+        except Exception as exc:
+            return self._failed_router_result(
+                logger=logger,
+                router=router,
+                mappings=mappings,
+                plans=plans,
+                step=RunStep.READ_DNS_PROXY_STATUS,
+                message=f"Router preflight failed: {exc}",
+            )
+
         router_failure_detail: FailureDetail | None = None
 
         for index, mapping in enumerate(mappings):
@@ -266,38 +279,44 @@ class SyncOrchestrator:
                 )
                 continue
 
-            actual_states = self._read_object_group_shards(
+            actual_states, read_failure_detail = self._read_object_group_shards(
                 logger=logger,
                 client=client,
                 router=router,
                 mapping=mapping,
                 service_results=service_results,
             )
-            if actual_states is None:
+            if read_failure_detail is not None:
+                if read_failure_detail.category is not None:
+                    router_failure_detail = read_failure_detail
                 continue
 
-            actual_route_bindings = self._read_route_binding_shards(
+            actual_route_bindings, read_failure_detail = self._read_route_binding_shards(
                 logger=logger,
                 client=client,
                 router=router,
                 mapping=mapping,
                 service_results=service_results,
             )
-            if actual_route_bindings is None:
+            if read_failure_detail is not None:
+                if read_failure_detail.category is not None:
+                    router_failure_detail = read_failure_detail
                 continue
 
             actual_static_routes: tuple[StaticRouteState, ...] = ()
             if mapping.service_key in static_route_service_keys or has_static_route_entries(
                 desired_entries
             ):
-                maybe_actual_static_routes = self._read_static_routes(
+                maybe_actual_static_routes, read_failure_detail = self._read_static_routes(
                     logger=logger,
                     client=client,
                     router=router,
                     mapping=mapping,
                     service_results=service_results,
                 )
-                if maybe_actual_static_routes is None:
+                if read_failure_detail is not None:
+                    if read_failure_detail.category is not None:
+                        router_failure_detail = read_failure_detail
                     continue
                 actual_static_routes = maybe_actual_static_routes
 
@@ -453,13 +472,13 @@ class SyncOrchestrator:
         router: RouterConfig,
         mapping: RouterServiceMappingConfig,
         service_results: list[ServiceRunResult],
-    ) -> dict[str, ObjectGroupState] | None:
+    ) -> tuple[dict[str, ObjectGroupState] | None, FailureDetail | None]:
         actual_states: dict[str, ObjectGroupState] = {}
         for object_group_name in managed_shard_names(mapping.object_group_name):
             try:
                 actual_states[object_group_name] = client.get_object_group(object_group_name)
             except Exception as exc:
-                self._append_service_failure(
+                failure_detail = self._append_service_failure(
                     logger=logger,
                     router=router,
                     mapping=mapping,
@@ -468,8 +487,8 @@ class SyncOrchestrator:
                     service_results=service_results,
                     object_group_name=object_group_name,
                 )
-                return None
-        return actual_states
+                return None, failure_detail
+        return actual_states, None
 
     def _read_route_binding_shards(
         self,
@@ -479,7 +498,7 @@ class SyncOrchestrator:
         router: RouterConfig,
         mapping: RouterServiceMappingConfig,
         service_results: list[ServiceRunResult],
-    ) -> dict[str, RouteBindingState] | None:
+    ) -> tuple[dict[str, RouteBindingState] | None, FailureDetail | None]:
         actual_route_bindings: dict[str, RouteBindingState] = {}
         for object_group_name in managed_shard_names(mapping.object_group_name):
             try:
@@ -487,7 +506,7 @@ class SyncOrchestrator:
                     object_group_name
                 )
             except Exception as exc:
-                self._append_service_failure(
+                failure_detail = self._append_service_failure(
                     logger=logger,
                     router=router,
                     mapping=mapping,
@@ -496,8 +515,8 @@ class SyncOrchestrator:
                     service_results=service_results,
                     object_group_name=object_group_name,
                 )
-                return None
-        return actual_route_bindings
+                return None, failure_detail
+        return actual_route_bindings, None
 
     def _read_static_routes(
         self,
@@ -507,11 +526,11 @@ class SyncOrchestrator:
         router: RouterConfig,
         mapping: RouterServiceMappingConfig,
         service_results: list[ServiceRunResult],
-    ) -> tuple[StaticRouteState, ...] | None:
+    ) -> tuple[tuple[StaticRouteState, ...] | None, FailureDetail | None]:
         try:
-            return client.get_static_routes()
+            return client.get_static_routes(), None
         except Exception as exc:
-            self._append_service_failure(
+            failure_detail = self._append_service_failure(
                 logger=logger,
                 router=router,
                 mapping=mapping,
@@ -519,7 +538,7 @@ class SyncOrchestrator:
                 message=str(exc),
                 service_results=service_results,
             )
-            return None
+            return None, failure_detail
 
     def _failed_router_result(
         self,
@@ -567,7 +586,7 @@ class SyncOrchestrator:
         message: str,
         service_results: list[ServiceRunResult],
         object_group_name: str | None = None,
-    ) -> None:
+    ) -> FailureDetail:
         failure_detail = self._failure_detail(step=step, message=message)
         service_results.append(
             build_failed_service_result(
@@ -585,6 +604,7 @@ class SyncOrchestrator:
             status="failed",
             message=message,
         )
+        return failure_detail
 
     def _apply_plan(
         self,
@@ -698,6 +718,7 @@ class SyncOrchestrator:
             step=step,
             message=message,
             occurred_at=_utc_now(),
+            category=classify_transport_failure(message),
         )
 
 
@@ -735,11 +756,16 @@ def _build_skipped_service_result(
     mapping: RouterServiceMappingConfig,
     failure_detail: FailureDetail,
 ) -> ServiceRunResult:
+    reason = (
+        "router transport failure"
+        if failure_detail.category is not None
+        else "router write failure"
+    )
     return ServiceRunResult(
         service_key=mapping.service_key,
         object_group_name=mapping.object_group_name,
         status=ServiceResultStatus.SKIPPED,
-        error_message=f"Skipped after router write failure: {failure_detail.message}",
+        error_message=f"Skipped after {reason}: {failure_detail.message}",
         failure_detail=failure_detail,
     )
 

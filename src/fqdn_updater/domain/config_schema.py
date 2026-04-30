@@ -54,7 +54,7 @@ class RouterConfig(BaseModel):
     password_file: str | None = None
     enabled: bool = True
     tags: list[str] = Field(default_factory=list)
-    timeout_seconds: int = Field(default=10, ge=1)
+    timeout_seconds: int = Field(default=30, ge=1)
     allowed_source_ips: list[str] = Field(default_factory=list)
 
     @field_validator("id", "name", "username", "password_env", "password_file", mode="before")

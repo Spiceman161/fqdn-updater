@@ -45,6 +45,7 @@ from fqdn_updater.domain.config_schema import (
 )
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
 from fqdn_updater.domain.run_artifact import (
+    FailureCategory,
     RouterResultStatus,
     RouterRunResult,
     RunArtifact,
@@ -85,7 +86,7 @@ DEFAULT_SELECTED_SERVICES = frozenset(
     }
 )
 DEFAULT_INTERFACE_NAME = "Wireguard0"
-DEFAULT_RCI_TIMEOUT_SECONDS = 10
+DEFAULT_RCI_TIMEOUT_SECONDS = 30
 ROOT_PANEL_WIDTH = 86
 DISCOVERY_ERROR_MESSAGE_LIMIT = 280
 SERVICE_SELECTION_SERVICE_WIDTH = 22
@@ -1823,10 +1824,11 @@ class PanelController:
         if errors:
             error_table = Table(show_header=True, header_style="bold white", box=None, expand=True)
             error_table.add_column("Источник")
+            error_table.add_column("Класс", no_wrap=True)
             error_table.add_column("Шаг", no_wrap=True)
             error_table.add_column("Ошибка")
-            for source, step, message in errors:
-                error_table.add_row(source, step, message)
+            for source, category, step, message in errors:
+                error_table.add_row(source, category, step, message)
             self._console.print(
                 Panel(
                     error_table,
@@ -2764,30 +2766,59 @@ def _run_error_rows(
     *,
     config: AppConfig,
     artifact: RunArtifact,
-) -> list[tuple[str, str, str]]:
-    rows: list[tuple[str, str, str]] = []
+) -> list[tuple[str, str, str, str]]:
+    rows: list[tuple[str, str, str, str]] = []
     for router_result in artifact.router_results:
         router = _find_router(config=config, router_id=router_result.router_id)
         router_name = router.name if router is not None else router_result.router_id
         if router_result.error_message is not None:
+            message = router_result.error_message
+            if _is_grouped_router_transport_failure(router_result):
+                affected_count = sum(
+                    service_result.error_message is not None
+                    and service_result.failure_detail == router_result.failure_detail
+                    for service_result in router_result.service_results
+                )
+                message = f"{message} (затронуто сервисов: {affected_count})"
             rows.append(
                 (
                     router_name,
+                    _format_failure_category(router_result.failure_detail),
                     _format_failure_step(router_result.failure_detail),
-                    router_result.error_message,
+                    message,
                 )
             )
         for service_result in router_result.service_results:
             if service_result.error_message is None:
                 continue
+            if (
+                _is_grouped_router_transport_failure(router_result)
+                and service_result.failure_detail == router_result.failure_detail
+            ):
+                continue
             rows.append(
                 (
                     f"{router_name} / {service_result.service_key}",
+                    _format_failure_category(service_result.failure_detail),
                     _format_failure_step(service_result.failure_detail),
                     service_result.error_message,
                 )
             )
     return rows
+
+
+def _is_grouped_router_transport_failure(router_result: RouterRunResult) -> bool:
+    failure_detail = router_result.failure_detail
+    return failure_detail is not None and failure_detail.category is not None
+
+
+def _format_failure_category(failure_detail) -> str:
+    if failure_detail is None or failure_detail.category is None:
+        return "-"
+    category = failure_detail.category
+    if isinstance(category, FailureCategory):
+        return category.value
+    return str(category)
 
 
 def _format_failure_step(failure_detail) -> str:

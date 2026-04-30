@@ -6,10 +6,12 @@ from pathlib import Path
 from fqdn_updater.application.dry_run_orchestration import DryRunOrchestrator
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
-from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
+from fqdn_updater.domain.keenetic import DnsProxyStatus, ObjectGroupState, RouteBindingState
 from fqdn_updater.domain.run_artifact import (
+    FailureCategory,
     RouterResultStatus,
     RunStatus,
+    RunStep,
     RunTrigger,
     ServiceResultStatus,
 )
@@ -468,6 +470,108 @@ def test_dry_run_orchestrator_marks_read_failures_partial_and_preserves_order() 
     assert [plan.service_key for plan in result.plans] == ["telegram"]
 
 
+def test_dry_run_orchestrator_preflight_failure_marks_router_failed_without_service_reads() -> None:
+    config = _config_with_two_services()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(service_key="telegram", entries=("keep.example",)),
+                NormalizedServiceSource(service_key="youtube", entries=("keep.example",)),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={},
+        route_bindings={},
+        preflight_errors={
+            "router-1": (
+                "transport failed after 5 attempts: [Errno -2] Name or service not known"
+            )
+        },
+    )
+    orchestrator = DryRunOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
+            ]
+        ),
+        run_id_factory=lambda: "run-005-preflight",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    router_result = result.artifact.router_results[0]
+    assert client.read_calls == []
+    assert router_result.status is RouterResultStatus.FAILED
+    assert router_result.failure_detail is not None
+    assert router_result.failure_detail.step is RunStep.READ_DNS_PROXY_STATUS
+    assert router_result.failure_detail.category is FailureCategory.DNS_RESOLUTION_FAILED
+    assert [service.status for service in router_result.service_results] == [
+        ServiceResultStatus.FAILED,
+        ServiceResultStatus.FAILED,
+    ]
+    assert result.artifact.status is RunStatus.FAILED
+
+
+def test_dry_run_circuit_breaks_remaining_services_after_transport_read_failure() -> None:
+    config = _config_with_two_services()
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(service_key="telegram", entries=("keep.example",)),
+                NormalizedServiceSource(service_key="youtube", entries=("keep.example",)),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={},
+        route_bindings={},
+        errors={
+            (
+                "router-1",
+                "svc-telegram",
+            ): "transport failed after 5 attempts: _ssl.c:993: The handshake operation timed out"
+        },
+    )
+    orchestrator = DryRunOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
+            ]
+        ),
+        run_id_factory=lambda: "run-005-circuit",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    router_result = result.artifact.router_results[0]
+    assert client.read_calls == ["svc-telegram"]
+    assert router_result.failure_detail is not None
+    assert router_result.failure_detail.category is FailureCategory.TLS_HANDSHAKE_TIMEOUT
+    assert [service.status for service in router_result.service_results] == [
+        ServiceResultStatus.FAILED,
+        ServiceResultStatus.SKIPPED,
+    ]
+    assert "Skipped after router transport failure" in (
+        router_result.service_results[1].error_message or ""
+    )
+    assert result.artifact.status is RunStatus.PARTIAL
+
+
 def test_dry_run_orchestrator_marks_route_only_changes_as_updated() -> None:
     config = _config()
     source_loader = StubSourceLoader(
@@ -558,11 +662,13 @@ class RecordingClientFactory:
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
         static_routes: dict[str, tuple[StaticRouteState, ...]] | None = None,
+        preflight_errors: dict[str, str] | None = None,
         errors: dict[tuple[str, str], str] | None = None,
     ) -> None:
         self.states = states
         self.route_bindings = route_bindings
         self.static_routes = static_routes or {}
+        self.preflight_errors = preflight_errors or {}
         self.errors = errors or {}
         self.created_passwords: list[tuple[str, str]] = []
         self.clients: dict[str, RecordingClient] = {}
@@ -574,6 +680,7 @@ class RecordingClientFactory:
             states=self.states,
             route_bindings=self.route_bindings,
             static_routes=self.static_routes.get(router.id, ()),
+            preflight_errors=self.preflight_errors,
             errors=self.errors,
         )
         self.clients[router.id] = client
@@ -588,12 +695,14 @@ class RecordingClient:
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
         static_routes: tuple[StaticRouteState, ...],
+        preflight_errors: dict[str, str],
         errors: dict[tuple[str, str], str],
     ) -> None:
         self.router_id = router_id
         self.states = states
         self.route_bindings = route_bindings
         self.static_routes = static_routes
+        self.preflight_errors = preflight_errors
         self.errors = errors
         self.read_calls: list[str] = []
 
@@ -617,6 +726,11 @@ class RecordingClient:
     def get_static_routes(self) -> tuple[StaticRouteState, ...]:
         self.read_calls.append("static_routes")
         return self.static_routes
+
+    def get_dns_proxy_status(self) -> DnsProxyStatus:
+        if self.router_id in self.preflight_errors:
+            raise RuntimeError(self.preflight_errors[self.router_id])
+        return DnsProxyStatus(enabled=True)
 
 
 class RecordingArtifactWriter:

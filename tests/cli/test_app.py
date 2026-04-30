@@ -719,7 +719,7 @@ def test_panel_creates_config_secret_and_default_mappings(tmp_path, monkeypatch)
             "password_file": None,
             "rci_url": "https://router-1.example/rci/",
             "tags": [],
-            "timeout_seconds": 10,
+            "timeout_seconds": 30,
             "username": "api_updater",
         }
     ]
@@ -862,7 +862,7 @@ def test_panel_rotate_password_switches_password_file_to_env_and_clears_password
             "password_file": None,
             "rci_url": "https://router-2.example/rci/",
             "tags": [],
-            "timeout_seconds": 10,
+            "timeout_seconds": 30,
             "username": "api-user",
         }
     ]

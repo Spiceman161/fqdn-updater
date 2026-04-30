@@ -7,6 +7,7 @@ from fqdn_updater.domain.config_schema import AppConfig, RouterServiceMappingCon
 from fqdn_updater.domain.keenetic_limits import validate_total_fqdn_entry_count
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.run_artifact import (
+    FailureCategory,
     FailureDetail,
     RouterResultStatus,
     RouterRunResult,
@@ -93,8 +94,14 @@ def build_failure_detail(
     step: RunStep,
     message: str,
     occurred_at: datetime,
+    category: FailureCategory | None = None,
 ) -> FailureDetail:
-    return FailureDetail(step=step, message=message, occurred_at=occurred_at)
+    return FailureDetail(
+        step=step,
+        message=message,
+        occurred_at=occurred_at,
+        category=category,
+    )
 
 
 def aggregate_router_status(

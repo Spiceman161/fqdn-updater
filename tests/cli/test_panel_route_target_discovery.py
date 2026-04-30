@@ -285,7 +285,7 @@ def test_add_new_router_uses_draft_router_for_route_target_discovery(tmp_path, m
     assert str(draft_router.rci_url) == "https://router-1.example/rci/"
     assert draft_router.username == "api-user"
     assert draft_router.password_env == password_env
-    assert draft_router.timeout_seconds == 10
+    assert draft_router.timeout_seconds == 30
     assert fake_service.password_overrides == [generated_password]
     assert [call["message"] for call in prompts.text_calls] == [
         "Имя маршрутизатора",

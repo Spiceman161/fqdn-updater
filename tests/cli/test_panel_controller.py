@@ -956,7 +956,7 @@ def test_add_router_creates_config_secret_and_default_mappings(tmp_path, monkeyp
             "password_file": None,
             "rci_url": "https://router-1.example/rci/",
             "tags": [],
-            "timeout_seconds": 10,
+            "timeout_seconds": 30,
             "username": "api_updater",
         }
     ]
@@ -1090,7 +1090,7 @@ def test_edit_router_updates_password_and_preserves_existing_mappings(
     payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
     assert payload["routers"][0]["name"] == "Router One Renamed"
     assert payload["routers"][0]["password_env"] == "ROUTER_ONE_SECRET"
-    assert payload["routers"][0]["timeout_seconds"] == 10
+    assert payload["routers"][0]["timeout_seconds"] == 30
     assert payload["mappings"] == [
         {
             "auto": True,
@@ -1243,7 +1243,7 @@ def test_edit_router_checks_connectivity_with_draft_router_before_save(
     assert str(draft_router.rci_url) == "https://router-1-renamed.example/rci/"
     assert draft_router.username == "api-updater-new"
     assert draft_router.password_env == "ROUTER_ONE_SECRET"
-    assert draft_router.timeout_seconds == 10
+    assert draft_router.timeout_seconds == 30
     assert fake_service.password_overrides == [generated_password]
     assert prompts.confirm_calls[1]["message"] == "Сохранить изменения маршрутизатора?"
 
@@ -1738,7 +1738,7 @@ def test_edit_router_switches_password_file_to_env_and_clears_password_file(
             "password_file": None,
             "rci_url": "https://router-2.example/rci/",
             "tags": [],
-            "timeout_seconds": 10,
+            "timeout_seconds": 30,
             "username": "api-user",
         }
     ]
