@@ -162,7 +162,7 @@ SCHEDULE_MENU_HINT_LINES = (
 )
 MANUAL_RUN_HINT_LINES = (
     "Dry-run проверит план без записи в Keenetic; sync сразу применит сохранённые mappings.",
-    "Для sync выберите один или несколько маршрутизаторов для немедленного обновления списков.",
+    "Для dry-run и sync выберите один или несколько маршрутизаторов для запуска.",
     "При sync будут применены только сохранённые managed mappings; перед записью панель прочитает "
     "текущее состояние Keenetic.",
 )
@@ -1029,12 +1029,24 @@ class PanelController:
         )
         if action in {None, "back"}:
             return
-        if action == "dry-run":
-            self._run_dry_run_preview()
+
+        selected_router_ids = self._select_manual_run_router_ids(config=config)
+        if selected_router_ids is None:
+            return
+        if not selected_router_ids:
+            self._console.print("[yellow]Маршрутизаторы для запуска не выбраны.[/yellow]")
+            self._pause()
             return
 
+        if action == "dry-run":
+            self._run_dry_run_preview_for_routers(router_ids=tuple(selected_router_ids))
+            return
+
+        self._run_sync_for_routers(router_ids=tuple(selected_router_ids))
+
+    def _select_manual_run_router_ids(self, *, config: AppConfig) -> list[str] | None:
         router_id_width, router_name_width = _router_selection_column_widths(config.routers)
-        selected_router_ids = self._prompts.checkbox(
+        return self._prompts.checkbox(
             message="Ручной запуск",
             choices=[
                 PromptChoice(
@@ -1063,14 +1075,6 @@ class PanelController:
                 ),
             ),
         )
-        if selected_router_ids is None:
-            return
-        if not selected_router_ids:
-            self._console.print("[yellow]Маршрутизаторы для запуска не выбраны.[/yellow]")
-            self._pause()
-            return
-
-        self._run_sync_for_routers(router_ids=tuple(selected_router_ids))
 
     def _schedule_menu(self) -> None:
         while True:
@@ -1889,6 +1893,14 @@ class PanelController:
 
     def _run_dry_run_preview(self) -> None:
         config = self._config_with_resolved_runtime_paths(config=self._load_config())
+        self._run_dry_run_preview_with_config(config=config)
+
+    def _run_dry_run_preview_for_routers(self, *, router_ids: tuple[str, ...]) -> None:
+        config = self._config_with_resolved_runtime_paths(config=self._load_config())
+        router_config = _config_for_routers(config=config, router_ids=router_ids)
+        self._run_dry_run_preview_with_config(config=router_config)
+
+    def _run_dry_run_preview_with_config(self, *, config: AppConfig) -> None:
         try:
             self._load_runtime_secret_env_file(config=config)
             orchestrator = self._dry_run_orchestrator

@@ -270,10 +270,13 @@ def test_runs_menu_groups_transport_router_failures_by_category(tmp_path) -> Non
 
 
 def test_manual_run_menu_dry_run_choice_calls_orchestrator_and_renders_summary(tmp_path) -> None:
-    prompts = ScriptedPromptAdapter(select_answers=["dry-run"])
+    prompts = ScriptedPromptAdapter(
+        select_answers=["dry-run"],
+        checkbox_answers=[["router-2"]],
+    )
     controller, console = _panel_controller(tmp_path, prompts=prompts)
-    config = _config()
-    dry_run_result = _dry_run_result()
+    config = _config_with_two_routers()
+    dry_run_result = _dry_run_result(router_id="router-2")
     dry_run_orchestrator = _RecordingDryRunOrchestrator(result=dry_run_result)
     controller._load_config = lambda: config  # type: ignore[method-assign]
     controller._dry_run_orchestrator = dry_run_orchestrator  # type: ignore[method-assign]
@@ -283,12 +286,20 @@ def test_manual_run_menu_dry_run_choice_calls_orchestrator_and_renders_summary(t
 
     assert prompts.select_calls[0]["message"] == "Ручной запуск"
     assert prompts.select_calls[0]["choices"] == ["dry-run", "sync", "back"]
+    checkbox_call = prompts.checkbox_calls[0]
+    assert checkbox_call["message"] == "Ручной запуск"
+    assert checkbox_call["table_summary"] == "Будет запущено: 1"
+    assert checkbox_call["choices"][0]["checked"] is True
+    assert checkbox_call["choices"][1]["checked"] is False
     assert len(dry_run_orchestrator.calls) == 1
-    assert dry_run_orchestrator.calls[0][1] is RunTrigger.MANUAL
+    dry_run_config, trigger = dry_run_orchestrator.calls[0]
+    assert trigger is RunTrigger.MANUAL
+    assert [router.id for router in dry_run_config.routers] == ["router-2"]
+    assert {mapping.router_id for mapping in dry_run_config.mappings} == {"router-2"}
     output = console.export_text()
     assert "Dry-run: run_id=run-123 status=partial artifact=data/artifacts/run-123.json" in output
     assert "изменено=1 ошибок=1" in output
-    assert "router-1" in output
+    assert "router-2" in output
     assert "partial" in output
 
 
@@ -401,6 +412,65 @@ def _config() -> AppConfig:
     )
 
 
+def _config_with_two_routers() -> AppConfig:
+    return AppConfig.model_validate(
+        {
+            "version": 1,
+            "routers": [
+                {
+                    "id": "router-1",
+                    "name": "Main router",
+                    "rci_url": "https://router-1.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_ONE_SECRET",
+                    "enabled": True,
+                },
+                {
+                    "id": "router-2",
+                    "name": "Backup router",
+                    "rci_url": "https://router-2.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_TWO_SECRET",
+                    "enabled": False,
+                },
+            ],
+            "services": [
+                {
+                    "key": "telegram",
+                    "source_urls": ["https://example.com/telegram.lst"],
+                    "format": "raw_domain_list",
+                    "enabled": True,
+                },
+                {
+                    "key": "youtube",
+                    "source_urls": ["https://example.com/youtube.lst"],
+                    "format": "raw_domain_list",
+                    "enabled": True,
+                },
+            ],
+            "mappings": [
+                {
+                    "router_id": "router-1",
+                    "service_key": "telegram",
+                    "object_group_name": "svc-telegram",
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard0",
+                    "managed": True,
+                },
+                {
+                    "router_id": "router-2",
+                    "service_key": "youtube",
+                    "object_group_name": "svc-youtube",
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard1",
+                    "managed": True,
+                },
+            ],
+            "runtime": {"artifacts_dir": "data/artifacts", "logs_dir": "data/logs"},
+        }
+    )
+
+
 def _artifact(
     *,
     run_id: str,
@@ -426,7 +496,7 @@ def _artifact(
     )
 
 
-def _dry_run_result() -> DryRunExecutionResult:
+def _dry_run_result(*, router_id: str = "router-1") -> DryRunExecutionResult:
     artifact = RunArtifact(
         run_id="run-123",
         trigger=RunTrigger.MANUAL,
@@ -437,7 +507,7 @@ def _dry_run_result() -> DryRunExecutionResult:
         log_path=Path("data/logs/run-123.log"),
         router_results=(
             RouterRunResult(
-                router_id="router-1",
+                router_id=router_id,
                 status=RouterResultStatus.PARTIAL,
                 service_results=(
                     ServiceRunResult(
