@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 from collections import deque
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
 from fqdn_updater.cli.panel import PanelController
+from fqdn_updater.cli.panel_dependencies import PanelDependencies, build_panel_dependencies
 from fqdn_updater.cli.panel_prompts import CheckboxTableMeta, PromptChoice
 from fqdn_updater.domain.config_schema import AppConfig
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
@@ -200,16 +202,22 @@ def make_empty_source_load_report() -> SourceLoadReport:
 
 
 def make_panel_controller(
-    tmp_path: Path, *, prompts: ScriptedPromptAdapter
+    tmp_path: Path,
+    *,
+    prompts: ScriptedPromptAdapter,
+    dependencies: PanelDependencies | None = None,
 ) -> tuple[PanelController, Console]:
     console = Console(force_terminal=True, record=True, width=120)
+    source_loading_service = ScriptedSourceLoadingService(make_empty_source_load_report())
+    panel_dependencies = replace(
+        dependencies or build_panel_dependencies(),
+        source_loading_service=source_loading_service,
+    )
     controller = PanelController(
         config_path=tmp_path / "config.json",
         console=console,
         prompts=prompts,
-    )
-    controller._source_loading_service = ScriptedSourceLoadingService(  # type: ignore[attr-defined]
-        make_empty_source_load_report()
+        dependencies=panel_dependencies,
     )
     return controller, console
 
