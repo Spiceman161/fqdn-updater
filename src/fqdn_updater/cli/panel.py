@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import re
-import shlex
 import unicodedata
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -25,6 +22,8 @@ from fqdn_updater.application.password_generation import (
 from fqdn_updater.application.run_history import RecentRun, RunHistoryResult
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult, SyncOrchestrator
+from fqdn_updater.cli import panel_formatting as panel_formatting
+from fqdn_updater.cli import panel_schedule as panel_schedule
 from fqdn_updater.cli.panel_dependencies import PanelDependencies, build_panel_dependencies
 from fqdn_updater.cli.panel_prompts import (
     CheckboxTableMeta,
@@ -36,19 +35,13 @@ from fqdn_updater.domain.config_schema import (
     AppConfig,
     RouterConfig,
     RouterServiceMappingConfig,
-    ServiceDefinitionConfig,
 )
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
 from fqdn_updater.domain.run_artifact import (
-    FailureCategory,
     RouterResultStatus,
-    RouterRunResult,
-    RunArtifact,
-    RunStatus,
     RunTrigger,
 )
-from fqdn_updater.domain.schedule import RuntimeScheduleConfig, ScheduleWeekday
-from fqdn_updater.domain.source_loading import SourceLoadReport
+from fqdn_updater.domain.schedule import RuntimeScheduleConfig
 from fqdn_updater.domain.status_diagnostics import StatusDiagnosticsResult
 from fqdn_updater.infrastructure.run_lock import FileRunLockManager
 from fqdn_updater.infrastructure.run_logging import RunLoggerFactory
@@ -58,9 +51,45 @@ from fqdn_updater.infrastructure.secret_env_file import (
 )
 from fqdn_updater.infrastructure.service_count_cache import (
     CachingSourceLoadingService,
-    ServiceEntryCountSnapshot,
     resolve_service_count_cache_path,
 )
+
+SCHEDULE_MENU_HINT_LINES = panel_schedule.SCHEDULE_MENU_HINT_LINES
+_schedule_summary_table = panel_schedule._schedule_summary_table
+ROOT_PANEL_WIDTH = panel_formatting.ROOT_PANEL_WIDTH
+DISCOVERY_ERROR_MESSAGE_LIMIT = panel_formatting.DISCOVERY_ERROR_MESSAGE_LIMIT
+SERVICE_SELECTION_SERVICE_WIDTH = panel_formatting.SERVICE_SELECTION_SERVICE_WIDTH
+SERVICE_SELECTION_COUNT_WIDTH = panel_formatting.SERVICE_SELECTION_COUNT_WIDTH
+KEENETIC_DOMAIN_SELECTION_LIMIT = panel_formatting.KEENETIC_DOMAIN_SELECTION_LIMIT
+SERVICE_SELECTION_GROUPS = panel_formatting.SERVICE_SELECTION_GROUPS
+SERVICE_DISPLAY_LABELS = panel_formatting.SERVICE_DISPLAY_LABELS
+ServiceEntryCounts = panel_formatting.ServiceEntryCounts
+_effective_service_selection = panel_formatting._effective_service_selection
+_enabled_service_selection_groups = panel_formatting._enabled_service_selection_groups
+_find_router = panel_formatting._find_router
+_format_connected = panel_formatting._format_connected
+_format_dashboard_last_run_at = panel_formatting._format_dashboard_last_run_at
+_format_dashboard_router_run_status = panel_formatting._format_dashboard_router_run_status
+_format_entry_count = panel_formatting._format_entry_count
+_format_service_list = panel_formatting._format_service_list
+_format_validation_error = panel_formatting._format_validation_error
+_manual_run_selection_summary = panel_formatting._manual_run_selection_summary
+_route_candidate_title = panel_formatting._route_candidate_title
+_router_selection_column_widths = panel_formatting._router_selection_column_widths
+_router_selection_header = panel_formatting._router_selection_header
+_router_selection_title = panel_formatting._router_selection_title
+_router_state_label = panel_formatting._router_state_label
+_router_toggle_header = panel_formatting._router_toggle_header
+_router_toggle_summary = panel_formatting._router_toggle_summary
+_router_toggle_title = panel_formatting._router_toggle_title
+_service_display_label = panel_formatting._service_display_label
+_service_entry_counts_from_report = panel_formatting._service_entry_counts_from_report
+_service_entry_counts_from_snapshot = panel_formatting._service_entry_counts_from_snapshot
+_service_selection_header = panel_formatting._service_selection_header
+_service_selection_title = panel_formatting._service_selection_title
+_service_selection_totals_line = panel_formatting._service_selection_totals_line
+_shell_quote_path = panel_formatting._shell_quote_path
+_truncate_discovery_error_message = panel_formatting._truncate_discovery_error_message
 
 DEFAULT_SELECTED_SERVICES = frozenset(
     {
@@ -91,79 +120,10 @@ DEFAULT_SELECTED_SERVICES = frozenset(
 )
 DEFAULT_INTERFACE_NAME = "Wireguard0"
 DEFAULT_RCI_TIMEOUT_SECONDS = 30
-ROOT_PANEL_WIDTH = 86
-DISCOVERY_ERROR_MESSAGE_LIMIT = 280
-SERVICE_SELECTION_SERVICE_WIDTH = 22
-SERVICE_SELECTION_COUNT_WIDTH = 7
-KEENETIC_DOMAIN_SELECTION_LIMIT = 1024
 CONTAINER_WORKDIR = Path("/work")
-SERVICE_SELECTION_GROUPS = {
-    "block": (
-        "block_p2p_streaming",
-        "block_vpn_proxy_privacy",
-        "block_dev_hosting_security",
-        "block_finance_shopping",
-        "block_social_creators",
-        "block_news_politics",
-        "block_other",
-    ),
-    "geoblock": (
-        "geoblock_ai",
-        "geoblock_dev_cloud_saas",
-        "geoblock_media_games",
-        "geoblock_shopping_travel",
-        "geoblock_enterprise_hardware",
-        "geoblock_security_networking",
-        "geoblock_finance_payments",
-        "geoblock_health_reference",
-        "geoblock_other",
-    ),
-    "hodca": (
-        "hodca_dev_cloud_saas",
-        "hodca_network_os_tools",
-        "hodca_media_games",
-        "hodca_ai_education_research",
-        "hodca_social_lifestyle",
-        "hodca_finance_shopping",
-        "hodca_other",
-    ),
-}
-SERVICE_DISPLAY_LABELS = {
-    "block": "block (full)",
-    "block_p2p_streaming": "   p2p/media",
-    "block_vpn_proxy_privacy": "   vpn/privacy",
-    "block_dev_hosting_security": "   dev/hosting",
-    "block_finance_shopping": "   finance/shop",
-    "block_social_creators": "   social/media",
-    "block_news_politics": "   news/politics",
-    "block_other": "   other",
-    "geoblock": "geoblock (full)",
-    "geoblock_ai": "   AI tools",
-    "geoblock_dev_cloud_saas": "   dev/SaaS",
-    "geoblock_media_games": "   media/games",
-    "geoblock_shopping_travel": "   shopping/travel",
-    "geoblock_enterprise_hardware": "   enterprise",
-    "geoblock_security_networking": "   security/net",
-    "geoblock_finance_payments": "   payments",
-    "geoblock_health_reference": "   health/ref",
-    "geoblock_other": "   other",
-    "hodca": "H.O.D.C.A (full)",
-    "hodca_dev_cloud_saas": "   dev/cloud/SaaS",
-    "hodca_network_os_tools": "   network/OS/tools",
-    "hodca_media_games": "   media/games",
-    "hodca_ai_education_research": "   AI/education",
-    "hodca_social_lifestyle": "   social/lifestyle",
-    "hodca_finance_shopping": "   finance/shop",
-    "hodca_other": "   other",
-    "meta": "meta (whatsapp)",
-}
 MAIN_MENU_HINT_LINES = (
     "Для начала работы добавьте маршрутизатор Keenetic с ОС версии 5 и выше.",
     "Затем настройте обновление списков по расписанию.",
-)
-SCHEDULE_MENU_HINT_LINES = (
-    "Расписание хранится в config и разворачивается только через systemd timer.",
-    "Команда установки обновляет host-level unit/timer из сохранённых параметров.",
 )
 MANUAL_RUN_HINT_LINES = (
     "Dry-run проверит план без записи в Keenetic; sync сразу применит сохранённые mappings.",
@@ -214,15 +174,6 @@ BASE_ROUTE_INTERFACE_HINT_LINES = (
 GOOGLE_AI_OVERRIDE_HINT_LINES = (
     "Для корректной работы AI сервисов от Google можно указать другой отдельный интерфейс.",
 )
-SCHEDULE_WEEKDAY_TITLES = {
-    ScheduleWeekday.MON: "Понедельник (mon)",
-    ScheduleWeekday.TUE: "Вторник (tue)",
-    ScheduleWeekday.WED: "Среда (wed)",
-    ScheduleWeekday.THU: "Четверг (thu)",
-    ScheduleWeekday.FRI: "Пятница (fri)",
-    ScheduleWeekday.SAT: "Суббота (sat)",
-    ScheduleWeekday.SUN: "Воскресенье (sun)",
-}
 
 
 @dataclass(frozen=True)
@@ -251,13 +202,6 @@ class MappingPlan:
 
 
 @dataclass(frozen=True)
-class ServiceEntryCounts:
-    domains: int | None
-    ipv4: int | None
-    ipv6: int | None
-
-
-@dataclass(frozen=True)
 class RouterLastRun:
     finished_at: datetime
     status: RouterResultStatus
@@ -275,6 +219,8 @@ class PanelController:
         dependencies: PanelDependencies | None = None,
     ) -> None:
         from fqdn_updater.cli.panel_router_flow import PanelRouterFlow
+        from fqdn_updater.cli.panel_runs import PanelRunsFlow
+        from fqdn_updater.cli.panel_schedule import PanelScheduleFlow
 
         panel_dependencies = dependencies or build_panel_dependencies()
         self._config_path = config_path
@@ -296,6 +242,8 @@ class PanelController:
         self._sync_orchestrator = panel_dependencies.sync_orchestrator
         self._password_generator = panel_dependencies.password_generator
         self._router_flow = PanelRouterFlow(panel=self)
+        self._runs_flow = PanelRunsFlow(panel=self)
+        self._schedule_flow = PanelScheduleFlow(panel=self)
 
     def run(self) -> None:
         self._ensure_config_exists()
@@ -567,79 +515,7 @@ class PanelController:
             self._run_sync_for_router(router_id=router.id)
 
     def _runs_menu(self) -> None:
-        page_index = 0
-        page_size = 10
-        while True:
-            config = self._load_config()
-            history = self._run_history_service.list_recent(
-                config=config,
-                config_path=self._config_path,
-                limit=page_size,
-                offset=page_index * page_size,
-            )
-            if not history.runs and history.total_count > 0 and page_index > 0:
-                page_index = max(0, (history.total_count - 1) // page_size)
-                continue
-
-            has_previous_page = page_index > 0
-            has_next_page = (page_index + 1) * page_size < history.total_count
-            displayed_runs = tuple(reversed(history.runs))
-            if not displayed_runs:
-                self._render_runs_screen(
-                    config=config,
-                    history=history,
-                    page_index=page_index,
-                    page_size=page_size,
-                )
-                choice = self._prompts.select(
-                    message="Журнал",
-                    choices=[PromptChoice("Главное меню", "back")],
-                    default="back",
-                )
-                if choice in {None, "back"}:
-                    return
-                continue
-
-            choices = [
-                PromptChoice(
-                    _format_history_run_choice_title(config=config, run=run),
-                    f"run:{index}",
-                )
-                for index, run in enumerate(displayed_runs)
-            ]
-            choice = self._prompts.history_select(
-                message="Журнал",
-                choices=choices,
-                default="run:0",
-                page_label=_format_history_page_text(
-                    total_count=history.total_count,
-                    page_index=page_index,
-                    page_size=page_size,
-                ),
-                has_previous_page=has_previous_page,
-                has_next_page=has_next_page,
-            )
-            if choice in {None, "back"}:
-                return
-            if choice == "prev-page":
-                page_index -= 1
-                continue
-            if choice == "next-page":
-                page_index += 1
-                continue
-            if choice.startswith("run:"):
-                run_index = int(choice.removeprefix("run:"))
-                if 0 <= run_index < len(displayed_runs):
-                    self._render_run_details_screen(
-                        config=config,
-                        run=displayed_runs[run_index],
-                    )
-                    self._prompts.select(
-                        message="Запись журнала",
-                        choices=[PromptChoice("Назад к журналу", "back")],
-                        default="back",
-                    )
-                continue
+        self._runs_flow.runs_menu()
 
     def _manual_run_menu(self) -> None:
         config = self._load_config()
@@ -708,200 +584,16 @@ class PanelController:
         )
 
     def _schedule_menu(self) -> None:
-        while True:
-            schedule = self._load_config().runtime.schedule
-            self._render_schedule_screen(schedule=schedule)
-            choice = self._prompts.select(
-                message="Расписание",
-                choices=[
-                    PromptChoice("Изменить параметры расписания", "edit"),
-                    PromptChoice(
-                        "Выключить расписание",
-                        "disable",
-                        disabled=("Расписание уже выключено" if not schedule.is_enabled else None),
-                    ),
-                    PromptChoice("Установить/обновить в systemd", "install"),
-                    PromptChoice("Главное меню", "back"),
-                ],
-                default="edit",
-                hint_lines=SCHEDULE_MENU_HINT_LINES,
-            )
-            if choice in {None, "back"}:
-                return
-            if choice == "edit":
-                self._edit_schedule()
-            elif choice == "disable":
-                self._disable_schedule()
-            elif choice == "install":
-                self._install_schedule()
+        self._schedule_flow.schedule_menu()
 
     def _edit_schedule(self) -> None:
-        existing_schedule = self._load_config().runtime.schedule
-        mode = self._prompts.select(
-            message="Режим расписания",
-            choices=[
-                PromptChoice("Каждый день", "daily"),
-                PromptChoice("По дням недели", "weekly"),
-                PromptChoice("Выключить расписание", "disabled"),
-                PromptChoice("Назад", "back"),
-            ],
-            default=existing_schedule.mode.value,
-            hint_lines=SCHEDULE_MENU_HINT_LINES,
-        )
-        if mode in {None, "back"}:
-            return
-        if mode == "disabled":
-            self._disable_schedule()
-            return
-
-        default_times = ", ".join(existing_schedule.times) if existing_schedule.times else "03:15"
-        time_values = self._prompts.text(
-            message="Время запуска (HH:MM, через запятую)",
-            default=default_times,
-            instruction="Пример: 03:15, 12:00",
-        )
-        if time_values is None:
-            return
-        parsed_times = [value.strip() for value in time_values.split(",") if value.strip()]
-
-        selected_weekdays: list[str] = []
-        if mode == "weekly":
-            weekday_values = self._prompts.checkbox(
-                message="Дни недели",
-                choices=[
-                    PromptChoice(
-                        SCHEDULE_WEEKDAY_TITLES[weekday],
-                        weekday.value,
-                        checked=weekday in existing_schedule.weekdays,
-                    )
-                    for weekday in ScheduleWeekday
-                ],
-                instruction=(
-                    "Стрелки выбирают, Пробел отмечает, Enter сохраняет набор, Esc назад."
-                ),
-            )
-            if weekday_values is None:
-                return
-            selected_weekdays = list(weekday_values)
-
-        timezone_value = self._prompts.text(
-            message="Timezone IANA",
-            default=_schedule_timezone_default(existing_schedule),
-            instruction="Например: Europe/Moscow или UTC.",
-        )
-        if timezone_value is None:
-            return
-
-        unit_name = self._prompts.text(
-            message="Имя systemd unit",
-            default=existing_schedule.systemd.unit_name,
-        )
-        if unit_name is None:
-            return
-        deployment_root = self._prompts.text(
-            message="Deployment root",
-            default=existing_schedule.systemd.deployment_root,
-        )
-        if deployment_root is None:
-            return
-        compose_service = self._prompts.text(
-            message="Имя docker compose service",
-            default=existing_schedule.systemd.compose_service,
-        )
-        if compose_service is None:
-            return
-
-        try:
-            schedule = RuntimeScheduleConfig(
-                mode=mode,
-                times=parsed_times,
-                weekdays=selected_weekdays,
-                timezone=timezone_value,
-                systemd={
-                    "unit_name": unit_name,
-                    "deployment_root": deployment_root,
-                    "compose_service": compose_service,
-                },
-            )
-        except ValidationError as exc:
-            self._console.print(f"[red]Расписание не сохранено:[/red] {exc}")
-            self._pause()
-            return
-
-        self._render_summary(
-            title="Проверка расписания",
-            rows=[
-                ("Режим", schedule.mode.value),
-                ("Время", ", ".join(schedule.times)),
-                (
-                    "Дни",
-                    ", ".join(day.value for day in schedule.weekdays) if schedule.weekdays else "-",
-                ),
-                ("Timezone", schedule.timezone),
-                ("Unit", schedule.systemd.unit_name),
-                ("Deployment root", schedule.systemd.deployment_root),
-                ("Compose service", schedule.systemd.compose_service),
-            ],
-        )
-        should_save = self._prompts.confirm(
-            message="Сохранить расписание?",
-            default=True,
-        )
-        if not should_save:
-            return
-
-        try:
-            self._management_service.replace_schedule(
-                path=self._config_path,
-                schedule=schedule,
-            )
-        except RuntimeError as exc:
-            self._console.print(f"[red]Не удалось сохранить расписание:[/red] {exc}")
-            self._pause()
-            return
-
-        self._console.print("[green]Расписание сохранено.[/green]")
-        self._pause()
+        self._schedule_flow.edit_schedule()
 
     def _disable_schedule(self) -> None:
-        try:
-            current_schedule = self._load_config().runtime.schedule
-            self._management_service.replace_schedule(
-                path=self._config_path,
-                schedule=RuntimeScheduleConfig(
-                    mode="disabled",
-                    times=[],
-                    weekdays=[],
-                    timezone=current_schedule.timezone,
-                    systemd=current_schedule.systemd,
-                ),
-            )
-        except RuntimeError as exc:
-            self._console.print(f"[red]Не удалось выключить расписание:[/red] {exc}")
-            self._pause()
-            return
-
-        self._console.print("[green]Расписание выключено в config.[/green]")
-        self._pause()
+        self._schedule_flow.disable_schedule()
 
     def _install_schedule(self) -> None:
-        config = self._load_config()
-        try:
-            result = self._schedule_installer.install(
-                config=config,
-                config_path=self._config_path,
-            )
-        except RuntimeError as exc:
-            self._console.print(f"[red]Установка расписания не удалась:[/red] {exc}")
-            self._pause()
-            return
-
-        self._console.print(
-            f"[green]systemd units обновлены:[/green] timer_action={result.timer_action}"
-        )
-        self._console.print(self._display_path(result.service_path))
-        self._console.print(self._display_path(result.timer_path))
-        self._pause()
+        self._schedule_flow.install_schedule()
 
     def _config_menu(self, *, config: AppConfig) -> None:
         self._console.print("[green]Конфиг валиден.[/green]")
@@ -1086,187 +778,18 @@ class PanelController:
         page_index: int,
         page_size: int,
     ) -> None:
-        self._console.clear()
-        self._console.print(
-            Panel(
-                "[bold]Журнал[/bold]",
-                border_style="bright_cyan",
-            )
+        self._runs_flow.render_runs_screen(
+            config=config,
+            history=history,
+            page_index=page_index,
+            page_size=page_size,
         )
-        self._console.print(
-            Text(
-                _format_history_page_text(
-                    total_count=history.total_count,
-                    page_index=page_index,
-                    page_size=page_size,
-                ),
-                style="bright_cyan",
-            )
-        )
-        self._console.print()
-
-        if history.warnings:
-            self._console.print(f"[yellow]Пропущено записей: {len(history.warnings)}[/yellow]")
-
-        table = Table(show_header=True, header_style="bold white", box=None, expand=True)
-        table.add_column("Режим", no_wrap=True)
-        table.add_column("Запуск", no_wrap=True)
-        table.add_column("Статус", no_wrap=True)
-        table.add_column("Завершён", no_wrap=True)
-        table.add_column("Роутеры", overflow="fold")
-        table.add_column("Итог", overflow="fold")
-        for run in reversed(history.runs):
-            artifact = run.artifact
-            table.add_row(
-                artifact.mode.value,
-                artifact.trigger.value,
-                _format_run_status(artifact.status),
-                _format_history_finished_at(artifact.finished_at),
-                _format_history_router_names(config=config, artifact=artifact),
-                _format_artifact_summary(artifact),
-            )
-        if not history.runs:
-            table.add_row("[dim]нет[/dim]", "-", "-", "-", "-", "-")
-        self._console.print(
-            Panel(
-                table,
-                title="Записи журнала",
-                border_style="bright_black",
-            )
-        )
-
-        if history.warnings:
-            warning_table = Table(
-                show_header=True,
-                header_style="bold white",
-                box=None,
-                expand=True,
-            )
-            warning_table.add_column("Файл")
-            warning_table.add_column("Причина")
-            for warning in history.warnings[:3]:
-                warning_table.add_row(self._display_path(warning.path), warning.message)
-            if len(history.warnings) > 3:
-                omitted_count = len(history.warnings) - 3
-                warning_table.add_row(
-                    f"+{omitted_count} ещё",
-                    "Список предупреждений сокращён в панели",
-                )
-            self._console.print(
-                Panel(
-                    warning_table,
-                    title="Пропущенные записи",
-                    border_style="yellow",
-                )
-            )
 
     def _render_run_details_screen(self, *, config: AppConfig, run: RecentRun) -> None:
-        artifact = run.artifact
-        self._console.clear()
-        self._console.print(
-            Panel(
-                f"[bold]Запись журнала[/bold] {run.path.name}",
-                border_style="bright_cyan",
-            )
-        )
-
-        summary = Table.grid(padding=(0, 2), expand=True)
-        summary.add_column(style="bold white")
-        summary.add_column(style="bright_cyan")
-        summary.add_row("Файл записи", self._display_path(run.path))
-        summary.add_row("Полный лог", self._display_path(artifact.log_path))
-        summary.add_row("Run ID", artifact.run_id)
-        summary.add_row("Режим", artifact.mode.value)
-        summary.add_row("Запуск", artifact.trigger.value)
-        summary.add_row("Статус", _format_run_status(artifact.status))
-        summary.add_row("Начало", _format_history_finished_at(artifact.started_at))
-        summary.add_row("Завершён", _format_history_finished_at(artifact.finished_at))
-        summary.add_row("Итог", _format_artifact_summary(artifact))
-        self._console.print(
-            Panel(
-                summary,
-                title="Итог прогона",
-                border_style="cyan",
-            )
-        )
-
-        router_table = Table(show_header=True, header_style="bold white", box=None, expand=True)
-        router_table.add_column("Роутер")
-        router_table.add_column("Статус", no_wrap=True)
-        router_table.add_column("Сервисов", no_wrap=True)
-        router_table.add_column("Итог")
-        for router_result in artifact.router_results:
-            router = _find_router(config=config, router_id=router_result.router_id)
-            router_name = router.name if router is not None else router_result.router_id
-            router_table.add_row(
-                router_name,
-                router_result.status.value,
-                str(len(router_result.service_results)),
-                _format_router_result_summary(router_result),
-            )
-        if not artifact.router_results:
-            router_table.add_row("[dim]нет[/dim]", "-", "-", "-")
-        self._console.print(
-            Panel(
-                router_table,
-                title="Маршрутизаторы",
-                border_style="bright_black",
-            )
-        )
-
-        errors = _run_error_rows(config=config, artifact=artifact)
-        if errors:
-            error_table = Table(show_header=True, header_style="bold white", box=None, expand=True)
-            error_table.add_column("Источник")
-            error_table.add_column("Класс", no_wrap=True)
-            error_table.add_column("Шаг", no_wrap=True)
-            error_table.add_column("Ошибка")
-            for source, category, step, message in errors:
-                error_table.add_row(source, category, step, message)
-            self._console.print(
-                Panel(
-                    error_table,
-                    title="Ошибки",
-                    border_style="red",
-                )
-            )
-        else:
-            self._console.print(
-                Panel(
-                    "[green]Ошибок в записи нет.[/green]",
-                    title="Ошибки",
-                    border_style="green",
-                )
-            )
-
-        self._console.print(
-            Panel(
-                (
-                    "Чтобы посмотреть полный лог этой записи, откройте новое окно терминала "
-                    f"и выполните: [bold]{self._log_cat_command(artifact.log_path)}[/bold]"
-                ),
-                title="Подсказка",
-                border_style="yellow",
-            )
-        )
+        self._runs_flow.render_run_details_screen(config=config, run=run)
 
     def _render_schedule_screen(self, *, schedule: RuntimeScheduleConfig) -> None:
-        self._console.clear()
-        self._console.print(
-            Panel(
-                "[bold]Расписание[/bold]",
-                border_style="bright_cyan",
-                width=ROOT_PANEL_WIDTH,
-            )
-        )
-        self._console.print(
-            Panel(
-                _schedule_summary_table(schedule),
-                title="Текущий config",
-                border_style="cyan",
-                width=ROOT_PANEL_WIDTH,
-            )
-        )
+        self._schedule_flow.render_schedule_screen(schedule=schedule)
 
     def _run_status_diagnostics(self) -> None:
         config = self._config_with_resolved_runtime_paths(config=self._load_config())
@@ -1337,85 +860,13 @@ class PanelController:
         self._pause()
 
     def _render_status_result(self, *, result: StatusDiagnosticsResult) -> None:
-        table = Table(show_header=True, header_style="bold white")
-        table.add_column("Маршрутизатор")
-        table.add_column("Статус")
-        table.add_column("DNS proxy")
-        table.add_column("Деталь")
-        for router in result.router_results:
-            table.add_row(
-                router.router_id,
-                router.status.value,
-                _format_dns_proxy(router.dns_proxy_enabled),
-                _format_router_diagnostic_error(router.error_message),
-            )
-        if not result.router_results:
-            table.add_row("[dim]нет[/dim]", "-", "-", "-")
-        title = (
-            f"Status diagnostics: overall={result.overall_status.value} "
-            f"checked={result.checked_router_count}"
-        )
-        self._console.print(Panel(table, title=title, border_style="bright_cyan"))
+        self._runs_flow.render_status_result(result=result)
 
     def _render_dry_run_result(self, *, result: DryRunExecutionResult) -> None:
-        artifact = result.artifact
-        table = Table(show_header=True, header_style="bold white")
-        table.add_column("Маршрутизатор")
-        table.add_column("Статус")
-        table.add_column("Сервисов")
-        table.add_column("Итог")
-        for router in artifact.router_results:
-            changed_services = sum(
-                service.added_count > 0 or service.removed_count > 0 or service.route_changed
-                for service in router.service_results
-            )
-            failed_services = sum(
-                service.error_message is not None for service in router.service_results
-            )
-            table.add_row(
-                router.router_id,
-                router.status.value,
-                str(len(router.service_results)),
-                f"изменено={changed_services} ошибок={failed_services}",
-            )
-        if not artifact.router_results:
-            table.add_row("[dim]нет[/dim]", "-", "-", "-")
-
-        title = (
-            f"Dry-run: run_id={artifact.run_id} status={artifact.status.value} "
-            f"artifact={result.artifact_path}"
-        )
-        self._console.print(Panel(table, title=title, border_style="bright_cyan"))
+        self._runs_flow.render_dry_run_result(result=result)
 
     def _render_sync_result(self, *, result: SyncExecutionResult) -> None:
-        artifact = result.artifact
-        table = Table(show_header=True, header_style="bold white")
-        table.add_column("Маршрутизатор")
-        table.add_column("Статус")
-        table.add_column("Сервисов")
-        table.add_column("Итог")
-        for router in artifact.router_results:
-            changed_services = sum(
-                service.added_count > 0 or service.removed_count > 0 or service.route_changed
-                for service in router.service_results
-            )
-            failed_services = sum(
-                service.error_message is not None for service in router.service_results
-            )
-            table.add_row(
-                router.router_id,
-                router.status.value,
-                str(len(router.service_results)),
-                f"изменено={changed_services} ошибок={failed_services}",
-            )
-        if not artifact.router_results:
-            table.add_row("[dim]нет[/dim]", "-", "-", "-")
-
-        title = (
-            f"Sync: run_id={artifact.run_id} status={artifact.status.value} "
-            f"artifact={result.artifact_path}"
-        )
-        self._console.print(Panel(table, title=title, border_style="bright_cyan"))
+        self._runs_flow.render_sync_result(result=result)
 
     def _render_route_target_candidates(
         self,
@@ -1552,38 +1003,6 @@ class PanelController:
         return self._config_path.parent / container_relative_path
 
 
-def _schedule_summary_table(schedule: RuntimeScheduleConfig) -> Table:
-    table = Table.grid(padding=(0, 2))
-    table.add_column(style="bold white")
-    table.add_column(style="bright_cyan")
-    table.add_row("Режим", schedule.mode.value)
-    table.add_row("Время", ", ".join(schedule.times) if schedule.times else "-")
-    table.add_row(
-        "Дни",
-        ", ".join(day.value for day in schedule.weekdays) if schedule.weekdays else "-",
-    )
-    table.add_row("Timezone", schedule.timezone)
-    table.add_row("Unit", schedule.systemd.unit_name)
-    return table
-
-
-def _schedule_timezone_default(schedule: RuntimeScheduleConfig) -> str:
-    if schedule.timezone != "UTC" or schedule.is_enabled:
-        return schedule.timezone
-    current_timezone = datetime.now().astimezone().tzinfo
-    timezone_key = getattr(current_timezone, "key", None)
-    if isinstance(timezone_key, str) and timezone_key:
-        return timezone_key
-    return schedule.timezone
-
-
-def _find_router(*, config: AppConfig, router_id: str) -> RouterConfig | None:
-    for router in config.routers:
-        if router.id == router_id:
-            return router
-    return None
-
-
 def _config_for_router(*, config: AppConfig, router_id: str) -> AppConfig:
     router = _find_router(config=config, router_id=router_id)
     if router is None:
@@ -1689,246 +1108,6 @@ def _default_interface_target_value(default_target: RouteTargetDraft) -> str:
     if default_target.route_interface:
         return default_target.route_interface
     return DEFAULT_INTERFACE_NAME
-
-
-def _route_candidate_title(candidate: RouteTargetCandidate) -> str:
-    return " | ".join(
-        (
-            candidate.display_name or candidate.value,
-            "connected" if candidate.connected else "not connected",
-            candidate.status or "-",
-            candidate.detail or "-",
-        )
-    )
-
-
-def _service_entry_counts_from_report(
-    *,
-    services: list[ServiceDefinitionConfig],
-    report: SourceLoadReport,
-) -> dict[str, ServiceEntryCounts]:
-    loaded_counts = {
-        source.service_key: _service_entry_counts_from_snapshot(
-            ServiceEntryCountSnapshot(
-                domains=sum(1 for entry in source.typed_entries if entry.kind == "domain"),
-                ipv4=sum(1 for entry in source.typed_entries if entry.kind == "ipv4_network"),
-                ipv6=sum(1 for entry in source.typed_entries if entry.kind == "ipv6_network"),
-            )
-        )
-        for source in report.loaded
-    }
-    failed_service_keys = {failure.service_key for failure in report.failed}
-    return {
-        service.key: (
-            ServiceEntryCounts(domains=None, ipv4=None, ipv6=None)
-            if service.key in failed_service_keys
-            else loaded_counts.get(
-                service.key,
-                ServiceEntryCounts(domains=None, ipv4=None, ipv6=None),
-            )
-        )
-        for service in services
-    }
-
-
-def _service_entry_counts_from_snapshot(
-    snapshot: ServiceEntryCountSnapshot | None,
-) -> ServiceEntryCounts:
-    if snapshot is None:
-        return ServiceEntryCounts(domains=None, ipv4=None, ipv6=None)
-    return ServiceEntryCounts(
-        domains=snapshot.domains,
-        ipv4=snapshot.ipv4,
-        ipv6=snapshot.ipv6,
-    )
-
-
-def _service_selection_title(
-    *,
-    service_key: str,
-    counts: ServiceEntryCounts | None,
-) -> str:
-    counts = counts or ServiceEntryCounts(domains=None, ipv4=None, ipv6=None)
-    return (
-        f"{_service_display_label(service_key):<{SERVICE_SELECTION_SERVICE_WIDTH}} "
-        f"| {_format_entry_count(counts.domains):>{SERVICE_SELECTION_COUNT_WIDTH}} "
-        f"| {_format_entry_count(counts.ipv4):>{SERVICE_SELECTION_COUNT_WIDTH}} "
-        f"| {_format_entry_count(counts.ipv6):>{SERVICE_SELECTION_COUNT_WIDTH}}"
-    )
-
-
-def _format_entry_count(value: int | None) -> str:
-    if value is None:
-        return "?"
-    return str(value)
-
-
-def _service_display_label(service_key: str) -> str:
-    return SERVICE_DISPLAY_LABELS.get(service_key, service_key)
-
-
-def _format_service_list(service_keys: Iterable[str]) -> str:
-    return ", ".join(_service_display_label(service_key) for service_key in service_keys)
-
-
-def _service_selection_header() -> str:
-    return (
-        f"{'Сервис':<{SERVICE_SELECTION_SERVICE_WIDTH}} "
-        f"| {'домены':>{SERVICE_SELECTION_COUNT_WIDTH}} "
-        f"| {'IPv4':>{SERVICE_SELECTION_COUNT_WIDTH}} "
-        f"| {'IPv6':>{SERVICE_SELECTION_COUNT_WIDTH}}"
-    )
-
-
-def _service_selection_totals_line(
-    *,
-    selected_values: tuple[str, ...],
-    service_counts: dict[str, ServiceEntryCounts],
-) -> str | list[tuple[str, str]]:
-    effective_selected_values = tuple(_effective_service_selection(selected_values))
-    if not effective_selected_values:
-        totals = ServiceEntryCounts(domains=0, ipv4=0, ipv6=0)
-    else:
-        totals = ServiceEntryCounts(
-            domains=_sum_entry_counts(
-                service_counts.get(service_key, ServiceEntryCounts(None, None, None)).domains
-                for service_key in effective_selected_values
-            ),
-            ipv4=_sum_entry_counts(
-                service_counts.get(service_key, ServiceEntryCounts(None, None, None)).ipv4
-                for service_key in effective_selected_values
-            ),
-            ipv6=_sum_entry_counts(
-                service_counts.get(service_key, ServiceEntryCounts(None, None, None)).ipv6
-                for service_key in effective_selected_values
-            ),
-        )
-
-    domain_count = _format_entry_count(totals.domains)
-    prefix = f"{'Итого выбрано':<{SERVICE_SELECTION_SERVICE_WIDTH}} | "
-    suffix = (
-        f" | {_format_entry_count(totals.ipv4):>{SERVICE_SELECTION_COUNT_WIDTH}} "
-        f"| {_format_entry_count(totals.ipv6):>{SERVICE_SELECTION_COUNT_WIDTH}}"
-    )
-    if totals.domains is not None and totals.domains > KEENETIC_DOMAIN_SELECTION_LIMIT:
-        return [
-            ("class:footer", prefix),
-            ("fg:#ff5f5f bold", f"{domain_count:>{SERVICE_SELECTION_COUNT_WIDTH}}"),
-            ("class:footer", suffix),
-        ]
-
-    return (
-        f"{'Итого выбрано':<{SERVICE_SELECTION_SERVICE_WIDTH}} "
-        f"| {domain_count:>{SERVICE_SELECTION_COUNT_WIDTH}} "
-        f"| {_format_entry_count(totals.ipv4):>{SERVICE_SELECTION_COUNT_WIDTH}} "
-        f"| {_format_entry_count(totals.ipv6):>{SERVICE_SELECTION_COUNT_WIDTH}}"
-    )
-
-
-def _enabled_service_selection_groups(
-    enabled_service_keys: set[str],
-) -> dict[str, tuple[str, ...]]:
-    return {
-        parent: children
-        for parent, children in SERVICE_SELECTION_GROUPS.items()
-        if parent in enabled_service_keys
-        and all(child in enabled_service_keys for child in children)
-    }
-
-
-def _effective_service_selection(selected_values: Iterable[str]) -> set[str]:
-    selected = set(selected_values)
-    for parent, children in SERVICE_SELECTION_GROUPS.items():
-        child_set = set(children)
-        if parent in selected:
-            selected.difference_update(child_set)
-        elif child_set.issubset(selected):
-            selected.difference_update(child_set)
-            selected.add(parent)
-    return selected
-
-
-def _sum_entry_counts(values: Iterable[int | None]) -> int | None:
-    total = 0
-    for value in values:
-        if value is None:
-            return None
-        total += value
-    return total
-
-
-def _router_state_label(enabled: bool) -> str:
-    if enabled:
-        return "[bold green]включён[/bold green]"
-    return "[bold yellow]выключен[/bold yellow]"
-
-
-def _router_state_plain(enabled: bool) -> str:
-    return "включён" if enabled else "выключен"
-
-
-def _router_selection_column_widths(routers: Iterable[RouterConfig]) -> tuple[int, int]:
-    router_list = list(routers)
-    return (
-        max(_display_width(router.id) for router in router_list),
-        max(_display_width(router.name) for router in router_list),
-    )
-
-
-def _router_selection_title(
-    *,
-    router: RouterConfig,
-    router_id_width: int,
-    router_name_width: int,
-) -> str:
-    return (
-        f"{_pad_display(router.id, width=router_id_width)} | "
-        f"{_pad_display(router.name, width=router_name_width)} | "
-        f"{_router_state_plain(router.enabled)}"
-    )
-
-
-def _router_selection_header(*, router_id_width: int, router_name_width: int) -> str:
-    return f"{'Маршрутизатор':<{router_id_width}} | {'Имя':<{router_name_width}} | Статус"
-
-
-def _router_toggle_title(
-    *,
-    router: RouterConfig,
-    router_id_width: int,
-    router_name_width: int,
-) -> str:
-    return (
-        f"{_pad_display(router.id, width=router_id_width)} | "
-        f"{_pad_display(router.name, width=router_name_width)}"
-    )
-
-
-def _router_toggle_header(*, router_id_width: int, router_name_width: int) -> str:
-    return f"{'Маршрутизатор':<{router_id_width}} | {'Имя':<{router_name_width}}"
-
-
-def _router_toggle_summary(*, selected_values: tuple[str, ...], total: int) -> str:
-    enabled_count = len(selected_values)
-    disabled_count = total - enabled_count
-    return f"Будет включено: {enabled_count} | выключено: {disabled_count}"
-
-
-def _manual_run_selection_summary(*, selected_values: tuple[str, ...]) -> str:
-    return f"Будет запущено: {len(selected_values)}"
-
-
-def _pad_display(value: str, *, width: int) -> str:
-    return value + (" " * max(width - _display_width(value), 0))
-
-
-def _display_width(value: str) -> int:
-    width = 0
-    for character in value:
-        if unicodedata.combining(character):
-            continue
-        width += 2 if unicodedata.east_asian_width(character) in {"F", "W"} else 1
-    return width
 
 
 def _derive_router_id(*, name: str, config: AppConfig) -> str:
@@ -2062,190 +1241,5 @@ _CYRILLIC_TO_ASCII = {
 }
 
 
-def _format_connected(value: bool | None) -> str:
-    if value is None:
-        return "[dim]-[/dim]"
-    if value:
-        return "[green]да[/green]"
-    return "[yellow]нет[/yellow]"
-
-
-def _format_router_diagnostic_error(error_message: str | None) -> Text:
-    if not error_message:
-        return Text("-", style="dim")
-    return Text(_truncate_discovery_error_message(error_message), style="red")
-
-
-def _format_validation_error(exc: ValidationError) -> str:
-    errors = exc.errors()
-    if not errors:
-        return str(exc)
-    first_error = errors[0]
-    location = ".".join(str(part) for part in first_error.get("loc", ()))
-    message = str(first_error.get("msg", exc))
-    if location:
-        return f"{location}: {message}"
-    return message
-
-
 def _is_missing_password_env_error(message: str) -> bool:
     return "password env" in message and "is not set" in message
-
-
-def _truncate_discovery_error_message(message: str) -> str:
-    normalized_message = " ".join(message.split())
-    if len(normalized_message) <= DISCOVERY_ERROR_MESSAGE_LIMIT:
-        return normalized_message
-    truncated = normalized_message[: DISCOVERY_ERROR_MESSAGE_LIMIT - 1].rstrip()
-    return f"{truncated}…"
-
-
-def _format_run_status(status: RunStatus) -> str:
-    if status is RunStatus.SUCCESS:
-        return "[green]success[/green]"
-    if status is RunStatus.PARTIAL:
-        return "[yellow]partial[/yellow]"
-    return "[red]failed[/red]"
-
-
-def _format_dashboard_last_run_at(value: datetime) -> str:
-    return value.strftime("%d.%m.%Y %H:%M")
-
-
-def _format_dashboard_router_run_status(status: RouterResultStatus) -> str:
-    if status in {RouterResultStatus.UPDATED, RouterResultStatus.NO_CHANGES}:
-        return "[green]ok[/green]"
-    if status is RouterResultStatus.PARTIAL:
-        return "[yellow]partial[/yellow]"
-    return "[red]fail[/red]"
-
-
-def _format_history_finished_at(value) -> str:
-    return value.strftime("%d.%m.%Y %H:%M:%S")
-
-
-def _format_history_page_text(*, total_count: int, page_index: int, page_size: int) -> str:
-    if total_count <= 0:
-        return "Страница 0 из 0"
-    page_count = ((total_count - 1) // page_size) + 1
-    return f"Страница {page_index + 1} из {page_count}"
-
-
-def _format_history_router_names(*, config: AppConfig, artifact: RunArtifact) -> str:
-    router_names: list[str] = []
-    for router_result in artifact.router_results:
-        router = _find_router(config=config, router_id=router_result.router_id)
-        router_names.append(router.name if router is not None else router_result.router_id)
-    return ", ".join(router_names) if router_names else "-"
-
-
-def _format_history_run_choice_title(*, config: AppConfig, run: RecentRun) -> str:
-    artifact = run.artifact
-    return (
-        f"{artifact.mode.value:<8}  "
-        f"{artifact.trigger.value:<9}  "
-        f"{artifact.status.value:<7}  "
-        f"{_format_history_finished_at(artifact.finished_at)}  "
-        f"{_format_history_router_names(config=config, artifact=artifact)}  "
-        f"{_format_artifact_summary(artifact)}"
-    )
-
-
-def _format_artifact_summary(artifact: RunArtifact) -> str:
-    changed_services = 0
-    failed_services = 0
-    for router in artifact.router_results:
-        for service in router.service_results:
-            if service.error_message is not None:
-                failed_services += 1
-            if service.added_count > 0 or service.removed_count > 0 or service.route_changed:
-                changed_services += 1
-    return f"изменено={changed_services} ошибок={failed_services}"
-
-
-def _format_router_result_summary(router: RouterRunResult) -> str:
-    changed_services = 0
-    failed_services = 0
-    for service in router.service_results:
-        if service.error_message is not None:
-            failed_services += 1
-        if service.added_count > 0 or service.removed_count > 0 or service.route_changed:
-            changed_services += 1
-    return f"изменено={changed_services} ошибок={failed_services}"
-
-
-def _run_error_rows(
-    *,
-    config: AppConfig,
-    artifact: RunArtifact,
-) -> list[tuple[str, str, str, str]]:
-    rows: list[tuple[str, str, str, str]] = []
-    for router_result in artifact.router_results:
-        router = _find_router(config=config, router_id=router_result.router_id)
-        router_name = router.name if router is not None else router_result.router_id
-        if router_result.error_message is not None:
-            message = router_result.error_message
-            if _is_grouped_router_transport_failure(router_result):
-                affected_count = sum(
-                    service_result.error_message is not None
-                    and service_result.failure_detail == router_result.failure_detail
-                    for service_result in router_result.service_results
-                )
-                message = f"{message} (затронуто сервисов: {affected_count})"
-            rows.append(
-                (
-                    router_name,
-                    _format_failure_category(router_result.failure_detail),
-                    _format_failure_step(router_result.failure_detail),
-                    message,
-                )
-            )
-        for service_result in router_result.service_results:
-            if service_result.error_message is None:
-                continue
-            if (
-                _is_grouped_router_transport_failure(router_result)
-                and service_result.failure_detail == router_result.failure_detail
-            ):
-                continue
-            rows.append(
-                (
-                    f"{router_name} / {service_result.service_key}",
-                    _format_failure_category(service_result.failure_detail),
-                    _format_failure_step(service_result.failure_detail),
-                    service_result.error_message,
-                )
-            )
-    return rows
-
-
-def _is_grouped_router_transport_failure(router_result: RouterRunResult) -> bool:
-    failure_detail = router_result.failure_detail
-    return failure_detail is not None and failure_detail.category is not None
-
-
-def _format_failure_category(failure_detail) -> str:
-    if failure_detail is None or failure_detail.category is None:
-        return "-"
-    category = failure_detail.category
-    if isinstance(category, FailureCategory):
-        return category.value
-    return str(category)
-
-
-def _format_failure_step(failure_detail) -> str:
-    if failure_detail is None:
-        return "-"
-    return failure_detail.step.value
-
-
-def _shell_quote_path(path: Path | str) -> str:
-    return shlex.quote(str(path))
-
-
-def _format_dns_proxy(value: bool | None) -> str:
-    if value is None:
-        return "[dim]unknown[/dim]"
-    if value:
-        return "[green]включён[/green]"
-    return "[yellow]выключен[/yellow]"

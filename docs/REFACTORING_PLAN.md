@@ -57,6 +57,8 @@ Source registry cleanup is listed as optional because it is useful, but not on t
 
 ## Slice 1 - Panel Shell and Router Workflow
 
+**Status:** Passed.
+
 **Purpose:** Turn `PanelController` from a large service locator plus router wizard into a smaller interactive shell with injected collaborators.
 
 **Why this is one slice:**
@@ -100,6 +102,8 @@ Panel dependency construction, router add/edit/toggle flows, route target discov
 - `./scripts/verify.sh` passes.
 
 ## Slice 2 - Panel Secondary Screens and Formatting
+
+**Status:** Passed.
 
 **Purpose:** Move lower-risk panel screens and pure formatting out of the controller after the router workflow boundary is established.
 
