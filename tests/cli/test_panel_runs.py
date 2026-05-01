@@ -198,6 +198,46 @@ def test_runs_menu_opens_selected_run_details_with_log_hint(tmp_path) -> None:
     assert "router rejected update" in output
 
 
+def test_runs_menu_maps_container_log_path_to_host_path_in_hint(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["run:0", "back", None])
+    controller, console = _panel_controller(tmp_path, prompts=prompts)
+    config = _config()
+    artifacts_dir = tmp_path / "data" / "artifacts"
+    run_history_service = _RecordingRunHistoryService(
+        artifacts_dir=artifacts_dir,
+        runs=(
+            RecentRun(
+                path=artifacts_dir / "run-container.json",
+                artifact=_artifact(
+                    run_id="run-container",
+                    status=RunStatus.SUCCESS,
+                    finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
+                    log_path=Path("/work/data/logs/run-container.log"),
+                    service_results=(
+                        ServiceRunResult(
+                            service_key="telegram",
+                            object_group_name="svc-telegram",
+                            status=ServiceResultStatus.NO_CHANGES,
+                            unchanged_count=5,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    controller._load_config = lambda: config  # type: ignore[method-assign]
+    controller._run_history_service = run_history_service  # type: ignore[method-assign]
+
+    controller._runs_menu()
+
+    output = console.export_text()
+    assert "Полный лог" in output
+    assert "data/logs/run-container.log" in output
+    assert "cat" in output
+    assert str(tmp_path / "data" / "logs" / "run-container.log") in output
+    assert "/work/data/logs/run-container.log" not in output
+
+
 def test_runs_menu_groups_transport_router_failures_by_category(tmp_path) -> None:
     prompts = ScriptedPromptAdapter(select_answers=["run:0", "back", None])
     controller, console = _panel_controller(tmp_path, prompts=prompts)
@@ -477,6 +517,7 @@ def _artifact(
     status: RunStatus,
     finished_at: datetime,
     service_results: tuple[ServiceRunResult, ...],
+    log_path: Path | None = None,
 ) -> RunArtifact:
     return RunArtifact(
         run_id=run_id,
@@ -485,7 +526,7 @@ def _artifact(
         status=status,
         started_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
         finished_at=finished_at,
-        log_path=Path("data/logs/run.log"),
+        log_path=log_path or Path("data/logs/run.log"),
         router_results=(
             RouterRunResult(
                 router_id="router-1",

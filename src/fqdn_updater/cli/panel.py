@@ -92,6 +92,7 @@ DISCOVERY_ERROR_MESSAGE_LIMIT = 280
 SERVICE_SELECTION_SERVICE_WIDTH = 22
 SERVICE_SELECTION_COUNT_WIDTH = 7
 KEENETIC_DOMAIN_SELECTION_LIMIT = 1024
+CONTAINER_WORKDIR = Path("/work")
 SERVICE_SELECTION_GROUPS = {
     "block": (
         "block_p2p_streaming",
@@ -2140,16 +2141,26 @@ class PanelController:
         candidate = Path(path)
         if not candidate.is_absolute():
             return str(candidate)
+        candidate = self._host_accessible_runtime_path(candidate)
         try:
             return str(candidate.relative_to(self._config_path.parent))
         except ValueError:
             return str(candidate)
 
     def _log_cat_command(self, path: Path | str) -> str:
+        candidate = self._host_accessible_runtime_path(path)
+        return f"cat {_shell_quote_path(candidate)}"
+
+    def _host_accessible_runtime_path(self, path: Path | str) -> Path:
         candidate = Path(path)
         if not candidate.is_absolute():
             candidate = self._resolve_config_relative_path(str(path))
-        return f"cat {_shell_quote_path(candidate)}"
+            return candidate
+        try:
+            container_relative_path = candidate.relative_to(CONTAINER_WORKDIR)
+        except ValueError:
+            return candidate
+        return self._config_path.parent / container_relative_path
 
 
 def _schedule_summary_table(schedule: RuntimeScheduleConfig) -> Table:
