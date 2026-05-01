@@ -323,9 +323,7 @@ class KeeneticRciClient(KeeneticClient):
                 if attempt == _MAX_REQUEST_ATTEMPTS:
                     reason = self._transport_error_reason(exc)
                     attempt_history = self._format_transport_attempt_history(transport_errors)
-                    certificate_error = self._first_certificate_verification_error(
-                        transport_errors
-                    )
+                    certificate_error = self._first_certificate_verification_error(transport_errors)
                     tls_diagnostics = (
                         self._build_tls_failure_diagnostics(certificate_error)
                         if certificate_error is not None

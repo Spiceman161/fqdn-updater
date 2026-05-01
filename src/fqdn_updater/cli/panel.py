@@ -76,13 +76,29 @@ from fqdn_updater.infrastructure.systemd_scheduler import SystemdScheduleInstall
 
 DEFAULT_SELECTED_SERVICES = frozenset(
     {
-        "telegram",
-        "youtube",
+        "block_vpn_proxy_privacy",
+        "block_news_politics",
+        "block_other",
+        "geoblock_ai",
+        "geoblock_other",
+        "hodca_network_os_tools",
+        "hodca_ai_education_research",
+        "hodca_other",
+        "news",
+        "cloudflare",
+        "cloudfront",
+        "digitalocean",
         "discord",
-        "twitter",
-        "meta",
-        "tiktok",
         "google_ai",
+        "hdrezka",
+        "hetzner",
+        "meta",
+        "ovh",
+        "roblox",
+        "telegram",
+        "tiktok",
+        "twitter",
+        "youtube",
     }
 )
 DEFAULT_INTERFACE_NAME = "Wireguard0"

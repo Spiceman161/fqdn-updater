@@ -10,12 +10,12 @@ else
   RUFF="ruff"
 fi
 
-if [ -x ".venv/bin/pytest" ]; then
-  PYTEST=".venv/bin/pytest"
+if [ -x ".venv/bin/python" ]; then
+  PYTHON=".venv/bin/python"
 else
-  PYTEST="pytest"
+  PYTHON="python3"
 fi
 
 "$RUFF" format . --check
 "$RUFF" check .
-"$PYTEST"
+"$PYTHON" -m pytest

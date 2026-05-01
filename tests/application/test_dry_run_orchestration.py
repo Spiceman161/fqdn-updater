@@ -484,9 +484,7 @@ def test_dry_run_orchestrator_preflight_failure_marks_router_failed_without_serv
         states={},
         route_bindings={},
         preflight_errors={
-            "router-1": (
-                "transport failed after 5 attempts: [Errno -2] Name or service not known"
-            )
+            "router-1": ("transport failed after 5 attempts: [Errno -2] Name or service not known")
         },
     )
     orchestrator = DryRunOrchestrator(

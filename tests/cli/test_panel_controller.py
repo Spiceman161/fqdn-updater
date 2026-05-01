@@ -23,6 +23,7 @@ from fqdn_updater.domain.run_artifact import (
     ServiceResultStatus,
     ServiceRunResult,
 )
+from fqdn_updater.domain.source_registry import builtin_service_definitions
 from fqdn_updater.domain.status_diagnostics import (
     OverallDiagnosticStatus,
     RouterDiagnosticStatus,
@@ -624,6 +625,68 @@ def test_add_router_save_hint_mentions_review_and_confirm() -> None:
     assert panel_module.ADD_ROUTER_SAVE_HINT_LINES == (
         "Проверьте введенные данные и подтвердите сохранение маршрутизатора.",
     )
+
+
+def test_add_router_uses_requested_default_service_selection(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        text_answers=[
+            "Router 1",
+            "api_updater",
+            "https://router-1.example/rci/",
+        ],
+        checkbox_answers=[[]],
+        confirm_answers=[True, True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        services=[service.model_dump(mode="json") for service in builtin_service_definitions()],
+    )
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: "Aa1!bcdefghijklmnopq"
+    )
+
+    controller._add_router()
+
+    checked_service_keys = {
+        choice["value"] for choice in prompts.checkbox_calls[0]["choices"] if choice["checked"]
+    }
+    assert checked_service_keys == {
+        "block_vpn_proxy_privacy",
+        "block_news_politics",
+        "block_other",
+        "geoblock_ai",
+        "geoblock_other",
+        "hodca_network_os_tools",
+        "hodca_ai_education_research",
+        "hodca_other",
+        "news",
+        "cloudflare",
+        "cloudfront",
+        "digitalocean",
+        "discord",
+        "google_ai",
+        "hdrezka",
+        "hetzner",
+        "meta",
+        "ovh",
+        "roblox",
+        "telegram",
+        "tiktok",
+        "twitter",
+        "youtube",
+    }
+    checked_by_key = {
+        choice["value"]: choice["checked"] for choice in prompts.checkbox_calls[0]["choices"]
+    }
+    assert checked_by_key["block"] is False
+    assert checked_by_key["geoblock"] is False
+    assert checked_by_key["hodca"] is False
+    assert checked_by_key["anime"] is False
+    assert checked_by_key["porn"] is False
 
 
 def test_add_router_service_selection_uses_source_counts_and_fixed_hint_lines(
