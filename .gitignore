@@ -28,7 +28,6 @@ data/*
 /.aider*
 /.mcp/
 /.mcp.json
-/AGENTS.md
 /CLAUDE.md
 
 # Local reference artifacts copied for study/adaptation only.
