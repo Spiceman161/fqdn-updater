@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import importlib
 import subprocess
+from importlib import metadata
 from pathlib import Path
+
+from fqdn_updater import __version__
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SH = ROOT / "install.sh"
@@ -35,6 +38,10 @@ def test_source_registry_data_is_packaged_as_python_module() -> None:
     module = importlib.import_module("fqdn_updater.domain.source_registry_data")
 
     assert module.__name__ == "fqdn_updater.domain.source_registry_data"
+
+
+def test_package_metadata_version_matches_runtime_version() -> None:
+    assert metadata.version("fqdn-updater") == __version__
 
 
 def test_dockerfile_and_compose_contracts_are_static_and_minimal() -> None:

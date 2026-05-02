@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import fqdn_updater.cli.panel as panel_module
+from fqdn_updater import __version__
 from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryResult
 from fqdn_updater.application.run_history import RecentRun, RunHistoryResult
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult
@@ -152,6 +153,7 @@ def test_main_menu_passes_dashboard_hint_lines_to_prompt(tmp_path) -> None:
     controller.run()
 
     output = console.export_text()
+    assert f"FQDN-updater v{__version__}" in output
     assert "Подсказка" not in output
     assert prompts.select_calls[0]["hint_lines"] == panel_module.MAIN_MENU_HINT_LINES
     assert prompts.select_calls[0]["hint_lines"] == (

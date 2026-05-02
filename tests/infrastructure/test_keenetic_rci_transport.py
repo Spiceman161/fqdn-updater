@@ -7,6 +7,7 @@ from urllib import error, request
 
 import pytest
 
+from fqdn_updater import __version__
 from fqdn_updater.domain.config_schema import RouterConfig
 from fqdn_updater.infrastructure.keenetic_rci_transport import (
     KeeneticRciTransport,
@@ -108,7 +109,7 @@ def test_transport_post_builds_post_request_with_timeout_and_headers(profile) ->
     headers = {name.lower(): value for name, value in http_request.header_items()}
     assert headers["accept"] == "application/json"
     assert headers["content-type"] == "application/json"
-    assert headers["user-agent"] == "fqdn-updater/0.1.0"
+    assert headers["user-agent"] == f"fqdn-updater/{__version__}"
 
 
 def test_transport_wraps_auth_http_errors_as_runtime_errors(profile) -> None:

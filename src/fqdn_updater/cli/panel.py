@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from fqdn_updater import __version__
 from fqdn_updater.application.dry_run_orchestration import (
     DryRunExecutionResult,
     DryRunOrchestrator,
@@ -175,7 +176,7 @@ class PanelController:
     def _render_dashboard(self, *, config: AppConfig) -> None:
         self._console.clear()
         title = Text(
-            panel_formatting._icon_label(panel_formatting.ICON_APP, "FQDN-updater"),
+            panel_formatting._icon_label(panel_formatting.ICON_APP, f"FQDN-updater v{__version__}"),
             style="bold white",
         )
         subtitle = Text(

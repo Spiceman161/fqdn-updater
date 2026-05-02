@@ -4,6 +4,7 @@ from urllib import error
 
 import pytest
 
+from fqdn_updater import __version__
 from fqdn_updater.infrastructure.raw_source_fetcher import HttpRawSourceFetcher
 
 _URLOPEN_PATH = "fqdn_updater.infrastructure.raw_source_fetcher.request.urlopen"
@@ -35,6 +36,8 @@ class _FakeResponse:
 def test_fetch_text_returns_decoded_response(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_urlopen(request, timeout: int):  # noqa: ANN001
         assert request.full_url == "https://example.com/source.lst"
+        headers = {name.lower(): value for name, value in request.header_items()}
+        assert headers["user-agent"] == f"fqdn-updater/{__version__}"
         assert timeout == 30
         return _FakeResponse(b"example.com\n")
 

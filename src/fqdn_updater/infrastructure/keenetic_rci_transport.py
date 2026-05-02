@@ -11,6 +11,7 @@ from urllib import error, parse, request
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from fqdn_updater import __version__
 from fqdn_updater.domain.config_schema import RouterConfig
 
 _MAX_REQUEST_ATTEMPTS = 5
@@ -82,7 +83,7 @@ class KeeneticRciTransport:
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "fqdn-updater/0.1.0",
+                "User-Agent": f"fqdn-updater/{__version__}",
             },
         )
         return self._send_request_with_retries(

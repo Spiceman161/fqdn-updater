@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from urllib import error, request
 
+from fqdn_updater import __version__
+
 
 class HttpRawSourceFetcher:
     def fetch_text(self, url: str) -> str:
-        req = request.Request(url, headers={"User-Agent": "fqdn-updater/0.1.0"})
+        req = request.Request(url, headers={"User-Agent": f"fqdn-updater/{__version__}"})
         try:
             with request.urlopen(req, timeout=30) as response:
                 charset = response.headers.get_content_charset("utf-8")
