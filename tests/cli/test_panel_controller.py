@@ -10,6 +10,7 @@ import fqdn_updater.cli.panel as panel_module
 from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryResult
 from fqdn_updater.application.run_history import RecentRun, RunHistoryResult
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult
+from fqdn_updater.cli import panel_formatting, panel_router_support, panel_schedule
 from fqdn_updater.domain.config_schema import AppConfig
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
@@ -333,7 +334,7 @@ def test_schedule_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
     controller._schedule_menu()
 
     assert prompts.select_calls[0]["message"] == "Расписание"
-    assert prompts.select_calls[0]["hint_lines"] == panel_module.SCHEDULE_MENU_HINT_LINES
+    assert prompts.select_calls[0]["hint_lines"] == panel_schedule.SCHEDULE_MENU_HINT_LINES
     assert prompts.select_calls[0]["choice_titles"][-1] == "Главное меню"
 
 
@@ -600,29 +601,42 @@ def test_add_router_passes_hint_lines_through_wizard_steps(
 
     controller._add_router()
 
-    assert prompts.text_calls[0]["hint_lines"] == panel_module.ADD_ROUTER_HINT_LINES
+    assert prompts.text_calls[0]["hint_lines"] == panel_router_support.ADD_ROUTER_HINT_LINES
     assert prompts.text_calls[1]["message"] == "RCI username"
-    assert prompts.text_calls[1]["hint_lines"] == panel_module.ADD_ROUTER_USERNAME_HINT_LINES
-    assert prompts.text_calls[2]["hint_lines"] == panel_module.ADD_ROUTER_RCI_URL_HINT_LINES
-    assert prompts.text_calls[3]["hint_lines"] == panel_module.BASE_ROUTE_INTERFACE_HINT_LINES
-    assert prompts.checkbox_calls[0]["hint_lines"] == panel_module.SERVICE_SELECTION_HINT_LINES
+    assert (
+        prompts.text_calls[1]["hint_lines"] == panel_router_support.ADD_ROUTER_USERNAME_HINT_LINES
+    )
+    assert prompts.text_calls[2]["hint_lines"] == panel_router_support.ADD_ROUTER_RCI_URL_HINT_LINES
+    assert (
+        prompts.text_calls[3]["hint_lines"] == panel_router_support.BASE_ROUTE_INTERFACE_HINT_LINES
+    )
+    assert (
+        prompts.checkbox_calls[0]["hint_lines"] == panel_router_support.SERVICE_SELECTION_HINT_LINES
+    )
     assert prompts.text_calls[3]["message"] == "Базовый интерфейс маршрутизации"
     assert prompts.select_calls == []
-    assert prompts.confirm_calls[0]["hint_lines"] == panel_module.ADD_ROUTER_PASSWORD_HINT_LINES
+    assert (
+        prompts.confirm_calls[0]["hint_lines"]
+        == panel_router_support.ADD_ROUTER_PASSWORD_HINT_LINES
+    )
     assert prompts.confirm_calls[1]["message"] == "Использовать отдельный маршрут для google_ai?"
-    assert prompts.confirm_calls[1]["hint_lines"] == panel_module.GOOGLE_AI_OVERRIDE_HINT_LINES
-    assert prompts.confirm_calls[-1]["hint_lines"] == panel_module.ADD_ROUTER_SAVE_HINT_LINES
+    assert (
+        prompts.confirm_calls[1]["hint_lines"] == panel_router_support.GOOGLE_AI_OVERRIDE_HINT_LINES
+    )
+    assert (
+        prompts.confirm_calls[-1]["hint_lines"] == panel_router_support.ADD_ROUTER_SAVE_HINT_LINES
+    )
 
 
 def test_password_confirmation_hint_mentions_access_checkbox_and_save() -> None:
     assert (
         "Поставьте галочку в столбце «Доступ» напротив нового пользователя и сохраните подключение."
-        in panel_module.ADD_ROUTER_PASSWORD_HINT_LINES
+        in panel_router_support.ADD_ROUTER_PASSWORD_HINT_LINES
     )
 
 
 def test_add_router_save_hint_mentions_review_and_confirm() -> None:
-    assert panel_module.ADD_ROUTER_SAVE_HINT_LINES == (
+    assert panel_router_support.ADD_ROUTER_SAVE_HINT_LINES == (
         "Проверьте введенные данные и подтвердите сохранение маршрутизатора.",
     )
 
@@ -735,7 +749,7 @@ def test_add_router_service_selection_uses_source_counts_and_fixed_hint_lines(
         ["telegram", "google_ai", "youtube"]
     ]
     checkbox_call = prompts.checkbox_calls[0]
-    assert checkbox_call["hint_lines"] == panel_module.SERVICE_SELECTION_HINT_LINES
+    assert checkbox_call["hint_lines"] == panel_router_support.SERVICE_SELECTION_HINT_LINES
     assert checkbox_call["hint_lines"] == (
         (
             "Для каждого выбранного сервиса будет создан свой список в разделе "
@@ -745,7 +759,7 @@ def test_add_router_service_selection_uses_source_counts_and_fixed_hint_lines(
         "Вам необходимо выбрать не более этого количества записей.",
         "Для IPv4+IPv6 действует отдельный лимит: около 4000 subnet-записей суммарно на роутер.",
     )
-    assert checkbox_call["table_header"] == panel_module._service_selection_header()
+    assert checkbox_call["table_header"] == panel_formatting._service_selection_header()
     assert checkbox_call["table_summary"] == (f"{'Итого выбрано':<22} | {3:>7} | {3:>7} | {2:>7}")
     assert [choice["value"] for choice in checkbox_call["choices"]] == [
         "telegram",
@@ -822,10 +836,12 @@ def test_service_selection_groups_composite_services_and_collapses_full_selectio
     assert selected == {"block", "hodca"}
     checkbox_call = prompts.checkbox_calls[0]
     assert (
-        checkbox_call["selection_groups"]["block"] == panel_module.SERVICE_SELECTION_GROUPS["block"]
+        checkbox_call["selection_groups"]["block"]
+        == panel_formatting.SERVICE_SELECTION_GROUPS["block"]
     )
     assert (
-        checkbox_call["selection_groups"]["hodca"] == panel_module.SERVICE_SELECTION_GROUPS["hodca"]
+        checkbox_call["selection_groups"]["hodca"]
+        == panel_formatting.SERVICE_SELECTION_GROUPS["hodca"]
     )
     choice_titles = [choice["title"] for choice in checkbox_call["choices"]]
     assert choice_titles[0].startswith("block (full)")
@@ -835,9 +851,9 @@ def test_service_selection_groups_composite_services_and_collapses_full_selectio
 
 
 def test_service_selection_totals_marks_domain_limit_overflow_red() -> None:
-    summary = panel_module._service_selection_totals_line(
+    summary = panel_formatting._service_selection_totals_line(
         selected_values=("large",),
-        service_counts={"large": panel_module.ServiceEntryCounts(domains=1025, ipv4=0, ipv6=0)},
+        service_counts={"large": panel_formatting.ServiceEntryCounts(domains=1025, ipv4=0, ipv6=0)},
     )
 
     assert isinstance(summary, list)
@@ -1170,7 +1186,10 @@ def test_edit_router_updates_password_and_preserves_existing_mappings(
     assert SecretEnvFile(path=secret_path).read() == {"ROUTER_ONE_SECRET": generated_password}
     assert generated_password not in controller._config_path.read_text(encoding="utf-8")
     assert prompts.confirm_calls[0]["message"] == "Пароль уже обновлён у пользователя Keenetic?"
-    assert prompts.confirm_calls[0]["hint_lines"] == panel_module.EDIT_ROUTER_PASSWORD_HINT_LINES
+    assert (
+        prompts.confirm_calls[0]["hint_lines"]
+        == panel_router_support.EDIT_ROUTER_PASSWORD_HINT_LINES
+    )
 
 
 def test_edit_router_keeps_existing_password_when_user_does_not_update_it(
@@ -1458,11 +1477,11 @@ def test_toggle_router_enabled_uses_checkbox_table_and_preserves_checked_state(t
         ],
     )
     initial_config = controller._load_config()
-    router_id_width, router_name_width = panel_module._router_selection_column_widths(
+    router_id_width, router_name_width = panel_formatting._router_selection_column_widths(
         initial_config.routers
     )
     expected_titles = [
-        panel_module._router_toggle_title(
+        panel_formatting._router_toggle_title(
             router=router,
             router_id_width=router_id_width,
             router_name_width=router_name_width,
@@ -1477,7 +1496,7 @@ def test_toggle_router_enabled_uses_checkbox_table_and_preserves_checked_state(t
     assert checkbox_call["instruction"] == (
         "Стрелки выбирают, Пробел включает или выключает, Enter сохраняет, Esc назад."
     )
-    assert checkbox_call["table_header"] == panel_module._router_toggle_header(
+    assert checkbox_call["table_header"] == panel_formatting._router_toggle_header(
         router_id_width=router_id_width,
         router_name_width=router_name_width,
     )

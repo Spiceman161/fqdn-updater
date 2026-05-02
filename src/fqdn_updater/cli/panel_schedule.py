@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 from rich.panel import Panel
@@ -36,8 +36,37 @@ class PanelScheduleFlow:
     def __init__(self, *, panel: PanelController) -> None:
         self._panel = panel
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._panel, name)
+    @property
+    def _config_path(self):
+        return self._panel._config_path
+
+    @property
+    def _console(self):
+        return self._panel._console
+
+    @property
+    def _prompts(self):
+        return self._panel._prompts
+
+    @property
+    def _management_service(self):
+        return self._panel._management_service
+
+    @property
+    def _schedule_installer(self):
+        return self._panel._schedule_installer
+
+    def _load_config(self):
+        return self._panel._load_config()
+
+    def _pause(self):
+        return self._panel._pause()
+
+    def _render_summary(self, *, title, rows):
+        return self._panel._render_summary(title=title, rows=rows)
+
+    def _display_path(self, path):
+        return self._panel._display_path(path)
 
     def schedule_menu(self) -> None:
         while True:

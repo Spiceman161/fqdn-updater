@@ -7,6 +7,7 @@ from rich.console import Console
 
 import fqdn_updater.cli.panel as panel_module
 from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryResult
+from fqdn_updater.cli.panel_router_support import MappingPlan, RouteTargetDraft
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
 from fqdn_updater.infrastructure.secret_env_file import SecretEnvFile
@@ -208,9 +209,9 @@ def test_build_router_mappings_preserves_existing_metadata_and_google_override(t
                 }
             ),
         },
-        mapping_plan=panel_module.MappingPlan(
-            default_target=panel_module.RouteTargetDraft("gateway", "10.0.0.2", "Wireguard9"),
-            google_ai_target=panel_module.RouteTargetDraft("interface", "Wireguard7"),
+        mapping_plan=MappingPlan(
+            default_target=RouteTargetDraft("gateway", "10.0.0.2", "Wireguard9"),
+            google_ai_target=RouteTargetDraft("interface", "Wireguard7"),
         ),
     )
 

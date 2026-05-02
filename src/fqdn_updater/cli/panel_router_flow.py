@@ -5,26 +5,6 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from fqdn_updater.application.config_management import normalize_rci_url_input
-from fqdn_updater.cli.panel import (
-    ADD_ROUTER_HINT_LINES,
-    ADD_ROUTER_PASSWORD_HINT_LINES,
-    ADD_ROUTER_RCI_URL_HINT_LINES,
-    ADD_ROUTER_SAVE_HINT_LINES,
-    ADD_ROUTER_USERNAME_HINT_LINES,
-    BASE_ROUTE_INTERFACE_HINT_LINES,
-    DEFAULT_RCI_TIMEOUT_SECONDS,
-    DEFAULT_SELECTED_SERVICES,
-    EDIT_ROUTER_PASSWORD_HINT_LINES,
-    GOOGLE_AI_OVERRIDE_HINT_LINES,
-    SERVICE_SELECTION_HINT_LINES,
-    MappingPlan,
-    RouteTargetDraft,
-    _default_interface_target_value,
-    _derive_mapping_plan_defaults,
-    _derive_router_id,
-    _ensure_password_env_available,
-    _is_missing_password_env_error,
-)
 from fqdn_updater.cli.panel_formatting import (
     ServiceEntryCounts,
     _effective_service_selection,
@@ -46,6 +26,26 @@ from fqdn_updater.cli.panel_formatting import (
     _service_selection_totals_line,
 )
 from fqdn_updater.cli.panel_prompts import CheckboxTableMeta, PromptChoice
+from fqdn_updater.cli.panel_router_support import (
+    ADD_ROUTER_HINT_LINES,
+    ADD_ROUTER_PASSWORD_HINT_LINES,
+    ADD_ROUTER_RCI_URL_HINT_LINES,
+    ADD_ROUTER_SAVE_HINT_LINES,
+    ADD_ROUTER_USERNAME_HINT_LINES,
+    BASE_ROUTE_INTERFACE_HINT_LINES,
+    DEFAULT_RCI_TIMEOUT_SECONDS,
+    DEFAULT_SELECTED_SERVICES,
+    EDIT_ROUTER_PASSWORD_HINT_LINES,
+    GOOGLE_AI_OVERRIDE_HINT_LINES,
+    SERVICE_SELECTION_HINT_LINES,
+    MappingPlan,
+    RouteTargetDraft,
+    default_interface_target_value,
+    derive_mapping_plan_defaults,
+    derive_router_id,
+    ensure_password_env_available,
+    is_missing_password_env_error,
+)
 from fqdn_updater.domain.config_schema import (
     AppConfig,
     RouterConfig,
@@ -67,8 +67,64 @@ class PanelRouterFlow:
     def __init__(self, *, panel: PanelController) -> None:
         self._panel = panel
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._panel, name)
+    @property
+    def _config_path(self):
+        return self._panel._config_path
+
+    @property
+    def _console(self):
+        return self._panel._console
+
+    @property
+    def _prompts(self):
+        return self._panel._prompts
+
+    @property
+    def _repository(self):
+        return self._panel._repository
+
+    @property
+    def _management_service(self):
+        return self._panel._management_service
+
+    @property
+    def _password_generator(self):
+        return self._panel._password_generator
+
+    @property
+    def _route_target_discovery_service(self):
+        return self._panel._route_target_discovery_service
+
+    @property
+    def _service_count_cache_repository(self):
+        return self._panel._service_count_cache_repository
+
+    def _load_config(self):
+        return self._panel._load_config()
+
+    def _pause(self):
+        return self._panel._pause()
+
+    def _render_summary(self, *, title, rows):
+        return self._panel._render_summary(title=title, rows=rows)
+
+    def _secrets_env_path(self, *, config):
+        return self._panel._secrets_env_path(config=config)
+
+    def _service_count_cache_path(self, *, config):
+        return self._panel._service_count_cache_path(config=config)
+
+    def _service_count_source_loader(self, *, config):
+        return self._panel._service_count_source_loader(config=config)
+
+    def _render_route_target_candidates(self, *, candidates):
+        return self._panel._render_route_target_candidates(candidates=candidates)
+
+    def _print_discovery_error(self, message):
+        return self._panel._print_discovery_error(message)
+
+    def _print_router_connectivity_error(self):
+        return self._panel._print_router_connectivity_error()
 
     def add_router(self) -> bool:
         config = self._load_config()
@@ -79,7 +135,7 @@ class PanelRouterFlow:
         )
         if name is None:
             return False
-        router_id = _derive_router_id(name=name, config=config)
+        router_id = derive_router_id(name=name, config=config)
         username = self._prompts.text(
             message="RCI username",
             default="api_updater",
@@ -94,7 +150,7 @@ class PanelRouterFlow:
             return False
 
         password_env = password_env_key_for_router_id(router_id)
-        _ensure_password_env_available(
+        ensure_password_env_available(
             config=config,
             router_id=router_id,
             password_env=password_env,
@@ -287,7 +343,7 @@ class PanelRouterFlow:
             return
         update_password = password_ready
         if update_password:
-            _ensure_password_env_available(
+            ensure_password_env_available(
                 config=config,
                 router_id=router.id,
                 password_env=next_password_env,
@@ -558,10 +614,8 @@ class PanelRouterFlow:
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
     ) -> MappingPlan | None:
-        default_target, has_inconsistent_default, google_ai_override = (
-            _derive_mapping_plan_defaults(
-                editable_mappings=editable_mappings,
-            )
+        default_target, has_inconsistent_default, google_ai_override = derive_mapping_plan_defaults(
+            editable_mappings=editable_mappings,
         )
         if has_inconsistent_default:
             self._console.print(
@@ -623,7 +677,7 @@ class PanelRouterFlow:
             config=config,
             router=router,
             label=label,
-            default_value=_default_interface_target_value(default_target),
+            default_value=default_interface_target_value(default_target),
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
             hint_lines=hint_lines,
@@ -791,7 +845,7 @@ class PanelRouterFlow:
             password_override=discovery_password,
         )
         if result.error_message is not None:
-            if missing_secret_message is not None and _is_missing_password_env_error(
+            if missing_secret_message is not None and is_missing_password_env_error(
                 result.error_message
             ):
                 self._console.print(f"[yellow]{missing_secret_message}[/yellow]")

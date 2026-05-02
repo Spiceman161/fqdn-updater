@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from rich.panel import Panel
 from rich.table import Table
@@ -34,8 +34,30 @@ class PanelRunsFlow:
     def __init__(self, *, panel: PanelController) -> None:
         self._panel = panel
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._panel, name)
+    @property
+    def _config_path(self):
+        return self._panel._config_path
+
+    @property
+    def _console(self):
+        return self._panel._console
+
+    @property
+    def _prompts(self):
+        return self._panel._prompts
+
+    @property
+    def _run_history_service(self):
+        return self._panel._run_history_service
+
+    def _load_config(self):
+        return self._panel._load_config()
+
+    def _display_path(self, path):
+        return self._panel._display_path(path)
+
+    def _log_cat_command(self, path):
+        return self._panel._log_cat_command(path)
 
     def runs_menu(self) -> None:
         page_index = 0

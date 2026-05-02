@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import re
-import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -22,8 +20,7 @@ from fqdn_updater.application.password_generation import (
 from fqdn_updater.application.run_history import RecentRun, RunHistoryResult
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult, SyncOrchestrator
-from fqdn_updater.cli import panel_formatting as panel_formatting
-from fqdn_updater.cli import panel_schedule as panel_schedule
+from fqdn_updater.cli import panel_formatting, panel_router_support, panel_schedule
 from fqdn_updater.cli.panel_dependencies import PanelDependencies, build_panel_dependencies
 from fqdn_updater.cli.panel_prompts import (
     CheckboxTableMeta,
@@ -47,79 +44,12 @@ from fqdn_updater.infrastructure.run_lock import FileRunLockManager
 from fqdn_updater.infrastructure.run_logging import RunLoggerFactory
 from fqdn_updater.infrastructure.secret_env_file import (
     SecretEnvFile,
-    password_env_key_for_router_id,
 )
 from fqdn_updater.infrastructure.service_count_cache import (
     CachingSourceLoadingService,
     resolve_service_count_cache_path,
 )
 
-SCHEDULE_MENU_HINT_LINES = panel_schedule.SCHEDULE_MENU_HINT_LINES
-_schedule_summary_table = panel_schedule._schedule_summary_table
-ROOT_PANEL_WIDTH = panel_formatting.ROOT_PANEL_WIDTH
-DISCOVERY_ERROR_MESSAGE_LIMIT = panel_formatting.DISCOVERY_ERROR_MESSAGE_LIMIT
-SERVICE_SELECTION_SERVICE_WIDTH = panel_formatting.SERVICE_SELECTION_SERVICE_WIDTH
-SERVICE_SELECTION_COUNT_WIDTH = panel_formatting.SERVICE_SELECTION_COUNT_WIDTH
-KEENETIC_DOMAIN_SELECTION_LIMIT = panel_formatting.KEENETIC_DOMAIN_SELECTION_LIMIT
-SERVICE_SELECTION_GROUPS = panel_formatting.SERVICE_SELECTION_GROUPS
-SERVICE_DISPLAY_LABELS = panel_formatting.SERVICE_DISPLAY_LABELS
-ServiceEntryCounts = panel_formatting.ServiceEntryCounts
-_effective_service_selection = panel_formatting._effective_service_selection
-_enabled_service_selection_groups = panel_formatting._enabled_service_selection_groups
-_find_router = panel_formatting._find_router
-_format_connected = panel_formatting._format_connected
-_format_dashboard_last_run_at = panel_formatting._format_dashboard_last_run_at
-_format_dashboard_router_run_status = panel_formatting._format_dashboard_router_run_status
-_format_entry_count = panel_formatting._format_entry_count
-_format_service_list = panel_formatting._format_service_list
-_format_validation_error = panel_formatting._format_validation_error
-_manual_run_selection_summary = panel_formatting._manual_run_selection_summary
-_route_candidate_title = panel_formatting._route_candidate_title
-_router_selection_column_widths = panel_formatting._router_selection_column_widths
-_router_selection_header = panel_formatting._router_selection_header
-_router_selection_title = panel_formatting._router_selection_title
-_router_state_label = panel_formatting._router_state_label
-_router_toggle_header = panel_formatting._router_toggle_header
-_router_toggle_summary = panel_formatting._router_toggle_summary
-_router_toggle_title = panel_formatting._router_toggle_title
-_service_display_label = panel_formatting._service_display_label
-_service_entry_counts_from_report = panel_formatting._service_entry_counts_from_report
-_service_entry_counts_from_snapshot = panel_formatting._service_entry_counts_from_snapshot
-_service_selection_header = panel_formatting._service_selection_header
-_service_selection_title = panel_formatting._service_selection_title
-_service_selection_totals_line = panel_formatting._service_selection_totals_line
-_shell_quote_path = panel_formatting._shell_quote_path
-_truncate_discovery_error_message = panel_formatting._truncate_discovery_error_message
-
-DEFAULT_SELECTED_SERVICES = frozenset(
-    {
-        "block_vpn_proxy_privacy",
-        "block_news_politics",
-        "block_other",
-        "geoblock_ai",
-        "geoblock_other",
-        "hodca_network_os_tools",
-        "hodca_ai_education_research",
-        "hodca_other",
-        "news",
-        "cloudflare",
-        "cloudfront",
-        "digitalocean",
-        "discord",
-        "google_ai",
-        "hdrezka",
-        "hetzner",
-        "meta",
-        "ovh",
-        "roblox",
-        "telegram",
-        "tiktok",
-        "twitter",
-        "youtube",
-    }
-)
-DEFAULT_INTERFACE_NAME = "Wireguard0"
-DEFAULT_RCI_TIMEOUT_SECONDS = 30
 CONTAINER_WORKDIR = Path("/work")
 MAIN_MENU_HINT_LINES = (
     "Для начала работы добавьте маршрутизатор Keenetic с ОС версии 5 и выше.",
@@ -136,69 +66,6 @@ ROUTER_MENU_HINT_LINES = (
     "или сменить статус.",
     "Списки и маршруты не меняются до подтверждения сохранения.",
 )
-SERVICE_SELECTION_HINT_LINES = (
-    "Для каждого выбранного сервиса будет создан свой список в разделе «Маршрутизация» Keenetic.",
-    "Лимит доменов роутеров Keenetic составляет 1024 записи. "
-    "Вам необходимо выбрать не более этого количества записей.",
-    "Для IPv4+IPv6 действует отдельный лимит: около 4000 subnet-записей суммарно на роутер.",
-)
-ADD_ROUTER_HINT_LINES = ("Введите имя нового маршрутизатора.",)
-ADD_ROUTER_RCI_URL_HINT_LINES = (
-    "Нажмите кнопку копирования в новой строке «Доступ к веб-приложениям домашней сети».",
-    "Скопированный URL должен начинаться с http://rci.",
-)
-ADD_ROUTER_USERNAME_HINT_LINES = (
-    "Где взять RCI username: на Keenetic откройте раздел «Доменное имя».",
-    "Проверьте, что доменное имя уже создано и включён доступ из Интернета.",
-    "Создайте новый «Доступ к веб-приложениям домашней сети» с именем rci.",
-    "Выберите «Авторизованный доступ», «Это устройство Keenetic», протокол HTTP и TCP порт 79.",
-    "Добавьте нового пользователя и введите имя этого пользователя в поле ниже.",
-)
-ADD_ROUTER_PASSWORD_HINT_LINES = (
-    "Сейчас задайте этот стойкий пароль новому Keenetic-пользователю, которого привязали к rci.",
-    "Скопировать пароль можно через Ctrl+Shift+C.",
-    "Поставьте галочку в столбце «Доступ» напротив нового пользователя и сохраните подключение.",
-    "После этого вернитесь в мастер и продолжайте настройку KeenDNS RCI URL.",
-)
-EDIT_ROUTER_PASSWORD_HINT_LINES = (
-    "Сейчас обновите пароль у low-privilege RCI пользователя на Keenetic.",
-    "Скопировать пароль можно через Ctrl+Shift+C.",
-    "После обновления пароля на Keenetic вернитесь в мастер и подтвердите шаг.",
-)
-ADD_ROUTER_SAVE_HINT_LINES = (
-    "Проверьте введенные данные и подтвердите сохранение маршрутизатора.",
-)
-BASE_ROUTE_INTERFACE_HINT_LINES = (
-    "Укажите маршрут, который будет использоваться по умолчанию для выбранных списков.",
-)
-GOOGLE_AI_OVERRIDE_HINT_LINES = (
-    "Для корректной работы AI сервисов от Google можно указать другой отдельный интерфейс.",
-)
-
-
-@dataclass(frozen=True)
-class RouteTargetDraft:
-    route_target_type: Literal["interface", "gateway"]
-    route_target_value: str
-    route_interface: str | None = None
-
-    def summary(self) -> str:
-        if self.route_target_type == "interface":
-            return f"interface:{self.route_target_value}"
-        if self.route_interface:
-            return f"gateway:{self.route_target_value} via {self.route_interface}"
-        return f"gateway:{self.route_target_value}"
-
-
-@dataclass(frozen=True)
-class MappingPlan:
-    default_target: RouteTargetDraft
-    google_ai_target: RouteTargetDraft | None = None
-
-    def target_for_service(self, service_key: str) -> RouteTargetDraft:
-        if service_key == "google_ai" and self.google_ai_target is not None:
-            return self.google_ai_target
-        return self.default_target
 
 
 @dataclass(frozen=True)
@@ -318,11 +185,15 @@ class PanelController:
             last_run = last_runs.get(router.id)
             router_table.add_row(
                 router.id,
-                _router_state_label(router.enabled),
+                panel_formatting._router_state_label(router.enabled),
                 str(router.rci_url),
-                _format_dashboard_last_run_at(last_run.finished_at) if last_run else "[dim]-[/dim]",
                 (
-                    _format_dashboard_router_run_status(last_run.status)
+                    panel_formatting._format_dashboard_last_run_at(last_run.finished_at)
+                    if last_run
+                    else "[dim]-[/dim]"
+                ),
+                (
+                    panel_formatting._format_dashboard_router_run_status(last_run.status)
                     if last_run
                     else "[dim]-[/dim]"
                 ),
@@ -338,7 +209,7 @@ class PanelController:
         )
         self._console.print(
             Panel(
-                _schedule_summary_table(config.runtime.schedule),
+                panel_schedule._schedule_summary_table(config.runtime.schedule),
                 title="Расписание",
                 border_style="bright_black",
             )
@@ -421,7 +292,7 @@ class PanelController:
         if router is None:
             return
 
-        editable_mappings, preserved_mappings = _partition_router_mappings(
+        editable_mappings, preserved_mappings = panel_router_support.partition_router_mappings(
             config=config,
             router_id=router.id,
         )
@@ -464,12 +335,12 @@ class PanelController:
             rows=[
                 ("Операция", "обновить списки и маршруты"),
                 ("Маршрутизатор", router.id),
-                ("Добавить", _format_service_list(added_services) or "нет"),
-                ("Удалить", _format_service_list(removed_services) or "нет"),
-                ("Оставить", _format_service_list(kept_services) or "нет"),
+                ("Добавить", panel_formatting._format_service_list(added_services) or "нет"),
+                ("Удалить", panel_formatting._format_service_list(removed_services) or "нет"),
+                ("Оставить", panel_formatting._format_service_list(kept_services) or "нет"),
                 (
                     "Сервисы после сохранения",
-                    _format_service_list(sorted(selected_services)) or "нет",
+                    panel_formatting._format_service_list(sorted(selected_services)) or "нет",
                 ),
                 (
                     "Базовый target",
@@ -552,12 +423,14 @@ class PanelController:
         self._run_sync_for_routers(router_ids=tuple(selected_router_ids))
 
     def _select_manual_run_router_ids(self, *, config: AppConfig) -> list[str] | None:
-        router_id_width, router_name_width = _router_selection_column_widths(config.routers)
+        router_id_width, router_name_width = panel_formatting._router_selection_column_widths(
+            config.routers
+        )
         return self._prompts.checkbox(
             message="Ручной запуск",
             choices=[
                 PromptChoice(
-                    title=_router_selection_title(
+                    title=panel_formatting._router_selection_title(
                         router=router,
                         router_id_width=router_id_width,
                         router_name_width=router_name_width,
@@ -573,11 +446,11 @@ class PanelController:
             ),
             hint_lines=MANUAL_RUN_HINT_LINES,
             table_meta=CheckboxTableMeta(
-                header=_router_selection_header(
+                header=panel_formatting._router_selection_header(
                     router_id_width=router_id_width,
                     router_name_width=router_name_width,
                 ),
-                summary=lambda selected_values: _manual_run_selection_summary(
+                summary=lambda selected_values: panel_formatting._manual_run_selection_summary(
                     selected_values=selected_values,
                 ),
             ),
@@ -648,7 +521,11 @@ class PanelController:
             hint_lines=hint_lines,
         )
 
-    def _load_service_entry_counts(self, *, config: AppConfig) -> dict[str, ServiceEntryCounts]:
+    def _load_service_entry_counts(
+        self,
+        *,
+        config: AppConfig,
+    ) -> dict[str, panel_formatting.ServiceEntryCounts]:
         return self._router_flow.load_service_entry_counts(config=config)
 
     def _prompt_mapping_plan(
@@ -661,7 +538,7 @@ class PanelController:
         missing_secret_message: str | None = None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
-    ) -> MappingPlan | None:
+    ) -> panel_router_support.MappingPlan | None:
         return self._router_flow.prompt_mapping_plan(
             config=config,
             router=router,
@@ -678,11 +555,11 @@ class PanelController:
         config: AppConfig,
         router: RouterConfig,
         label: str,
-        default_target: RouteTargetDraft,
+        default_target: panel_router_support.RouteTargetDraft,
         missing_secret_message: str | None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
-    ) -> RouteTargetDraft | None:
+    ) -> panel_router_support.RouteTargetDraft | None:
         return self._router_flow.prompt_route_target(
             config=config,
             router=router,
@@ -703,7 +580,7 @@ class PanelController:
         missing_secret_message: str | None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
-    ) -> RouteTargetDraft | None:
+    ) -> panel_router_support.RouteTargetDraft | None:
         return self._router_flow.prompt_interface_target(
             config=config,
             router=router,
@@ -718,9 +595,9 @@ class PanelController:
         self,
         *,
         label: str,
-        default_target: RouteTargetDraft,
+        default_target: panel_router_support.RouteTargetDraft,
         hint_lines: tuple[str, ...] | None = None,
-    ) -> RouteTargetDraft | None:
+    ) -> panel_router_support.RouteTargetDraft | None:
         return self._router_flow.prompt_gateway_target(
             label=label,
             default_target=default_target,
@@ -733,7 +610,7 @@ class PanelController:
         router_id: str,
         selected_services: set[str],
         existing_mappings: dict[str, RouterServiceMappingConfig],
-        mapping_plan: MappingPlan | None,
+        mapping_plan: panel_router_support.MappingPlan | None,
     ) -> list[dict[str, Any]]:
         return self._router_flow.build_router_mappings(
             router_id=router_id,
@@ -881,7 +758,7 @@ class PanelController:
         for candidate in candidates:
             table.add_row(
                 candidate.display_name or candidate.value,
-                _format_connected(candidate.connected),
+                panel_formatting._format_connected(candidate.connected),
                 candidate.status or "[dim]-[/dim]",
                 candidate.detail or "[dim]-[/dim]",
             )
@@ -907,7 +784,7 @@ class PanelController:
         self._console.print(
             Text.assemble(
                 ("WireGuard discovery не прошёл: ", "yellow"),
-                (_truncate_discovery_error_message(message), "red"),
+                (panel_formatting._truncate_discovery_error_message(message), "red"),
             )
         )
 
@@ -989,7 +866,7 @@ class PanelController:
 
     def _log_cat_command(self, path: Path | str) -> str:
         candidate = self._host_accessible_runtime_path(path)
-        return f"cat {_shell_quote_path(candidate)}"
+        return f"cat {panel_formatting._shell_quote_path(candidate)}"
 
     def _host_accessible_runtime_path(self, path: Path | str) -> Path:
         candidate = Path(path)
@@ -1004,7 +881,7 @@ class PanelController:
 
 
 def _config_for_router(*, config: AppConfig, router_id: str) -> AppConfig:
-    router = _find_router(config=config, router_id=router_id)
+    router = panel_formatting._find_router(config=config, router_id=router_id)
     if router is None:
         raise RuntimeError(f"Router '{router_id}' does not exist")
     return config.model_copy(
@@ -1030,216 +907,3 @@ def _config_for_routers(*, config: AppConfig, router_ids: tuple[str, ...]) -> Ap
             ],
         }
     )
-
-
-def _partition_router_mappings(
-    *,
-    config: AppConfig,
-    router_id: str,
-) -> tuple[list[RouterServiceMappingConfig], list[RouterServiceMappingConfig]]:
-    enabled_services = {service.key for service in config.services if service.enabled}
-    editable: list[RouterServiceMappingConfig] = []
-    preserved: list[RouterServiceMappingConfig] = []
-    for mapping in config.mappings:
-        if mapping.router_id != router_id:
-            continue
-        if mapping.managed and mapping.service_key in enabled_services:
-            editable.append(mapping)
-        else:
-            preserved.append(mapping)
-    return editable, preserved
-
-
-def _derive_mapping_plan_defaults(
-    *,
-    editable_mappings: list[RouterServiceMappingConfig],
-) -> tuple[RouteTargetDraft, bool, RouteTargetDraft | None]:
-    default_targets = [
-        _mapping_route_target(mapping)
-        for mapping in sorted(editable_mappings, key=lambda item: item.service_key)
-        if mapping.service_key != "google_ai"
-    ]
-    unique_default_targets = {
-        (
-            target.route_target_type,
-            target.route_target_value,
-            target.route_interface,
-        )
-        for target in default_targets
-    }
-    has_inconsistent_default = len(unique_default_targets) > 1
-
-    if default_targets:
-        default_target = default_targets[0]
-    else:
-        google_ai_mapping = next(
-            (mapping for mapping in editable_mappings if mapping.service_key == "google_ai"),
-            None,
-        )
-        if google_ai_mapping is None:
-            default_target = RouteTargetDraft("interface", DEFAULT_INTERFACE_NAME, None)
-        else:
-            default_target = _mapping_route_target(google_ai_mapping)
-
-    google_ai_override = None
-    google_ai_mapping = next(
-        (mapping for mapping in editable_mappings if mapping.service_key == "google_ai"),
-        None,
-    )
-    if google_ai_mapping is not None:
-        candidate_target = _mapping_route_target(google_ai_mapping)
-        if candidate_target != default_target:
-            google_ai_override = candidate_target
-
-    return default_target, has_inconsistent_default, google_ai_override
-
-
-def _mapping_route_target(mapping: RouterServiceMappingConfig) -> RouteTargetDraft:
-    return RouteTargetDraft(
-        route_target_type=mapping.route_target_type,
-        route_target_value=mapping.route_target_value,
-        route_interface=mapping.route_interface,
-    )
-
-
-def _default_interface_target_value(default_target: RouteTargetDraft) -> str:
-    if default_target.route_target_type == "interface":
-        return default_target.route_target_value
-    if default_target.route_interface:
-        return default_target.route_interface
-    return DEFAULT_INTERFACE_NAME
-
-
-def _derive_router_id(*, name: str, config: AppConfig) -> str:
-    base_slug = _slugify_router_name(name)
-    if _router_id_is_available(config=config, router_id=base_slug):
-        return base_slug
-
-    suffix = 2
-    while True:
-        candidate = f"{base_slug}-{suffix}"
-        if _router_id_is_available(config=config, router_id=candidate):
-            return candidate
-        suffix += 1
-
-
-def _slugify_router_name(name: str) -> str:
-    transliterated_name = "".join(
-        _CYRILLIC_TO_ASCII.get(character, character) for character in name
-    )
-    normalized_name = unicodedata.normalize("NFKD", transliterated_name)
-    ascii_name = normalized_name.encode("ascii", "ignore").decode("ascii")
-    lowered_name = ascii_name.lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", lowered_name).strip("-")
-    if not slug:
-        return "router"
-    return slug
-
-
-def _router_id_is_available(*, config: AppConfig, router_id: str) -> bool:
-    existing_ids = {router.id for router in config.routers}
-    if router_id in existing_ids:
-        return False
-
-    candidate_password_env = password_env_key_for_router_id(router_id)
-    for router in config.routers:
-        existing_password_env = _router_password_env_reference(router)
-        if existing_password_env == candidate_password_env:
-            return False
-    return True
-
-
-def _ensure_password_env_available(
-    *,
-    config: AppConfig,
-    router_id: str,
-    password_env: str,
-) -> None:
-    for router in config.routers:
-        existing_password_env = _router_password_env_reference(router)
-        if router.id != router_id and existing_password_env == password_env:
-            raise RuntimeError(
-                f"Password env '{password_env}' уже используется роутером '{router.id}'"
-            )
-
-
-def _router_password_env_reference(router: RouterConfig) -> str | None:
-    if router.password_env is not None:
-        return router.password_env
-    if router.password_file is not None:
-        return password_env_key_for_router_id(router.id)
-    return None
-
-
-_CYRILLIC_TO_ASCII = {
-    "А": "A",
-    "а": "a",
-    "Б": "B",
-    "б": "b",
-    "В": "V",
-    "в": "v",
-    "Г": "G",
-    "г": "g",
-    "Д": "D",
-    "д": "d",
-    "Е": "E",
-    "е": "e",
-    "Ё": "E",
-    "ё": "e",
-    "Ж": "Zh",
-    "ж": "zh",
-    "З": "Z",
-    "з": "z",
-    "И": "I",
-    "и": "i",
-    "Й": "I",
-    "й": "i",
-    "К": "K",
-    "к": "k",
-    "Л": "L",
-    "л": "l",
-    "М": "M",
-    "м": "m",
-    "Н": "N",
-    "н": "n",
-    "О": "O",
-    "о": "o",
-    "П": "P",
-    "п": "p",
-    "Р": "R",
-    "р": "r",
-    "С": "S",
-    "с": "s",
-    "Т": "T",
-    "т": "t",
-    "У": "U",
-    "у": "u",
-    "Ф": "F",
-    "ф": "f",
-    "Х": "Kh",
-    "х": "kh",
-    "Ц": "Ts",
-    "ц": "ts",
-    "Ч": "Ch",
-    "ч": "ch",
-    "Ш": "Sh",
-    "ш": "sh",
-    "Щ": "Shch",
-    "щ": "shch",
-    "Ъ": "",
-    "ъ": "",
-    "Ы": "Y",
-    "ы": "y",
-    "Ь": "",
-    "ь": "",
-    "Э": "E",
-    "э": "e",
-    "Ю": "Yu",
-    "ю": "yu",
-    "Я": "Ya",
-    "я": "ya",
-}
-
-
-def _is_missing_password_env_error(message: str) -> bool:
-    return "password env" in message and "is not set" in message
