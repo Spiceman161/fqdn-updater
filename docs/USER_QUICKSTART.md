@@ -1,6 +1,6 @@
 # Быстрый старт оператора
 
-Эта инструкция описывает happy-path для первого рабочего запуска FQDN-updater на Ubuntu 22.04 и новее.
+Happy path для первого рабочего запуска FQDN-updater на Ubuntu 22.04+.
 
 ## 1. Установите проект
 
@@ -10,13 +10,11 @@ curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/insta
 
 Проект будет установлен в `/opt/fqdn-updater`. Installer сохранит существующие `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, если они уже есть.
 
-Для обновления после первой установки используйте:
+Для обновления после первой установки:
 
 ```bash
 fqdn-updater update
 ```
-
-Обновление использует тот же installer и оставляет пользовательские настройки на месте.
 
 ## 2. Откройте панель
 
@@ -38,8 +36,8 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 В Keenetic создайте web application для RCI:
 
 - имя публикации: `rci`;
-- протокол в Keenetic web UI: `HTTP`;
-- локальный порт: `79`;
+- protocol в Keenetic web UI: `HTTP`;
+- локальный TCP port: `79`;
 - доступ: авторизованный;
 - пользователь: отдельный low-privilege пользователь, например `api_updater`.
 
@@ -51,21 +49,22 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 
 Панель:
 
-- предложит имя роутера;
-- сгенерирует стойкий пароль для RCI-пользователя;
+- предложит имя роутера и `api_updater`;
+- сгенерирует пароль для RCI-пользователя;
 - покажет, куда вставить пароль в Keenetic;
 - сохранит пароль в `.env.secrets` рядом с конфигом;
-- сохранит в `config.json` только имя env-переменной, а не сам пароль.
+- сохранит в `config.json` только имя env-переменной.
 
 ## 5. Выберите списки и маршрут
 
-Выберите сервисные списки, которые нужно вести на этом роутере. Для каждого выбранного сервиса FQDN-updater создаёт managed object-group и route binding.
+Выберите сервисные списки, которые нужно вести на этом роутере. Для каждого выбранного сервиса FQDN-updater создаёт managed mapping.
 
-Панель показывает счётчики доменов, IPv4 и IPv6, а также лимиты Keenetic:
+Domain entries попадут в FQDN object-groups и DNS-proxy route bindings. CIDR entries попадут в managed static routes с comment prefix `fqdn-updater:<service>`.
+
+Панель показывает счётчики доменов, IPv4 и IPv6, а также FQDN-лимиты Keenetic:
 
 - до 300 FQDN-записей в одном object-group;
-- до 1024 managed FQDN-записей суммарно на роутер;
-- около 4000 subnet-записей суммарно на роутер для IPv4+IPv6.
+- до 1024 managed FQDN-записей суммарно на роутер.
 
 Для обычного сценария выберите WireGuard-интерфейс из discovery. Для `google_ai` можно задать отдельный route target override.
 
@@ -85,7 +84,7 @@ fqdn-updater dry-run --config /opt/fqdn-updater/config.json
 fqdn-updater sync --config /opt/fqdn-updater/config.json
 ```
 
-`sync` меняет только managed object-group и route binding из конфига. Перед записью он читает текущее состояние, строит diff и применяет минимальные изменения.
+`sync` меняет только managed object-groups, DNS route bindings и static routes из конфига. Перед записью он читает текущее состояние, строит diff и применяет минимальные изменения.
 
 ## 8. Включите расписание
 

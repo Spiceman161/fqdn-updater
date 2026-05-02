@@ -1,12 +1,12 @@
 # FQDN-updater Architecture
 
-**Date:** 2026-04-25  
-**Status:** Design document  
-**Related:** [PRD.md](PRD.md)
+**Date:** 2026-05-02
+**Status:** Current architecture document
+**Related:** [PRD.md](PRD.md), [docs/LLM_CONTEXT.md](docs/LLM_CONTEXT.md)
 
 ## 1. Назначение
 
-FQDN-updater — Python-first CLI batch tool для синхронизации managed FQDN object-group и route binding на Keenetic-роутерах. Целевой transport один: KeenDNS RCI API по HTTPS с HTTP Digest Auth.
+FQDN-updater — Python-first CLI batch tool для синхронизации managed FQDN object-groups, DNS-proxy route bindings и CIDR static routes на Keenetic-роутерах. Целевой transport один: KeenDNS RCI API по HTTPS с HTTP Digest Auth.
 
 SSH не является production transport, fallback или скрытым режимом. Любое добавление другого transport требует отдельного изменения PRD/architecture.
 
@@ -14,10 +14,10 @@ SSH не является production transport, fallback или скрытым �
 
 - **Single-purpose job:** запуск как one-shot command, без daemon.
 - **CLI-first:** все функции доступны из CLI, панель остаётся CLI layer.
-- **Managed-only:** меняются только object-group и route binding из managed mappings.
+- **Managed-only:** меняются только object-groups, DNS route bindings и static routes из managed mappings.
 - **Read-before-write:** любой apply сначала читает router state и строит diff.
 - **RCI boundary:** HTTP Digest Auth, RCI payloads, retries и save-config живут только в infrastructure client.
-- **Failure isolation:** ошибка одного роутера не останавливает остальные.
+- **Failure isolation:** ошибка одного роутера или сервиса не останавливает остальные, где это безопасно.
 - **Artifacts:** каждый run оставляет JSON artifact и лог.
 
 ## 3. Runtime context
@@ -27,7 +27,7 @@ systemd timer
   -> docker compose run --rm fqdn-updater sync
   -> load config and secrets
   -> fetch upstream raw lists
-  -> normalize sources
+  -> normalize domain/CIDR sources
   -> read Keenetic state through RCI
   -> compute deterministic diff
   -> apply managed changes when mode=sync
@@ -47,7 +47,7 @@ src/fqdn_updater/
 ### CLI
 
 - Typer commands.
-- Rich terminal panel.
+- Rich/questionary terminal panel.
 - Human/JSON output formatting.
 - Exit code wiring.
 
@@ -56,24 +56,27 @@ src/fqdn_updater/
 - Use-case orchestration.
 - Dry-run and sync run flows.
 - Config management service.
+- Source loading service.
 - Route target discovery.
 - Status diagnostics.
+- Run history.
 
 ### Domain
 
 - Typed config models.
-- Object-group and route binding diff.
+- Object-group, route binding and static route diff.
 - Source normalization contracts.
 - Keenetic limits and sharding policy.
 - Run artifact models.
 
 ### Infrastructure
 
-- Keenetic RCI client.
+- Keenetic RCI client, commands, parsers and transport errors.
 - Raw source fetcher.
 - Config persistence.
-- Secret resolving.
+- Secret resolving and `.env.secrets` handling.
 - Run artifacts/logs.
+- Service count cache.
 - systemd installer.
 
 ## 5. Transport boundary
@@ -93,15 +96,17 @@ The infrastructure RCI client owns those details and returns typed domain/applic
 ```text
 CLI dry-run/sync
   -> validate config
+  -> resolve runtime paths relative to config.json
   -> load secret env file
   -> acquire run lock
   -> load enabled service sources
+  -> update service count cache
   -> for each enabled router:
        -> resolve secret
        -> create RCI client
+       -> read object-groups, DNS routes, static routes and DNS proxy state
        -> for each managed mapping:
-            -> read object-group and route state
-            -> compute object-group and route diffs
+            -> compute object-group, route binding and static route diffs
             -> if dry-run: record only
             -> if sync: apply minimal changes
        -> if sync changed router: save Keenetic config
@@ -109,9 +114,18 @@ CLI dry-run/sync
   -> return stable exit code
 ```
 
-## 7. Managed object-groups
+## 7. Sources
 
-The planner builds desired entries from normalized sources and config mappings. It must:
+Services use either:
+
+- `sources`: list of typed source objects;
+- legacy `source_urls` + `format`.
+
+Source formats are `raw_domain_list`, `raw_cidr_list` and `mixed`. Domain suffix filters apply only to domain sources. A failure in one source marks the service failed and prevents unsafe deletion from incomplete desired state.
+
+## 8. Managed FQDN object-groups
+
+The planner builds desired domain entries from normalized sources and config mappings. It must:
 
 - preserve deterministic ordering;
 - reject plans above total Keenetic FQDN limits before write;
@@ -119,7 +133,7 @@ The planner builds desired entries from normalized sources and config mappings. 
 - remove stale managed shard routes when a list shrinks;
 - never mutate groups not represented by managed mappings.
 
-## 8. Route bindings
+## 9. Route bindings and static routes
 
 Route bindings are managed per mapping:
 
@@ -128,7 +142,9 @@ Route bindings are managed per mapping:
 - `auto` and `exclusive` are explicit mapping flags.
 - Existing unrelated routes are ignored.
 
-## 9. Secrets
+CIDR entries are not placed into FQDN object-groups. They become managed static routes with comment prefix `fqdn-updater:<service>`. Static-route cleanup is scoped to that managed comment prefix.
+
+## 10. Secrets
 
 Secrets do not live in `config.json` as plaintext. Supported references:
 
@@ -137,11 +153,11 @@ Secrets do not live in `config.json` as plaintext. Supported references:
 
 The panel writes generated passwords to `.env.secrets` and stores only the env key in config. Logs and artifacts must redact secrets.
 
-## 10. Scheduling
+## 11. Scheduling
 
 The app remains a batch tool. `runtime.schedule` stores operator intent. `schedule install` renders host-level systemd service/timer that runs Docker Compose once per trigger.
 
-## 11. Error handling
+## 12. Error handling
 
 - Config validation failure is fatal for the run.
 - Source failure marks affected services failed and continues where safe.
@@ -153,23 +169,24 @@ Exit code groups:
 
 - `0` success without changes;
 - `10` sync success with changes;
-- `20` partial/failed router or service;
+- `20` partial/failed router or service, or unhealthy status;
 - `30` dry-run found changes;
 - `40` invalid config/fatal startup;
 - `50` lock/concurrency issue.
 
-## 12. Public files
+## 13. Public files
 
-Public repository contents include product code, tests, examples, docs, license, and CI. Runtime files, local configs, secrets, AI workflow state and reference artifacts are ignored.
+Public repository contents include product code, tests, examples, docs, license, CI and packaging assets. Runtime files, local configs, secrets, AI workflow state and reference artifacts are ignored.
 
-## 13. Testing
+## 14. Testing
 
 Tests mirror `src/` structure:
 
-- domain tests for config, diff, sharding and source normalization;
-- application tests for dry-run/sync orchestration and config workflows;
-- infrastructure tests for RCI parsing/apply behavior, repositories, scheduler and secrets;
-- CLI/panel tests for user-facing flows.
+- domain tests for config, diff, sharding, source normalization, schedule and run artifacts;
+- application tests for dry-run/sync orchestration, source loading and config workflows;
+- infrastructure tests for RCI parsing/apply behavior, repositories, scheduler, secrets and cache;
+- CLI/panel tests for user-facing flows;
+- packaging tests for install/runtime/docs contracts.
 
 Final local gate is always:
 
@@ -177,7 +194,7 @@ Final local gate is always:
 ./scripts/verify.sh
 ```
 
-## 14. Extension path
+## 15. Extension path
 
 Allowed future extensions must preserve RCI-only production behavior unless PRD changes:
 

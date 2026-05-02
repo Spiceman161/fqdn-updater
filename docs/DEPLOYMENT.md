@@ -6,7 +6,9 @@
 curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash
 ```
 
-По умолчанию используется `/opt/fqdn-updater`. Host-команда `fqdn-updater` открывает панель без аргументов, а `sync`, `dry-run` и `status` запускает через Docker Compose.
+По умолчанию используется `/opt/fqdn-updater`. Installer требует systemd, ставит Docker Engine/Compose plugin при необходимости, создаёт Python venv, собирает Docker image и устанавливает host wrapper `/usr/local/bin/fqdn-updater` плюс alias `domaingo`.
+
+Wrapper без аргументов открывает панель. `sync`, `dry-run` и `status` запускаются через Docker Compose, чтобы scheduled runtime совпадал с ручным runtime.
 
 ## Обновление
 
@@ -16,13 +18,9 @@ curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/insta
 fqdn-updater update
 ```
 
-Команда запускает тот же installer, что и первичная установка. Installer скачивает актуальный release, заменяет код в `/opt/fqdn-updater`, пересобирает Docker image и переустанавливает systemd units. Перед заменой он сохраняет пользовательские `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, затем возвращает их обратно.
+Команда запускает тот же installer, что и первичная установка. Installer скачивает latest GitHub Release, а если release недоступен — текущий `main`, заменяет код в `/opt/fqdn-updater`, пересобирает Docker image и переустанавливает systemd units.
 
-Можно повторно выполнить и прямую команду установки:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash
-```
+Перед заменой он сохраняет пользовательские `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, затем возвращает их обратно.
 
 Для конкретного release tag:
 
@@ -34,22 +32,41 @@ fqdn-updater update --version v0.1.0
 
 Рабочие файлы:
 
-- `config.json` монтируется в контейнер как `/work/config.json` только для чтения;
-- `.env` передаёт Docker env-переменные, а `.env.secrets` монтируется как `/work/.env.secrets` и читается приложением;
-- `secrets/` монтируется как `/run/secrets/fqdn-updater`;
+- `config.json` монтируется в контейнер как `/work/config.json` read-only;
+- `.env` передаёт Docker env-переменные;
+- `.env.secrets` монтируется как `/work/.env.secrets` read-only и читается приложением;
+- `secrets/` монтируется как `/run/secrets/fqdn-updater` read-only;
 - `data/` монтируется как writable volume для artifacts, logs и state.
+
+`compose.yaml` использует `create_host_path: false` для `config.json` и `.env.secrets`, чтобы Docker не создал директорию вместо отсутствующего файла.
+
+Примеры:
 
 ```bash
 docker compose build fqdn-updater
+docker compose run --rm fqdn-updater status --config /work/config.json
 docker compose run --rm fqdn-updater dry-run --config /work/config.json
 docker compose run --rm fqdn-updater sync --config /work/config.json
 ```
 
 ## systemd
 
+Настройка расписания:
+
 ```bash
 fqdn-updater schedule set-daily --config /opt/fqdn-updater/config.json --time 03:15 --timezone Europe/Moscow
 sudo fqdn-updater schedule install --config /opt/fqdn-updater/config.json
+```
+
+`schedule install` рендерит:
+
+- `/etc/systemd/system/fqdn-updater.service`;
+- `/etc/systemd/system/fqdn-updater.timer`.
+
+Service запускает:
+
+```text
+/usr/bin/docker compose run --rm fqdn-updater sync --trigger scheduled --config /work/config.json
 ```
 
 Проверка:
@@ -58,3 +75,21 @@ sudo fqdn-updater schedule install --config /opt/fqdn-updater/config.json
 systemctl status fqdn-updater.timer --no-pager
 journalctl -u fqdn-updater.service -n 100 --no-pager
 ```
+
+Отключение расписания:
+
+```bash
+fqdn-updater schedule disable --config /opt/fqdn-updater/config.json
+sudo fqdn-updater schedule install --config /opt/fqdn-updater/config.json
+```
+
+## Локальная разработка
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .[dev]
+./scripts/verify.sh
+```
+
+Production installer использует host Python venv для management-команд и Docker image для runtime-команд.

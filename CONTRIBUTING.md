@@ -1,7 +1,6 @@
 # Contributing
 
-Thanks for improving FQDN-updater. Keep changes small, auditable, and aligned with the product
-scope in `PRD.md` and `ARCHITECTURE.md`.
+Thanks for improving FQDN-updater. Keep changes small, auditable, and aligned with the product scope in `PRD.md` and `ARCHITECTURE.md`.
 
 ## Development Setup
 
@@ -27,12 +26,20 @@ This is the same gate used by CI.
 - Preserve the `cli`, `application`, `domain`, and `infrastructure` boundaries.
 - Keep RCI/HTTP details inside infrastructure adapters.
 - Preserve managed-only and read-before-write behavior for every apply path.
-- Do not introduce a web UI, daemon, SSH transport, notifications, or non-Keenetic support unless
-  the roadmap explicitly calls for it.
+- Keep `status`, `dry-run`, panel checks and run history read-only.
+- Do not introduce a web UI, daemon, SSH transport, notifications, or non-Keenetic support unless the roadmap and PRD explicitly call for it.
+
+## Documentation Rules
+
+- Update docs when operator workflow, config schema, CLI output, runtime files, scheduling or architecture changes.
+- Russian docs are canonical for detailed guides.
+- Keep `README_EN.md` as a synchronized English overview when README-level behavior changes.
+- Update `docs/LLM_CONTEXT.md` when architecture, scope, runtime or key contracts change.
+- Do not document local secrets, production configs, `.codex/`, `.agents/`, `data/` contents or private artifacts.
 
 ## Pull Requests
 
 - Use focused commits with Conventional Commit messages.
 - Include tests for behavior changes.
-- Update docs when the operator workflow changes.
-- Never commit real `config.json`, `.env*`, `secrets/`, or runtime `data/`.
+- Update packaging/docs tests when documentation contracts change.
+- Never commit real `config.json`, `.env*`, `secrets/`, runtime `data/`, or local AI/editor state.

@@ -19,6 +19,8 @@ def test_packaging_assets_exist() -> None:
         "compose.yaml",
         "CONTRIBUTING.md",
         "SECURITY.md",
+        "docs/README.md",
+        "docs/LLM_CONTEXT.md",
         ".github/dependabot.yml",
         ".github/pull_request_template.md",
         ".github/ISSUE_TEMPLATE/bug_report.yml",
@@ -75,6 +77,8 @@ def test_systemd_examples_are_one_shot_and_scheduled() -> None:
 def test_operator_docs_cover_docker_compose_systemd_and_runtime_paths() -> None:
     quickstart = _read("docs/USER_QUICKSTART.md")
     readme = _read("README.md")
+    docs_index = _read("docs/README.md")
+    llm_context = _read("docs/LLM_CONTEXT.md")
 
     for text in [
         "Docker Compose runtime",
@@ -85,16 +89,43 @@ def test_operator_docs_cover_docker_compose_systemd_and_runtime_paths() -> None:
         "artifacts",
         "logs",
         "schedule install",
+        "static routes",
+        "fqdn-updater:<service>",
     ]:
         assert text in quickstart, text
 
     assert "Docker Compose runtime" in readme
     assert "systemd timer" in readme
+    assert "docs/README.md" in readme
+    assert "docs/LLM_CONTEXT.md" in readme
     assert "schedule install" in readme
     assert (
         "curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh"
         in readme
     )
+
+    for text in [
+        "Быстрый старт оператора",
+        "Конфигурация",
+        "CLI reference",
+        "LLM_CONTEXT.md",
+        "REFACTORING_PLAN.md",
+        "Исторический",
+    ]:
+        assert text in docs_index, text
+
+    for text in [
+        "Production transport только один",
+        "cli/",
+        "application/",
+        "domain/",
+        "infrastructure/",
+        "raw_domain_list",
+        "raw_cidr_list",
+        "fqdn-updater:<service>",
+        "./scripts/verify.sh",
+    ]:
+        assert text in llm_context, text
 
 
 def test_install_script_exists_and_passes_bash_syntax_check() -> None:

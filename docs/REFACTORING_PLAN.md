@@ -1,8 +1,10 @@
 # Refactoring Plan
 
 **Date:** 2026-05-01
-**Status:** Completed; post-review cleanup passed
+**Status:** Historical/completed; post-review cleanup passed
 **Scope:** Maintainability refactoring without feature changes.
+
+This document is kept as historical context for the refactoring that split the panel, run pipeline, RCI protocol and transport internals. It is not the current backlog or implementation guide. Use [docs/README.md](README.md), [docs/LLM_CONTEXT.md](LLM_CONTEXT.md), [ARCHITECTURE.md](../ARCHITECTURE.md) and [PRD.md](../PRD.md) for current project contracts.
 
 ## Goal
 
