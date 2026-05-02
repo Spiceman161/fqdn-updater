@@ -115,7 +115,7 @@ def test_runs_menu_shows_history_and_back_does_not_trigger_status_or_dry_run(tmp
     assert prompts.history_select_calls[0]["message"] == "Журнал"
     assert prompts.history_select_calls[0]["choices"] == ["run:0"]
     assert prompts.history_select_calls[0]["choice_titles"] == [
-        "dry_run   manual     success  08.04.2026 13:01:00  Main router  изменено=1 ошибок=1",
+        "dry_run   manual     ✓ success  08.04.2026 13:01:00  Main router  изменено=1 ошибок=1",
     ]
     assert prompts.history_select_calls[0]["page_label"] == "Страница 1 из 1"
     assert prompts.history_select_calls[0]["has_previous_page"] is False
@@ -179,11 +179,11 @@ def test_runs_menu_opens_selected_run_details_with_log_hint(tmp_path) -> None:
     ]
     assert prompts.history_select_calls[0]["message"] == "Журнал"
     assert prompts.history_select_calls[0]["choice_titles"] == [
-        "dry_run   manual     partial  08.04.2026 13:01:00  Main router  изменено=1 ошибок=1",
+        "dry_run   manual     ⚠ partial  08.04.2026 13:01:00  Main router  изменено=1 ошибок=1",
     ]
     assert "run-001.json" not in prompts.history_select_calls[0]["choice_titles"][0]
     assert prompts.select_calls[0]["message"] == "Запись журнала"
-    assert prompts.select_calls[0]["choice_titles"] == ["Назад к журналу"]
+    assert prompts.select_calls[0]["choice_titles"] == ["↩ Назад к журналу"]
     output = console.export_text()
     assert "Запись журнала run-001.json" in output
     assert "Файл записи" in output
@@ -397,10 +397,10 @@ def test_runs_menu_supports_pagination_with_next_and_previous_actions(tmp_path) 
     assert prompts.history_select_calls[0]["has_previous_page"] is False
     assert prompts.history_select_calls[0]["has_next_page"] is True
     assert prompts.history_select_calls[0]["choice_titles"][0] == (
-        "dry_run   manual     success  08.04.2026 13:15:00  Main router  изменено=0 ошибок=0"
+        "dry_run   manual     ✓ success  08.04.2026 13:15:00  Main router  изменено=0 ошибок=0"
     )
     assert prompts.history_select_calls[0]["choice_titles"][9] == (
-        "dry_run   manual     success  08.04.2026 13:24:00  Main router  изменено=0 ошибок=0"
+        "dry_run   manual     ✓ success  08.04.2026 13:24:00  Main router  изменено=0 ошибок=0"
     )
     assert prompts.history_select_calls[1]["choices"] == [*(f"run:{index}" for index in range(10))]
     assert prompts.history_select_calls[1]["page_label"] == "Страница 2 из 3"

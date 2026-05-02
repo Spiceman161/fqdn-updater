@@ -9,6 +9,7 @@ from rich.text import Text
 from fqdn_updater.application.dry_run_orchestration import DryRunExecutionResult
 from fqdn_updater.application.run_history import RecentRun, RunHistoryResult
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult
+from fqdn_updater.cli import panel_formatting
 from fqdn_updater.cli.panel_formatting import (
     _find_router,
     _format_dns_proxy,
@@ -18,6 +19,7 @@ from fqdn_updater.cli.panel_prompts import PromptChoice
 from fqdn_updater.domain.config_schema import AppConfig
 from fqdn_updater.domain.run_artifact import (
     FailureCategory,
+    RouterResultStatus,
     RouterRunResult,
     RunArtifact,
     RunStatus,
@@ -86,7 +88,7 @@ class PanelRunsFlow:
                 )
                 choice = self._prompts.select(
                     message="Журнал",
-                    choices=[PromptChoice("Главное меню", "back")],
+                    choices=[_runs_choice(panel_formatting.ICON_BACK, "Главное меню", "back")],
                     default="back",
                 )
                 if choice in {None, "back"}:
@@ -129,7 +131,9 @@ class PanelRunsFlow:
                     )
                     self._prompts.select(
                         message="Запись журнала",
-                        choices=[PromptChoice("Назад к журналу", "back")],
+                        choices=[
+                            _runs_choice(panel_formatting.ICON_BACK, "Назад к журналу", "back")
+                        ],
                         default="back",
                     )
                 continue
@@ -145,16 +149,19 @@ class PanelRunsFlow:
         self._console.clear()
         self._console.print(
             Panel(
-                "[bold]Журнал[/bold]",
+                f"[bold]{panel_formatting.ICON_HISTORY} Журнал[/bold]",
                 border_style="bright_cyan",
             )
         )
         self._console.print(
             Text(
-                _format_history_page_text(
-                    total_count=history.total_count,
-                    page_index=page_index,
-                    page_size=page_size,
+                panel_formatting._icon_label(
+                    panel_formatting.ICON_HISTORY,
+                    _format_history_page_text(
+                        total_count=history.total_count,
+                        page_index=page_index,
+                        page_size=page_size,
+                    ),
                 ),
                 style="bright_cyan",
             )
@@ -186,7 +193,7 @@ class PanelRunsFlow:
         self._console.print(
             Panel(
                 table,
-                title="Записи журнала",
+                title=panel_formatting._icon_label(panel_formatting.ICON_HISTORY, "Записи журнала"),
                 border_style="bright_black",
             )
         )
@@ -211,7 +218,9 @@ class PanelRunsFlow:
             self._console.print(
                 Panel(
                     warning_table,
-                    title="Пропущенные записи",
+                    title=panel_formatting._icon_label(
+                        panel_formatting.ICON_WARNING, "Пропущенные записи"
+                    ),
                     border_style="yellow",
                 )
             )
@@ -221,7 +230,7 @@ class PanelRunsFlow:
         self._console.clear()
         self._console.print(
             Panel(
-                f"[bold]Запись журнала[/bold] {run.path.name}",
+                f"[bold]{panel_formatting.ICON_HISTORY} Запись журнала[/bold] {run.path.name}",
                 border_style="bright_cyan",
             )
         )
@@ -241,7 +250,7 @@ class PanelRunsFlow:
         self._console.print(
             Panel(
                 summary,
-                title="Итог прогона",
+                title=panel_formatting._icon_label(panel_formatting.ICON_SUMMARY, "Итог прогона"),
                 border_style="cyan",
             )
         )
@@ -256,7 +265,7 @@ class PanelRunsFlow:
             router_name = router.name if router is not None else router_result.router_id
             router_table.add_row(
                 router_name,
-                router_result.status.value,
+                _format_router_run_status(router_result.status),
                 str(len(router_result.service_results)),
                 _format_router_result_summary(router_result),
             )
@@ -265,7 +274,7 @@ class PanelRunsFlow:
         self._console.print(
             Panel(
                 router_table,
-                title="Маршрутизаторы",
+                title=panel_formatting._icon_label(panel_formatting.ICON_ROUTER, "Маршрутизаторы"),
                 border_style="bright_black",
             )
         )
@@ -282,15 +291,15 @@ class PanelRunsFlow:
             self._console.print(
                 Panel(
                     error_table,
-                    title="Ошибки",
+                    title=panel_formatting._icon_label(panel_formatting.ICON_WARNING, "Ошибки"),
                     border_style="red",
                 )
             )
         else:
             self._console.print(
                 Panel(
-                    "[green]Ошибок в записи нет.[/green]",
-                    title="Ошибки",
+                    f"[green]{panel_formatting.ICON_OK} Ошибок в записи нет.[/green]",
+                    title=panel_formatting._icon_label(panel_formatting.ICON_OK, "Ошибки"),
                     border_style="green",
                 )
             )
@@ -301,7 +310,7 @@ class PanelRunsFlow:
                     "Чтобы посмотреть полный лог этой записи, откройте новое окно терминала "
                     f"и выполните: [bold]{self._log_cat_command(artifact.log_path)}[/bold]"
                 ),
-                title="Подсказка",
+                title=panel_formatting._icon_label(panel_formatting.ICON_HINT, "Подсказка"),
                 border_style="yellow",
             )
         )
@@ -315,14 +324,15 @@ class PanelRunsFlow:
         for router in result.router_results:
             table.add_row(
                 router.router_id,
-                router.status.value,
+                _format_diagnostic_status(router.status.value),
                 _format_dns_proxy(router.dns_proxy_enabled),
                 _format_router_diagnostic_error(router.error_message),
             )
         if not result.router_results:
             table.add_row("[dim]нет[/dim]", "-", "-", "-")
         title = (
-            f"Status diagnostics: overall={result.overall_status.value} "
+            f"{panel_formatting.ICON_SEARCH} Status diagnostics: "
+            f"overall={result.overall_status.value} "
             f"checked={result.checked_router_count}"
         )
         self._console.print(Panel(table, title=title, border_style="bright_cyan"))
@@ -330,7 +340,8 @@ class PanelRunsFlow:
     def render_dry_run_result(self, *, result: DryRunExecutionResult) -> None:
         artifact = result.artifact
         title = (
-            f"Dry-run: run_id={artifact.run_id} status={artifact.status.value} "
+            f"{panel_formatting.ICON_DRY_RUN} Dry-run: "
+            f"run_id={artifact.run_id} status={artifact.status.value} "
             f"artifact={result.artifact_path}"
         )
         self._console.print(
@@ -340,7 +351,8 @@ class PanelRunsFlow:
     def render_sync_result(self, *, result: SyncExecutionResult) -> None:
         artifact = result.artifact
         title = (
-            f"Sync: run_id={artifact.run_id} status={artifact.status.value} "
+            f"{panel_formatting.ICON_RUN} Sync: "
+            f"run_id={artifact.run_id} status={artifact.status.value} "
             f"artifact={result.artifact_path}"
         )
         self._console.print(
@@ -357,7 +369,7 @@ def _run_result_table(*, artifact: RunArtifact) -> Table:
     for router in artifact.router_results:
         table.add_row(
             router.router_id,
-            router.status.value,
+            _format_router_run_status(router.status),
             str(len(router.service_results)),
             _format_router_result_summary(router),
         )
@@ -368,10 +380,34 @@ def _run_result_table(*, artifact: RunArtifact) -> Table:
 
 def _format_run_status(status: RunStatus) -> str:
     if status is RunStatus.SUCCESS:
-        return "[green]success[/green]"
+        return f"[green]{panel_formatting.ICON_OK} success[/green]"
     if status is RunStatus.PARTIAL:
-        return "[yellow]partial[/yellow]"
-    return "[red]failed[/red]"
+        return f"[yellow]{panel_formatting.ICON_WARNING} partial[/yellow]"
+    return f"[red]{panel_formatting.ICON_ERROR} failed[/red]"
+
+
+def _format_router_run_status(status) -> str:
+    if status in {RouterResultStatus.UPDATED, RouterResultStatus.NO_CHANGES}:
+        return f"[green]{panel_formatting.ICON_OK} {status.value}[/green]"
+    if status is RouterResultStatus.PARTIAL:
+        return f"[yellow]{panel_formatting.ICON_WARNING} {status.value}[/yellow]"
+    return f"[red]{panel_formatting.ICON_ERROR} {status.value}[/red]"
+
+
+def _format_diagnostic_status(status: str) -> str:
+    if status == "healthy":
+        return f"[green]{panel_formatting.ICON_OK} {status}[/green]"
+    if status == "degraded":
+        return f"[yellow]{panel_formatting.ICON_WARNING} {status}[/yellow]"
+    return f"[red]{panel_formatting.ICON_ERROR} {status}[/red]"
+
+
+def _format_history_status_choice(status: RunStatus) -> str:
+    if status is RunStatus.SUCCESS:
+        return f"{panel_formatting.ICON_OK} {status.value}"
+    if status is RunStatus.PARTIAL:
+        return f"{panel_formatting.ICON_WARNING} {status.value}"
+    return f"{panel_formatting.ICON_ERROR} {status.value}"
 
 
 def _format_history_finished_at(value) -> str:
@@ -398,7 +434,7 @@ def _format_history_run_choice_title(*, config: AppConfig, run: RecentRun) -> st
     return (
         f"{artifact.mode.value:<8}  "
         f"{artifact.trigger.value:<9}  "
-        f"{artifact.status.value:<7}  "
+        f"{_format_history_status_choice(artifact.status):<9}  "
         f"{_format_history_finished_at(artifact.finished_at)}  "
         f"{_format_history_router_names(config=config, artifact=artifact)}  "
         f"{_format_artifact_summary(artifact)}"
@@ -491,3 +527,11 @@ def _format_failure_step(failure_detail) -> str:
     if failure_detail is None:
         return "-"
     return failure_detail.step.value
+
+
+def _runs_choice(icon: str, title: str, value: str) -> PromptChoice:
+    return PromptChoice(
+        title=panel_formatting._icon_label(icon, title),
+        value=value,
+        answer_title=title,
+    )

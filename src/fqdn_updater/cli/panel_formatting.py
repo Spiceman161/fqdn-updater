@@ -21,6 +21,32 @@ DISCOVERY_ERROR_MESSAGE_LIMIT = 280
 SERVICE_SELECTION_SERVICE_WIDTH = 22
 SERVICE_SELECTION_COUNT_WIDTH = 7
 KEENETIC_DOMAIN_SELECTION_LIMIT = 1024
+ICON_APP = "🌐"
+ICON_OPERATOR = "🛠"
+ICON_ROUTER = "📡"
+ICON_LISTS = "🧭"
+ICON_RUN = "🚀"
+ICON_DRY_RUN = "🧪"
+ICON_SCHEDULE = "⏱"
+ICON_HISTORY = "📜"
+ICON_CONFIG = "✅"
+ICON_ABOUT = "ℹ"
+ICON_EXIT = "🚪"
+ICON_ADD = "➕"
+ICON_EDIT = "✏"
+ICON_TOGGLE = "🔁"
+ICON_SEARCH = "🔎"
+ICON_SAVE = "💾"
+ICON_BACK = "↩"
+ICON_HINT = "💡"
+ICON_WARNING = "⚠"
+ICON_ERROR = "✖"
+ICON_OK = "✓"
+ICON_DISABLED = "○"
+ICON_SUMMARY = "🧾"
+ICON_PASSWORD = "🔐"
+ICON_ROUTE = "🧵"
+ICON_SYSTEMD = "⚙"
 SERVICE_SELECTION_GROUPS = {
     "block": (
         "block_p2p_streaming",
@@ -88,6 +114,10 @@ class ServiceEntryCounts:
     domains: int | None
     ipv4: int | None
     ipv6: int | None
+
+
+def _icon_label(icon: str, label: str) -> str:
+    return f"{icon} {label}"
 
 
 def _find_router(*, config: AppConfig, router_id: str) -> RouterConfig | None:
@@ -265,8 +295,8 @@ def _sum_entry_counts(values: Iterable[int | None]) -> int | None:
 
 def _router_state_label(enabled: bool) -> str:
     if enabled:
-        return "[bold green]включён[/bold green]"
-    return "[bold yellow]выключен[/bold yellow]"
+        return f"[bold green]{ICON_OK} включён[/bold green]"
+    return f"[bold yellow]{ICON_DISABLED} выключен[/bold yellow]"
 
 
 def _router_state_plain(enabled: bool) -> str:
@@ -341,8 +371,8 @@ def _format_connected(value: bool | None) -> str:
     if value is None:
         return "[dim]-[/dim]"
     if value:
-        return "[green]да[/green]"
-    return "[yellow]нет[/yellow]"
+        return f"[green]{ICON_OK} да[/green]"
+    return f"[yellow]{ICON_DISABLED} нет[/yellow]"
 
 
 def _format_dashboard_last_run_at(value: datetime) -> str:
@@ -351,18 +381,18 @@ def _format_dashboard_last_run_at(value: datetime) -> str:
 
 def _format_dashboard_router_run_status(status: RouterResultStatus) -> str:
     if status in {RouterResultStatus.UPDATED, RouterResultStatus.NO_CHANGES}:
-        return "[green]ok[/green]"
+        return f"[green]{ICON_OK} ok[/green]"
     if status is RouterResultStatus.PARTIAL:
-        return "[yellow]partial[/yellow]"
-    return "[red]fail[/red]"
+        return f"[yellow]{ICON_WARNING} partial[/yellow]"
+    return f"[red]{ICON_ERROR} fail[/red]"
 
 
 def _format_dns_proxy(value: bool | None) -> str:
     if value is None:
         return "[dim]unknown[/dim]"
     if value:
-        return "[green]включён[/green]"
-    return "[yellow]выключен[/yellow]"
+        return f"[green]{ICON_OK} включён[/green]"
+    return f"[yellow]{ICON_DISABLED} выключен[/yellow]"
 
 
 def _format_router_diagnostic_error(error_message: str | None) -> Text:

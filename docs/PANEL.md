@@ -19,7 +19,9 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 - `Space` отмечает checkbox;
 - `Esc` возвращает назад.
 
-Главные разделы: `Маршрутизаторы`, `Списки и маршруты`, `Ручной запуск`, `Расписание`, `Журнал`, `Проверка конфига`, `О панели`.
+Главные разделы: `📡 Маршрутизаторы`, `🧭 Списки и маршруты`, `🚀 Ручной запуск`, `⏱ Расписание`, `📜 Журнал`, `✅ Проверка конфига`, `ℹ О панели`.
+
+Иконки в панели декоративные: они помогают быстрее отличать разделы, статусы и действия, но не меняют сценарии и клавиатурное управление.
 
 ## Что меняет панель
 
@@ -47,7 +49,7 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 
 ## Добавление роутера
 
-Откройте `Маршрутизаторы` -> `Добавить новый маршрутизатор`.
+Откройте `📡 Маршрутизаторы` -> `➕ Добавить новый маршрутизатор`.
 
 Панель сгенерирует router id из имени, предложит `api_updater`, создаст пароль и покажет подсказки для Keenetic. Пароль сохраняется в `.env.secrets`, а в config остаётся ссылка вида `FQDN_UPDATER_ROUTER_<ID>_PASSWORD`.
 
@@ -63,17 +65,17 @@ WireGuard discovery читает интерфейсы с выбранного р
 
 ## Журнал и проверки
 
-Раздел `Журнал` показывает последние runs, статус, количество изменений и ошибок. В деталях видны artifact path, log path, router/service results и failure details.
+Раздел `📜 Журнал` показывает последние runs, статус, количество изменений и ошибок. В деталях видны artifact path, log path, router/service results и failure details.
 
 `dry-run` не пишет на роутер. `sync` применяет только managed changes и сохраняет конфигурацию Keenetic после успешного apply.
 
 ## Расписание
 
-Раздел `Расписание` редактирует `runtime.schedule` в config:
+Раздел `⏱ Расписание` редактирует `runtime.schedule` в config:
 
 - daily или weekly mode;
 - one or more `HH:MM` times;
 - IANA timezone;
 - systemd unit name, deployment root и Docker Compose service.
 
-Команда `Установить/обновить в systemd` вызывает тот же installer flow, что и `fqdn-updater schedule install`: пишет host-level service/timer, делает `systemctl daemon-reload` и синхронизирует состояние timer.
+Команда `⚙ Установить/обновить в systemd` вызывает тот же installer flow, что и `fqdn-updater schedule install`: пишет host-level service/timer, делает `systemctl daemon-reload` и синхронизирует состояние timer.

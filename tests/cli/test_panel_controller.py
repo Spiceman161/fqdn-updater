@@ -298,8 +298,8 @@ def test_main_menu_includes_manual_run_and_schedule_sections(tmp_path) -> None:
 
     controller.run()
 
-    assert "Ручной запуск" in prompts.select_calls[0]["choice_titles"]
-    assert "Расписание" in prompts.select_calls[0]["choice_titles"]
+    assert "🚀 Ручной запуск" in prompts.select_calls[0]["choice_titles"]
+    assert "⏱ Расписание" in prompts.select_calls[0]["choice_titles"]
 
 
 def test_router_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
@@ -323,7 +323,7 @@ def test_router_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
 
     assert prompts.select_calls[0]["message"] == "Маршрутизаторы"
     assert prompts.select_calls[0]["hint_lines"] == panel_module.ROUTER_MENU_HINT_LINES
-    assert prompts.select_calls[0]["choice_titles"][-1] == "Главное меню"
+    assert prompts.select_calls[0]["choice_titles"][-1] == "↩ Главное меню"
 
 
 def test_schedule_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
@@ -335,7 +335,7 @@ def test_schedule_menu_passes_hint_lines_to_prompt(tmp_path) -> None:
 
     assert prompts.select_calls[0]["message"] == "Расписание"
     assert prompts.select_calls[0]["hint_lines"] == panel_schedule.SCHEDULE_MENU_HINT_LINES
-    assert prompts.select_calls[0]["choice_titles"][-1] == "Главное меню"
+    assert prompts.select_calls[0]["choice_titles"][-1] == "↩ Главное меню"
 
 
 def test_about_menu_describes_project_scope_and_source_repository(tmp_path) -> None:
@@ -407,9 +407,9 @@ def test_manual_run_menu_selects_routers_and_runs_sync(tmp_path) -> None:
     assert prompts.select_calls[0]["message"] == "Ручной запуск"
     assert prompts.select_calls[0]["choices"] == ["dry-run", "sync", "back"]
     assert prompts.select_calls[0]["choice_titles"] == [
-        "Dry-run (тестовый запуск без изменения списков)",
-        "Sync (применить изменения в Keenetic)",
-        "Главное меню",
+        "🧪 Dry-run (тестовый запуск без изменения списков)",
+        "🚀 Sync (применить изменения в Keenetic)",
+        "↩ Главное меню",
     ]
     assert prompts.select_calls[0]["hint_lines"] == panel_module.MANUAL_RUN_HINT_LINES
     checkbox_call = prompts.checkbox_calls[0]
@@ -507,7 +507,7 @@ def test_router_menu_uses_shorter_edit_label(tmp_path) -> None:
 
     controller._router_menu()
 
-    assert prompts.select_calls[0]["choice_titles"][1] == "Изменить параметры маршрутизатора"
+    assert prompts.select_calls[0]["choice_titles"][1] == "✏ Изменить параметры маршрутизатора"
     assert "Повернуть пароль RCI" not in prompts.select_calls[0]["choice_titles"]
 
 
@@ -563,7 +563,7 @@ def test_router_menu_status_choice_calls_diagnostics_service_and_renders_router_
 
     assert len(status_service.calls) == 1
     assert prompts.pause_messages == ["Нажмите любую клавишу для продолжения..."]
-    assert prompts.select_calls[0]["choice_titles"][3] == "Проверка связи с маршрутизаторами"
+    assert prompts.select_calls[0]["choice_titles"][3] == "🔎 Проверка связи с маршрутизаторами"
     plain_output = console.export_text(clear=False)
     styled_output = console.export_text(styles=True, clear=False)
     assert "Status diagnostics: overall=failed checked=3" in plain_output
@@ -1617,7 +1617,7 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
     assert prompts.select_calls[0]["message"] == "Выберите маршрутизатор для списков и маршрутов"
     assert prompts.select_calls[0]["choice_titles"][-1] == "Главное меню"
     assert prompts.select_calls[1]["message"] == "Базовый интерфейс маршрутизации"
-    assert prompts.select_calls[1]["choice_titles"][-1] == "Назад"
+    assert prompts.select_calls[1]["choice_titles"][-1] == "↩ Назад"
     payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
     mappings = sorted(payload["mappings"], key=lambda item: item["service_key"])
     assert mappings == [
@@ -1748,8 +1748,8 @@ def test_lists_menu_can_run_sync_for_selected_router_after_save(tmp_path) -> Non
 
     assert prompts.select_calls[-1]["message"] == "Списки и маршруты сохранены"
     assert prompts.select_calls[-1]["choice_titles"] == [
-        "Запустить обновление на этом маршрутизаторе",
-        "Главное меню",
+        "🚀 Запустить обновление на этом маршрутизаторе",
+        "↩ Главное меню",
     ]
     assert len(sync_orchestrator.calls) == 1
     sync_config, trigger = sync_orchestrator.calls[0]

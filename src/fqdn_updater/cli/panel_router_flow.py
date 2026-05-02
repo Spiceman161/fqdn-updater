@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from fqdn_updater.application.config_management import normalize_rci_url_input
+from fqdn_updater.cli import panel_formatting
 from fqdn_updater.cli.panel_formatting import (
     ServiceEntryCounts,
     _effective_service_selection,
@@ -287,7 +288,10 @@ class PanelRouterFlow:
             self._repository.overwrite(path=self._config_path, config=config)
             raise
 
-        self._console.print("[green]Маршрутизатор сохранён. Пароль записан в secrets env.[/green]")
+        self._console.print(
+            f"[green]{panel_formatting.ICON_SAVE} Маршрутизатор сохранён. "
+            "Пароль записан в secrets env.[/green]"
+        )
         self._pause()
         return True
 
@@ -429,10 +433,13 @@ class PanelRouterFlow:
                 self._repository.overwrite(path=self._config_path, config=config)
                 raise
             self._console.print(
-                "[green]Параметры маршрутизатора обновлены. Пароль записан в secrets env.[/green]"
+                f"[green]{panel_formatting.ICON_SAVE} Параметры маршрутизатора обновлены. "
+                "Пароль записан в secrets env.[/green]"
             )
         else:
-            self._console.print("[green]Параметры маршрутизатора обновлены.[/green]")
+            self._console.print(
+                f"[green]{panel_formatting.ICON_SAVE} Параметры маршрутизатора обновлены.[/green]"
+            )
         self._pause()
 
     def toggle_router_enabled(self) -> None:
@@ -489,7 +496,9 @@ class PanelRouterFlow:
             path=self._config_path,
             config=updated_config,
         )
-        self._console.print("[green]Статусы маршрутизаторов обновлены.[/green]")
+        self._console.print(
+            f"[green]{panel_formatting.ICON_SAVE} Статусы маршрутизаторов обновлены.[/green]"
+        )
         self._pause()
 
     def select_router(
@@ -588,7 +597,9 @@ class PanelRouterFlow:
                 for service in enabled_services
             }
 
-        self._console.print("[dim]Считаю текущий размер исходных списков...[/dim]")
+        self._console.print(
+            f"[dim]{panel_formatting.ICON_SEARCH} Считаю текущий размер исходных списков...[/dim]"
+        )
         report = self._service_count_source_loader(config=config).load_enabled_services(
             enabled_services
         )
@@ -709,8 +720,10 @@ class PanelRouterFlow:
                 )
                 for candidate in candidates
             ]
-            choices.append(PromptChoice("Ввести интерфейс вручную", "manual"))
-            choices.append(PromptChoice("Назад", "__back__"))
+            choices.append(
+                _flow_choice(panel_formatting.ICON_EDIT, "Ввести интерфейс вручную", "manual")
+            )
+            choices.append(_flow_choice(panel_formatting.ICON_BACK, "Назад", "__back__"))
             default_choice = (
                 default_value
                 if any(candidate.value == default_value for candidate in candidates)
@@ -878,3 +891,11 @@ class PanelRouterFlow:
             password_override=password_override,
         )
         return result.error_message
+
+
+def _flow_choice(icon: str, title: str, value: str) -> PromptChoice:
+    return PromptChoice(
+        title=panel_formatting._icon_label(icon, title),
+        value=value,
+        answer_title=title,
+    )

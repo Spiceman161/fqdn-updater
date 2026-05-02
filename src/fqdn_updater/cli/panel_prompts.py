@@ -100,9 +100,9 @@ class QuestionaryPromptAdapter:
         self._style = Style.from_dict(
             {
                 "question": "bold",
-                "qmark": "fg:#00d7ff bold",
+                "qmark": "fg:#00e5ff bold",
                 "answer": "fg:#5fd700 bold",
-                "pointer": "fg:#ffaf00 bold",
+                "pointer": "fg:#ffdf5d bold",
                 "highlighted": "noreverse",
                 "selected": "noreverse",
                 "instruction": "fg:#808080 italic",
@@ -276,8 +276,8 @@ def _build_select_question(
         choices=[_build_choice(choice) for choice in choices],
         default=default,
         instruction=HIDDEN_INSTRUCTION,
-        qmark=">",
-        pointer=">",
+        qmark="❯",
+        pointer="▸",
         style=style,
         use_arrow_keys=True,
         use_jk_keys=True,
@@ -307,8 +307,8 @@ def _build_checkbox_question(
         message=message,
         choices=[_build_choice(choice) for choice in choices],
         instruction=HIDDEN_INSTRUCTION,
-        qmark=">",
-        pointer=">",
+        qmark="❯",
+        pointer="▸",
         style=style,
         use_arrow_keys=True,
         use_jk_keys=True,
@@ -342,7 +342,7 @@ def _build_text_question(
         message=message,
         default=default,
         instruction=HIDDEN_INSTRUCTION,
-        qmark=">",
+        qmark="❯",
         style=style,
         **kwargs,
     )
@@ -367,7 +367,7 @@ def _build_confirm_question(
         default=default,
         instruction=HIDDEN_INSTRUCTION,
         auto_enter=False,
-        qmark=">",
+        qmark="❯",
         style=style,
         **kwargs,
     )
@@ -677,7 +677,7 @@ def _render_hint_panel(hint_lines: tuple[str, ...] | None) -> str:
     for line in hint_lines:
         wrapped_lines.extend(textwrap.wrap(line, width=content_width) or [""])
 
-    title = " Подсказка "
+    title = " 💡 Подсказка "
     title_fill = max(inner_width - len(title), 0)
     title_left = title_fill // 2
     title_right = title_fill - title_left

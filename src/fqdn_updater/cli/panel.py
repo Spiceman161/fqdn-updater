@@ -121,14 +121,14 @@ class PanelController:
             choice = self._prompts.select(
                 message="Выберите раздел панели",
                 choices=[
-                    PromptChoice("Маршрутизаторы", "routers"),
-                    PromptChoice("Списки и маршруты", "lists"),
-                    PromptChoice("Ручной запуск", "manual-run"),
-                    PromptChoice("Расписание", "schedule"),
-                    PromptChoice("Журнал", "runs"),
-                    PromptChoice("Проверка конфига", "config"),
-                    PromptChoice("О панели", "about"),
-                    PromptChoice("Выход", "exit"),
+                    _menu_choice(panel_formatting.ICON_ROUTER, "Маршрутизаторы", "routers"),
+                    _menu_choice(panel_formatting.ICON_LISTS, "Списки и маршруты", "lists"),
+                    _menu_choice(panel_formatting.ICON_RUN, "Ручной запуск", "manual-run"),
+                    _menu_choice(panel_formatting.ICON_SCHEDULE, "Расписание", "schedule"),
+                    _menu_choice(panel_formatting.ICON_HISTORY, "Журнал", "runs"),
+                    _menu_choice(panel_formatting.ICON_CONFIG, "Проверка конфига", "config"),
+                    _menu_choice(panel_formatting.ICON_ABOUT, "О панели", "about"),
+                    _menu_choice(panel_formatting.ICON_EXIT, "Выход", "exit"),
                 ],
                 default="routers",
                 instruction="Стрелки выбирают, Enter открывает, Esc выходит.",
@@ -169,8 +169,14 @@ class PanelController:
 
     def _render_dashboard(self, *, config: AppConfig) -> None:
         self._console.clear()
-        title = Text("FQDN-updater", style="bold white")
-        subtitle = Text("операторская панель", style="bold cyan")
+        title = Text(
+            panel_formatting._icon_label(panel_formatting.ICON_APP, "FQDN-updater"),
+            style="bold white",
+        )
+        subtitle = Text(
+            panel_formatting._icon_label(panel_formatting.ICON_OPERATOR, "операторская панель"),
+            style="bold cyan",
+        )
         header = Text.assemble(title, "  ", subtitle)
         self._console.print(Panel(header, border_style="bright_cyan"))
 
@@ -203,14 +209,14 @@ class PanelController:
         self._console.print(
             Panel(
                 router_table,
-                title="Маршрутизаторы",
+                title=panel_formatting._icon_label(panel_formatting.ICON_ROUTER, "Маршрутизаторы"),
                 border_style="bright_black",
             )
         )
         self._console.print(
             Panel(
                 panel_schedule._schedule_summary_table(config.runtime.schedule),
-                title="Расписание",
+                title=panel_formatting._icon_label(panel_formatting.ICON_SCHEDULE, "Расписание"),
                 border_style="bright_black",
             )
         )
@@ -240,23 +246,30 @@ class PanelController:
             choice = self._prompts.select(
                 message="Маршрутизаторы",
                 choices=[
-                    PromptChoice("Добавить новый маршрутизатор", "add"),
-                    PromptChoice(
+                    _menu_choice(
+                        panel_formatting.ICON_ADD,
+                        "Добавить новый маршрутизатор",
+                        "add",
+                    ),
+                    _menu_choice(
+                        panel_formatting.ICON_EDIT,
                         "Изменить параметры маршрутизатора",
                         "edit",
                         disabled=None if has_routers else "Нет настроенных маршрутизаторов",
                     ),
-                    PromptChoice(
+                    _menu_choice(
+                        panel_formatting.ICON_TOGGLE,
                         "Включить или выключить маршрутизатор",
                         "toggle",
                         disabled=None if has_routers else "Нет настроенных маршрутизаторов",
                     ),
-                    PromptChoice(
+                    _menu_choice(
+                        panel_formatting.ICON_SEARCH,
                         "Проверка связи с маршрутизаторами",
                         "status",
                         disabled=None if has_routers else "Нет настроенных маршрутизаторов",
                     ),
-                    PromptChoice("Главное меню", "back"),
+                    _menu_choice(panel_formatting.ICON_BACK, "Главное меню", "back"),
                 ],
                 default="add",
                 hint_lines=ROUTER_MENU_HINT_LINES,
@@ -373,8 +386,12 @@ class PanelController:
         choice = self._prompts.select(
             message="Списки и маршруты сохранены",
             choices=[
-                PromptChoice("Запустить обновление на этом маршрутизаторе", "sync-router"),
-                PromptChoice("Главное меню", "back"),
+                _menu_choice(
+                    panel_formatting.ICON_RUN,
+                    "Запустить обновление на этом маршрутизаторе",
+                    "sync-router",
+                ),
+                _menu_choice(panel_formatting.ICON_BACK, "Главное меню", "back"),
             ],
             default="sync-router",
             hint_lines=(
@@ -398,9 +415,17 @@ class PanelController:
         action = self._prompts.select(
             message="Ручной запуск",
             choices=[
-                PromptChoice("Dry-run (тестовый запуск без изменения списков)", "dry-run"),
-                PromptChoice("Sync (применить изменения в Keenetic)", "sync"),
-                PromptChoice("Главное меню", "back"),
+                _menu_choice(
+                    panel_formatting.ICON_DRY_RUN,
+                    "Dry-run (тестовый запуск без изменения списков)",
+                    "dry-run",
+                ),
+                _menu_choice(
+                    panel_formatting.ICON_RUN,
+                    "Sync (применить изменения в Keenetic)",
+                    "sync",
+                ),
+                _menu_choice(panel_formatting.ICON_BACK, "Главное меню", "back"),
             ],
             default="dry-run",
             hint_lines=MANUAL_RUN_HINT_LINES,
@@ -469,7 +494,7 @@ class PanelController:
         self._schedule_flow.install_schedule()
 
     def _config_menu(self, *, config: AppConfig) -> None:
-        self._console.print("[green]Конфиг валиден.[/green]")
+        self._console.print(f"[green]{panel_formatting.ICON_CONFIG} Конфиг валиден.[/green]")
         self._console.print(
             f"маршрутизаторы={len(config.routers)} services={len(config.services)} "
             f"mappings={len(config.mappings)}"
@@ -478,7 +503,7 @@ class PanelController:
         self._pause()
 
     def _about_menu(self) -> None:
-        self._console.print("[bold]FQDN-updater panel[/bold]")
+        self._console.print(f"[bold]{panel_formatting.ICON_APP} FQDN-updater panel[/bold]")
         self._console.print(
             "Панель предназначена для обновления списков маршрутизации маршрутизаторов "
             "Keenetic (Netcraze) на основе репозитория "
@@ -762,7 +787,15 @@ class PanelController:
                 candidate.status or "[dim]-[/dim]",
                 candidate.detail or "[dim]-[/dim]",
             )
-        self._console.print(Panel(table, title="WireGuard discovery", border_style="cyan"))
+        self._console.print(
+            Panel(
+                table,
+                title=panel_formatting._icon_label(
+                    panel_formatting.ICON_SEARCH, "WireGuard discovery"
+                ),
+                border_style="cyan",
+            )
+        )
 
     def _render_summary(self, *, title: str, rows: list[tuple[str, str]]) -> None:
         table = Table.grid(padding=(0, 2))
@@ -770,7 +803,18 @@ class PanelController:
         table.add_column(style="bright_cyan")
         for label, value in rows:
             table.add_row(label, value)
-        self._console.print(Panel(table, title=title, border_style="bright_cyan"))
+        icon = (
+            panel_formatting.ICON_PASSWORD
+            if "пароль" in title.lower()
+            else panel_formatting.ICON_SUMMARY
+        )
+        self._console.print(
+            Panel(
+                table,
+                title=panel_formatting._icon_label(icon, title),
+                border_style="bright_cyan",
+            )
+        )
 
     def _show_generated_password(self, *, password: str) -> None:
         self._console.print("[bold]Новый пароль показан один раз:[/bold]")
@@ -783,13 +827,15 @@ class PanelController:
     def _print_discovery_error(self, message: str) -> None:
         self._console.print(
             Text.assemble(
-                ("WireGuard discovery не прошёл: ", "yellow"),
+                (f"{panel_formatting.ICON_WARNING} WireGuard discovery не прошёл: ", "yellow"),
                 (panel_formatting._truncate_discovery_error_message(message), "red"),
             )
         )
 
     def _print_router_connectivity_error(self) -> None:
-        self._console.print("[red]Проверка связи с маршрутизатором не прошла.[/red]")
+        self._console.print(
+            f"[red]{panel_formatting.ICON_ERROR} Проверка связи с маршрутизатором не прошла.[/red]"
+        )
 
     def _pause(self) -> None:
         self._prompts.pause(message="Нажмите любую клавишу для продолжения...")
@@ -906,4 +952,19 @@ def _config_for_routers(*, config: AppConfig, router_ids: tuple[str, ...]) -> Ap
                 mapping for mapping in config.mappings if mapping.router_id in selected_router_ids
             ],
         }
+    )
+
+
+def _menu_choice(
+    icon: str,
+    title: str,
+    value: str,
+    *,
+    disabled: str | None = None,
+) -> PromptChoice:
+    return PromptChoice(
+        title=panel_formatting._icon_label(icon, title),
+        value=value,
+        disabled=disabled,
+        answer_title=title,
     )

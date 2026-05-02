@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from rich.panel import Panel
 from rich.table import Table
 
-from fqdn_updater.cli.panel_formatting import ROOT_PANEL_WIDTH
+from fqdn_updater.cli import panel_formatting
 from fqdn_updater.cli.panel_prompts import PromptChoice
 from fqdn_updater.domain.schedule import RuntimeScheduleConfig, ScheduleWeekday
 
@@ -75,14 +75,23 @@ class PanelScheduleFlow:
             choice = self._prompts.select(
                 message="Расписание",
                 choices=[
-                    PromptChoice("Изменить параметры расписания", "edit"),
-                    PromptChoice(
+                    _schedule_choice(
+                        panel_formatting.ICON_EDIT,
+                        "Изменить параметры расписания",
+                        "edit",
+                    ),
+                    _schedule_choice(
+                        panel_formatting.ICON_DISABLED,
                         "Выключить расписание",
                         "disable",
                         disabled=("Расписание уже выключено" if not schedule.is_enabled else None),
                     ),
-                    PromptChoice("Установить/обновить в systemd", "install"),
-                    PromptChoice("Главное меню", "back"),
+                    _schedule_choice(
+                        panel_formatting.ICON_SYSTEMD,
+                        "Установить/обновить в systemd",
+                        "install",
+                    ),
+                    _schedule_choice(panel_formatting.ICON_BACK, "Главное меню", "back"),
                 ],
                 default="edit",
                 hint_lines=SCHEDULE_MENU_HINT_LINES,
@@ -101,10 +110,12 @@ class PanelScheduleFlow:
         mode = self._prompts.select(
             message="Режим расписания",
             choices=[
-                PromptChoice("Каждый день", "daily"),
-                PromptChoice("По дням недели", "weekly"),
-                PromptChoice("Выключить расписание", "disabled"),
-                PromptChoice("Назад", "back"),
+                _schedule_choice(panel_formatting.ICON_SCHEDULE, "Каждый день", "daily"),
+                _schedule_choice(panel_formatting.ICON_SCHEDULE, "По дням недели", "weekly"),
+                _schedule_choice(
+                    panel_formatting.ICON_DISABLED, "Выключить расписание", "disabled"
+                ),
+                _schedule_choice(panel_formatting.ICON_BACK, "Назад", "back"),
             ],
             default=existing_schedule.mode.value,
             hint_lines=SCHEDULE_MENU_HINT_LINES,
@@ -221,7 +232,7 @@ class PanelScheduleFlow:
             self._pause()
             return
 
-        self._console.print("[green]Расписание сохранено.[/green]")
+        self._console.print(f"[green]{panel_formatting.ICON_SAVE} Расписание сохранено.[/green]")
         self._pause()
 
     def disable_schedule(self) -> None:
@@ -242,7 +253,9 @@ class PanelScheduleFlow:
             self._pause()
             return
 
-        self._console.print("[green]Расписание выключено в config.[/green]")
+        self._console.print(
+            f"[green]{panel_formatting.ICON_DISABLED} Расписание выключено в config.[/green]"
+        )
         self._pause()
 
     def install_schedule(self) -> None:
@@ -258,7 +271,8 @@ class PanelScheduleFlow:
             return
 
         self._console.print(
-            f"[green]systemd units обновлены:[/green] timer_action={result.timer_action}"
+            f"[green]{panel_formatting.ICON_SYSTEMD} systemd units обновлены:[/green] "
+            f"timer_action={result.timer_action}"
         )
         self._console.print(self._display_path(result.service_path))
         self._console.print(self._display_path(result.timer_path))
@@ -268,17 +282,17 @@ class PanelScheduleFlow:
         self._console.clear()
         self._console.print(
             Panel(
-                "[bold]Расписание[/bold]",
+                f"[bold]{panel_formatting.ICON_SCHEDULE} Расписание[/bold]",
                 border_style="bright_cyan",
-                width=ROOT_PANEL_WIDTH,
+                width=panel_formatting.ROOT_PANEL_WIDTH,
             )
         )
         self._console.print(
             Panel(
                 _schedule_summary_table(schedule),
-                title="Текущий config",
+                title=panel_formatting._icon_label(panel_formatting.ICON_CONFIG, "Текущий config"),
                 border_style="cyan",
-                width=ROOT_PANEL_WIDTH,
+                width=panel_formatting.ROOT_PANEL_WIDTH,
             )
         )
 
@@ -306,3 +320,18 @@ def _schedule_timezone_default(schedule: RuntimeScheduleConfig) -> str:
     if isinstance(timezone_key, str) and timezone_key:
         return timezone_key
     return schedule.timezone
+
+
+def _schedule_choice(
+    icon: str,
+    title: str,
+    value: str,
+    *,
+    disabled: str | None = None,
+) -> PromptChoice:
+    return PromptChoice(
+        title=panel_formatting._icon_label(icon, title),
+        value=value,
+        disabled=disabled,
+        answer_title=title,
+    )
