@@ -1,7 +1,7 @@
 # Refactoring Plan
 
-**Date:** 2026-05-01  
-**Status:** Proposed incremental plan  
+**Date:** 2026-05-01
+**Status:** Core slices passed; optional cleanup pending
 **Scope:** Maintainability refactoring without feature changes.
 
 ## Goal
@@ -248,6 +248,8 @@ Command builders and response parsers are both protocol-shape concerns. They sho
 - `./scripts/verify.sh` passes.
 
 ## Slice 5 - RCI Transport and Diagnostics
+
+**Status:** Passed.
 
 **Purpose:** Isolate request/retry/TLS diagnostic behavior after protocol command/parsing code is already out of the way.
 

@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import json
-import socket
-import ssl
 from dataclasses import dataclass
-from urllib import error, request
 
 import pytest
 
@@ -61,27 +58,12 @@ class _FakeOpener:
         return _FakeResponse(payload)
 
 
-class _FlakyTransportOpener:
-    def __init__(self, *, failures_before_success: int, payload: object) -> None:
-        self._failures_before_success = failures_before_success
-        self._payload = payload
-        self.requests: list[object] = []
-        self.timeouts: list[int] = []
-
-    def open(self, http_request, timeout: int) -> _FakeResponse:
-        self.requests.append(http_request)
-        self.timeouts.append(timeout)
-        if len(self.requests) <= self._failures_before_success:
-            raise error.URLError("temporary TLS failure")
-        return _FakeResponse(self._payload)
-
-
 def _make_client(
     router_config, payload: object | tuple[object, ...]
 ) -> tuple[KeeneticRciClient, _FakeOpener]:
     client = KeeneticRciClientFactory().create(router=router_config, password="secret")
     opener = _FakeOpener(payload)
-    client._opener = opener  # type: ignore[attr-defined]
+    client._transport._opener = opener  # type: ignore[attr-defined]
     return client, opener
 
 
@@ -100,26 +82,6 @@ def test_factory_creates_rci_client_with_profile(router_config) -> None:
 
     assert isinstance(client, KeeneticRciClient)
     assert client.profile.router_id == "router-1"
-
-
-def test_client_opener_supports_digest_and_basic_auth(monkeypatch, router_config) -> None:
-    captured_handler_types: list[type[object]] = []
-
-    def fake_build_opener(*handlers):
-        captured_handler_types.extend(type(handler) for handler in handlers)
-        return _FakeOpener({})
-
-    monkeypatch.setattr(
-        "fqdn_updater.infrastructure.keenetic_rci_client.request.build_opener",
-        fake_build_opener,
-    )
-
-    KeeneticRciClientFactory().create(router=router_config, password="secret")
-
-    assert captured_handler_types == [
-        request.HTTPDigestAuthHandler,
-        request.HTTPBasicAuthHandler,
-    ]
 
 
 def test_get_object_group_parses_cli_style_payload_and_ignores_runtime_entries(
@@ -1125,156 +1087,6 @@ def test_get_static_routes_refuses_malformed_managed_static_route_payloads(
 
     with pytest.raises(RuntimeError, match="managed static route is not parseable"):
         client.get_static_routes()
-
-
-def test_write_operations_wrap_http_errors_as_runtime_errors(router_config) -> None:
-    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
-
-    class _FailingOpener:
-        def open(self, http_request, timeout: int) -> _FakeResponse:
-            raise error.HTTPError(
-                url=http_request.full_url,
-                code=403,
-                msg="Forbidden",
-                hdrs=None,
-                fp=None,
-            )
-
-    client._opener = _FailingOpener()  # type: ignore[attr-defined]
-
-    with pytest.raises(
-        RuntimeError,
-        match=r"Router 'router-1' add_entries\(svc-telegram\) failed: authentication failed",
-    ):
-        client.add_entries("svc-telegram", ["a.example"])
-
-
-def test_request_retries_transient_transport_failures(monkeypatch, router_config) -> None:
-    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
-    opener = _FlakyTransportOpener(
-        failures_before_success=2,
-        payload=[{"show": {"dns-proxy": {"proxy-status": True}}}],
-    )
-    client._opener = opener  # type: ignore[attr-defined]
-    sleep_delays: list[float] = []
-    monkeypatch.setattr(
-        "fqdn_updater.infrastructure.keenetic_rci_client.time.sleep",
-        lambda delay: sleep_delays.append(delay),
-    )
-    monkeypatch.setattr(
-        "fqdn_updater.infrastructure.keenetic_rci_client.random.uniform",
-        lambda start, end: 0.0,  # noqa: ARG005
-    )
-
-    status = client.get_dns_proxy_status()
-
-    assert status.enabled is True
-    assert len(opener.requests) == 3
-    assert opener.timeouts == [15, 15, 15]
-    assert sleep_delays == [1.0, 2.0]
-
-
-def test_request_reports_transport_failure_after_five_attempts(monkeypatch, router_config) -> None:
-    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
-    opener = _FlakyTransportOpener(
-        failures_before_success=5,
-        payload=[{"show": {"dns-proxy": {"proxy-status": True}}}],
-    )
-    client._opener = opener  # type: ignore[attr-defined]
-    sleep_delays: list[float] = []
-    monkeypatch.setattr(
-        "fqdn_updater.infrastructure.keenetic_rci_client.time.sleep",
-        lambda delay: sleep_delays.append(delay),
-    )
-    monkeypatch.setattr(
-        "fqdn_updater.infrastructure.keenetic_rci_client.random.uniform",
-        lambda start, end: 0.0,  # noqa: ARG005
-    )
-
-    with pytest.raises(
-        RuntimeError,
-        match=(
-            r"Router 'router-1' get_dns_proxy_status failed: "
-            r"transport failed after 5 attempts: temporary TLS failure"
-        ),
-    ):
-        client.get_dns_proxy_status()
-
-    assert len(opener.requests) == 5
-    assert opener.timeouts == [15, 15, 15, 15, 15]
-    assert sleep_delays == [1.0, 2.0, 4.0, 8.0]
-
-
-def test_request_reports_tls_diagnostics_for_certificate_failures(
-    monkeypatch,
-    router_config,
-) -> None:
-    client = KeeneticRciClientFactory().create(router=router_config, password="secret")
-
-    class _CertificateFailingOpener:
-        requests: list[object]
-        timeouts: list[int]
-
-        def __init__(self) -> None:
-            self.requests = []
-            self.timeouts = []
-
-        def open(self, http_request, timeout: int) -> _FakeResponse:
-            self.requests.append(http_request)
-            self.timeouts.append(timeout)
-            raise error.URLError(
-                ssl.SSLCertVerificationError("certificate verify failed: Hostname mismatch")
-            )
-
-    opener = _CertificateFailingOpener()
-    client._opener = opener  # type: ignore[attr-defined]
-    monkeypatch.setattr(
-        "fqdn_updater.infrastructure.keenetic_rci_client.time.sleep",
-        lambda delay: None,  # noqa: ARG005
-    )
-    monkeypatch.setattr(
-        "fqdn_updater.infrastructure.keenetic_rci_client.random.uniform",
-        lambda start, end: 0.0,  # noqa: ARG005
-    )
-
-    monkeypatch.setattr(
-        "fqdn_updater.infrastructure.keenetic_rci_client.socket.getaddrinfo",
-        lambda host, port, type: (  # noqa: A002, ARG005
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", port)),
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", port)),
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.11", port)),
-        ),
-    )
-
-    def fake_probe_tls_endpoint(
-        *,
-        host: str,
-        ip: str,
-        port: int,
-        timeout: int,
-        family_name: str,
-    ) -> str:
-        return (
-            f"tls_probe {family_name}/{ip}:{port} verify=failed "
-            f"error=certificate mismatch for {host} timeout={timeout} "
-            "cert=subject=wrong.example issuer=Test CA san=wrong.example"
-        )
-
-    monkeypatch.setattr(client, "_probe_tls_endpoint", fake_probe_tls_endpoint)
-
-    with pytest.raises(RuntimeError) as exc_info:
-        client.get_dns_proxy_status()
-
-    message = str(exc_info.value)
-    assert "transport failed after 5 attempts" in message
-    assert "certificate verify failed: Hostname mismatch" in message
-    assert "attempt_errors=1:SSLCertVerificationError:" in message
-    assert "tls_diagnostics host=router-1.example port=443 sni=router-1.example" in message
-    assert "resolved_endpoints=ipv4/203.0.113.10:443,ipv4/203.0.113.11:443" in message
-    assert "tls_probe ipv4/203.0.113.10:443 verify=failed" in message
-    assert "cert=subject=wrong.example issuer=Test CA san=wrong.example" in message
-    assert len(opener.requests) == 5
-    assert opener.timeouts == [15, 15, 15, 15, 15]
 
 
 def test_write_operations_raise_runtime_error_for_rci_status_errors(router_config) -> None:
