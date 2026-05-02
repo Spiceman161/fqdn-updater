@@ -289,6 +289,8 @@ Transport failures are operationally important and hard to reproduce. Combining 
 
 ## Optional Cleanup - Source Registry Data
 
+**Status:** Passed.
+
 **Purpose:** Reduce noise in `domain/source_registry.py`.
 
 This is intentionally not part of the core slice sequence. It is useful, but it does not unblock the panel, application, or RCI refactoring work.

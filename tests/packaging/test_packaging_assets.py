@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import subprocess
 from pathlib import Path
 
@@ -26,6 +27,12 @@ def test_packaging_assets_exist() -> None:
         "examples/fqdn-updater.timer",
     ]:
         assert (ROOT / relative_path).is_file(), relative_path
+
+
+def test_source_registry_data_is_packaged_as_python_module() -> None:
+    module = importlib.import_module("fqdn_updater.domain.source_registry_data")
+
+    assert module.__name__ == "fqdn_updater.domain.source_registry_data"
 
 
 def test_dockerfile_and_compose_contracts_are_static_and_minimal() -> None:
