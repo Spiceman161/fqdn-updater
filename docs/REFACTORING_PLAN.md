@@ -201,6 +201,8 @@ The duplicated dry-run/sync flow and sync apply logic are two sides of the same 
 
 ## Slice 4 - RCI Protocol Commands and Parsers
 
+**Status:** Passed.
+
 **Purpose:** Separate Keenetic RCI protocol semantics from HTTP transport.
 
 **Why this is one slice:**
