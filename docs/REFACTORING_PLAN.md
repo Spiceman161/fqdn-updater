@@ -148,6 +148,8 @@ Run history, schedule screens, status/dry-run/sync result rendering, and formatt
 
 ## Slice 3 - Application Run Pipeline and Apply Stage
 
+**Status:** Passed.
+
 **Purpose:** Remove dry-run/sync drift by sharing the read/plan flow, while keeping sync writes explicit and separately testable.
 
 **Why this is one slice:**

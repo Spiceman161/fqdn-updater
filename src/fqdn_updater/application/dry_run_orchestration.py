@@ -3,70 +3,37 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fqdn_updater.application.keenetic_client import KeeneticClient, KeeneticClientFactory
+from fqdn_updater.application.keenetic_client import KeeneticClientFactory
 from fqdn_updater.application.run_locking import NullRunLockManager, RunLockManager
-from fqdn_updater.application.run_support import (
-    aggregate_router_status,
-    aggregate_run_status,
-    build_failed_service_result,
-    build_failure_detail,
-    eligible_mappings,
-    group_source_failures,
-    has_static_route_entries,
-    static_route_capable_service_keys,
-    validate_router_desired_fqdn_total,
+from fqdn_updater.application.run_planning import (
+    LoggerFactory,
+    NullLoggerFactory,
+    RouterSecretResolver,
+    RunArtifactWriter,
+    RunLogger,
+    RunPlanningService,
+    RunPlanningSnapshot,
+    SourceLoader,
+    build_failed_router_result,
+    build_service_result_from_plan,
+    build_skipped_service_result,
+    log_service_skipped,
 )
+from fqdn_updater.application.run_support import aggregate_router_status, aggregate_run_status
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
-from fqdn_updater.application.transport_failure import classify_transport_failure
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
-from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
-from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
-from fqdn_updater.domain.object_group_sharding import managed_shard_names
 from fqdn_updater.domain.run_artifact import (
     FailureDetail,
-    RouterResultStatus,
     RouterRunResult,
     RunArtifact,
     RunMode,
-    RunStep,
     RunTrigger,
-    ServiceResultStatus,
     ServiceRunResult,
 )
-from fqdn_updater.domain.source_loading import SourceLoadReport
-from fqdn_updater.domain.static_route_diff import StaticRouteState
-
-
-class SourceLoader(Protocol):
-    def load_enabled_services(self, services: Sequence[object]) -> SourceLoadReport:
-        """Load normalized entries for enabled services."""
-
-
-class RouterSecretResolver(Protocol):
-    def resolve(self, router: RouterConfig) -> str:
-        """Resolve the password for a router."""
-
-
-class RunArtifactWriter(Protocol):
-    def write(self, config: AppConfig, artifact: RunArtifact) -> Path:
-        """Persist a run artifact and return its path."""
-
-
-class LoggerFactory(Protocol):
-    def create(
-        self,
-        *,
-        config: AppConfig,
-        run_id: str,
-        mode: RunMode,
-        trigger: RunTrigger,
-    ) -> RunLogger:
-        """Create a run-scoped logger."""
 
 
 class DryRunExecutionResult(BaseModel):
@@ -92,11 +59,14 @@ class DryRunOrchestrator:
         run_id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._source_loader = source_loader
-        self._secret_resolver = secret_resolver
-        self._client_factory = client_factory
-        self._planner = planner
+        self._planning = RunPlanningService(
+            source_loader=source_loader,
+            secret_resolver=secret_resolver,
+            client_factory=client_factory,
+            planner=planner,
+        )
         self._artifact_writer = artifact_writer
-        self._logger_factory = logger_factory or _NullLoggerFactory()
+        self._logger_factory = logger_factory or NullLoggerFactory()
         self._run_lock_manager = run_lock_manager or NullRunLockManager()
         self._now_provider = now_provider or _utc_now
         self._run_id_factory = run_id_factory or _generate_run_id
@@ -114,21 +84,12 @@ class DryRunOrchestrator:
             logger.event("run_started", status="started")
 
             try:
-                managed_mappings = eligible_mappings(config=config)
-                loaded_sources = self._source_loader.load_enabled_services(config.services)
-                desired_entries_by_service = {
-                    source.service_key: source.typed_entries for source in loaded_sources.loaded
-                }
-                source_failures_by_service = group_source_failures(report=loaded_sources)
-                static_route_service_keys = static_route_capable_service_keys(config)
-
+                snapshot = self._planning.prepare_run(config=config)
                 router_results: list[RouterRunResult] = []
                 plans: list[ServiceSyncPlan] = []
 
                 for router in config.routers:
-                    router_mappings = [
-                        mapping for mapping in managed_mappings if mapping.router_id == router.id
-                    ]
+                    router_mappings = snapshot.mappings_for_router(router.id)
                     if not router_mappings:
                         continue
 
@@ -136,9 +97,7 @@ class DryRunOrchestrator:
                         logger=logger,
                         router=router,
                         mappings=router_mappings,
-                        desired_entries_by_service=desired_entries_by_service,
-                        source_failures_by_service=source_failures_by_service,
-                        static_route_service_keys=static_route_service_keys,
+                        snapshot=snapshot,
                     )
                     router_results.append(router_result)
                     plans.extend(router_plans)
@@ -174,174 +133,61 @@ class DryRunOrchestrator:
         logger: RunLogger,
         router: RouterConfig,
         mappings: Sequence[RouterServiceMappingConfig],
-        desired_entries_by_service: dict[str, tuple[ObjectGroupEntry, ...]],
-        source_failures_by_service: dict[str, str],
-        static_route_service_keys: set[str],
+        snapshot: RunPlanningSnapshot,
     ) -> tuple[RouterRunResult, list[ServiceSyncPlan]]:
         service_results: list[ServiceRunResult] = []
         plans: list[ServiceSyncPlan] = []
-        logger.event("router_started", router_id=router.id, status="started")
 
-        try:
-            password = self._secret_resolver.resolve(router)
-        except Exception as exc:
-            return self._failed_router_result(
-                logger=logger,
-                router=router,
-                mappings=mappings,
-                plans=plans,
-                step=RunStep.SECRET_RESOLVE,
-                message=str(exc),
-            )
-
-        try:
-            client = self._client_factory.create(router=router, password=password)
-        except Exception as exc:
-            return self._failed_router_result(
-                logger=logger,
-                router=router,
-                mappings=mappings,
-                plans=plans,
-                step=RunStep.CLIENT_CREATE,
-                message=str(exc),
-            )
-
-        try:
-            validate_router_desired_fqdn_total(
-                router_id=router.id,
-                mappings=mappings,
-                desired_entries_by_service=desired_entries_by_service,
-                source_failures_by_service=source_failures_by_service,
-            )
-        except Exception as exc:
-            return self._failed_router_result(
-                logger=logger,
-                router=router,
-                mappings=mappings,
-                plans=plans,
-                step=RunStep.PLAN_SERVICE,
-                message=str(exc),
-            )
-
-        try:
-            client.get_dns_proxy_status()
-        except Exception as exc:
-            return self._failed_router_result(
-                logger=logger,
-                router=router,
-                mappings=mappings,
-                plans=plans,
-                step=RunStep.READ_DNS_PROXY_STATUS,
-                message=f"Router preflight failed: {exc}",
+        session = self._planning.start_router(
+            logger=logger,
+            router=router,
+            mappings=mappings,
+            snapshot=snapshot,
+        )
+        if session.startup_failure is not None:
+            return (
+                build_failed_router_result(
+                    router=router,
+                    mappings=mappings,
+                    failure_detail=session.startup_failure,
+                ),
+                plans,
             )
 
         router_failure_detail: FailureDetail | None = None
 
         for mapping in mappings:
             if router_failure_detail is not None:
-                skipped_result = _build_skipped_service_result(
+                skipped_result = build_skipped_service_result(
                     mapping=mapping,
                     failure_detail=router_failure_detail,
+                    reason="router transport failure",
                 )
                 service_results.append(skipped_result)
-                logger.event(
-                    "service_skipped",
-                    step=router_failure_detail.step,
-                    router_id=router.id,
-                    service_key=mapping.service_key,
-                    object_group_name=mapping.object_group_name,
-                    status=skipped_result.status.value,
-                    message=skipped_result.error_message,
-                )
-                continue
-
-            failure_message = source_failures_by_service.get(mapping.service_key)
-            if failure_message is not None:
-                self._append_service_failure(
+                log_service_skipped(
                     logger=logger,
                     router=router,
                     mapping=mapping,
-                    step=RunStep.SOURCE_LOAD,
-                    message=failure_message,
-                    service_results=service_results,
+                    skipped_result=skipped_result,
+                    failure_detail=router_failure_detail,
                 )
                 continue
 
-            desired_entries = desired_entries_by_service.get(mapping.service_key)
-            if desired_entries is None:
-                self._append_service_failure(
-                    logger=logger,
-                    router=router,
-                    mapping=mapping,
-                    step=RunStep.SOURCE_LOAD,
-                    message=f"Missing loaded entries for service '{mapping.service_key}'",
-                    service_results=service_results,
-                )
-                continue
-
-            actual_states, read_failure_detail = self._read_object_group_shards(
+            outcome = self._planning.plan_mapping(
                 logger=logger,
-                client=client,
-                router=router,
+                session=session,
+                snapshot=snapshot,
                 mapping=mapping,
-                service_results=service_results,
             )
-            if read_failure_detail is not None:
-                if read_failure_detail.category is not None:
-                    router_failure_detail = read_failure_detail
+            if outcome.failed_service_result is not None:
+                service_results.append(outcome.failed_service_result)
+                if outcome.router_failure_detail is not None:
+                    router_failure_detail = outcome.router_failure_detail
                 continue
 
-            actual_route_bindings, read_failure_detail = self._read_route_binding_shards(
-                logger=logger,
-                client=client,
-                router=router,
-                mapping=mapping,
-                service_results=service_results,
-            )
-            if read_failure_detail is not None:
-                if read_failure_detail.category is not None:
-                    router_failure_detail = read_failure_detail
-                continue
-
-            actual_static_routes: tuple[StaticRouteState, ...] = ()
-            if mapping.service_key in static_route_service_keys or has_static_route_entries(
-                desired_entries
-            ):
-                maybe_actual_static_routes, read_failure_detail = self._read_static_routes(
-                    logger=logger,
-                    client=client,
-                    router=router,
-                    mapping=mapping,
-                    service_results=service_results,
-                )
-                if read_failure_detail is not None:
-                    if read_failure_detail.category is not None:
-                        router_failure_detail = read_failure_detail
-                    continue
-                actual_static_routes = maybe_actual_static_routes
-
-            try:
-                mapping_plans = self._planner.plan_mapping(
-                    mapping=mapping,
-                    desired_entries=desired_entries,
-                    actual_states=actual_states,
-                    actual_route_bindings=actual_route_bindings,
-                    actual_static_routes=actual_static_routes,
-                )
-            except Exception as exc:
-                self._append_service_failure(
-                    logger=logger,
-                    router=router,
-                    mapping=mapping,
-                    step=RunStep.PLAN_SERVICE,
-                    message=str(exc),
-                    service_results=service_results,
-                )
-                continue
-
-            plans.extend(mapping_plans)
-            for plan in mapping_plans:
-                service_result = _build_service_result_from_plan(plan=plan)
+            plans.extend(outcome.plans)
+            for plan in outcome.plans:
+                service_result = build_service_result_from_plan(plan=plan)
                 service_results.append(service_result)
                 logger.event(
                     "service_planned",
@@ -371,200 +217,6 @@ class DryRunOrchestrator:
             plans,
         )
 
-    def _failed_router_result(
-        self,
-        *,
-        logger: RunLogger,
-        router: RouterConfig,
-        mappings: Sequence[RouterServiceMappingConfig],
-        plans: list[ServiceSyncPlan],
-        step: RunStep,
-        message: str,
-    ) -> tuple[RouterRunResult, list[ServiceSyncPlan]]:
-        failure_detail = self._failure_detail(step=step, message=message)
-        self._log_router_failure(
-            logger=logger,
-            router=router,
-            step=step,
-            message=message,
-        )
-        service_results = [
-            build_failed_service_result(
-                mapping=mapping,
-                failure_detail=failure_detail,
-            )
-            for mapping in mappings
-        ]
-        return (
-            RouterRunResult(
-                router_id=router.id,
-                status=RouterResultStatus.FAILED,
-                service_results=service_results,
-                error_message=failure_detail.message,
-                failure_detail=failure_detail,
-            ),
-            plans,
-        )
-
-    def _read_object_group_shards(
-        self,
-        *,
-        logger: RunLogger,
-        client: KeeneticClient,
-        router: RouterConfig,
-        mapping: RouterServiceMappingConfig,
-        service_results: list[ServiceRunResult],
-    ) -> tuple[dict[str, ObjectGroupState] | None, FailureDetail | None]:
-        actual_states: dict[str, ObjectGroupState] = {}
-        for object_group_name in managed_shard_names(mapping.object_group_name):
-            try:
-                actual_states[object_group_name] = client.get_object_group(object_group_name)
-            except Exception as exc:
-                failure_detail = self._append_service_failure(
-                    logger=logger,
-                    router=router,
-                    mapping=mapping,
-                    step=RunStep.READ_OBJECT_GROUP,
-                    message=str(exc),
-                    service_results=service_results,
-                    object_group_name=object_group_name,
-                )
-                return None, failure_detail
-        return actual_states, None
-
-    def _read_route_binding_shards(
-        self,
-        *,
-        logger: RunLogger,
-        client: KeeneticClient,
-        router: RouterConfig,
-        mapping: RouterServiceMappingConfig,
-        service_results: list[ServiceRunResult],
-    ) -> tuple[dict[str, RouteBindingState] | None, FailureDetail | None]:
-        actual_route_bindings: dict[str, RouteBindingState] = {}
-        for object_group_name in managed_shard_names(mapping.object_group_name):
-            try:
-                actual_route_bindings[object_group_name] = client.get_route_binding(
-                    object_group_name
-                )
-            except Exception as exc:
-                failure_detail = self._append_service_failure(
-                    logger=logger,
-                    router=router,
-                    mapping=mapping,
-                    step=RunStep.READ_ROUTE_BINDING,
-                    message=str(exc),
-                    service_results=service_results,
-                    object_group_name=object_group_name,
-                )
-                return None, failure_detail
-        return actual_route_bindings, None
-
-    def _read_static_routes(
-        self,
-        *,
-        logger: RunLogger,
-        client: KeeneticClient,
-        router: RouterConfig,
-        mapping: RouterServiceMappingConfig,
-        service_results: list[ServiceRunResult],
-    ) -> tuple[tuple[StaticRouteState, ...] | None, FailureDetail | None]:
-        try:
-            return client.get_static_routes(), None
-        except Exception as exc:
-            failure_detail = self._append_service_failure(
-                logger=logger,
-                router=router,
-                mapping=mapping,
-                step=RunStep.READ_STATIC_ROUTES,
-                message=str(exc),
-                service_results=service_results,
-            )
-            return None, failure_detail
-
-    def _append_service_failure(
-        self,
-        *,
-        logger: RunLogger,
-        router: RouterConfig,
-        mapping: RouterServiceMappingConfig,
-        step: RunStep,
-        message: str,
-        service_results: list[ServiceRunResult],
-        object_group_name: str | None = None,
-    ) -> FailureDetail:
-        failure_detail = self._failure_detail(step=step, message=message)
-        service_results.append(
-            build_failed_service_result(
-                mapping=mapping,
-                failure_detail=failure_detail,
-                object_group_name=object_group_name,
-            )
-        )
-        logger.event(
-            "service_failed",
-            step=step,
-            router_id=router.id,
-            service_key=mapping.service_key,
-            object_group_name=object_group_name or mapping.object_group_name,
-            status="failed",
-            message=message,
-        )
-        return failure_detail
-
-    def _log_router_failure(
-        self,
-        *,
-        logger: RunLogger,
-        router: RouterConfig,
-        step: RunStep,
-        message: str,
-    ) -> None:
-        logger.event(
-            "router_failed",
-            step=step,
-            router_id=router.id,
-            status="failed",
-            message=message,
-        )
-
-    def _failure_detail(self, *, step: RunStep, message: str) -> FailureDetail:
-        return build_failure_detail(
-            step=step,
-            message=message,
-            occurred_at=_utc_now(),
-            category=classify_transport_failure(message),
-        )
-
-
-def _build_service_result_from_plan(plan: ServiceSyncPlan) -> ServiceRunResult:
-    diff = plan.object_group_diff
-    static_diff = plan.static_route_diff
-    return ServiceRunResult(
-        service_key=plan.service_key,
-        object_group_name=plan.object_group_name,
-        status=ServiceResultStatus.UPDATED if plan.has_changes else ServiceResultStatus.NO_CHANGES,
-        added_count=len(diff.to_add) + (len(static_diff.to_add) if static_diff else 0),
-        removed_count=len(diff.to_remove) + (len(static_diff.to_remove) if static_diff else 0),
-        unchanged_count=len(diff.unchanged) + (len(static_diff.unchanged) if static_diff else 0),
-        route_changed=plan.route_binding_diff.has_changes
-        or (static_diff.has_changes if static_diff else False),
-    )
-
-
-def _build_skipped_service_result(
-    *,
-    mapping: RouterServiceMappingConfig,
-    failure_detail: FailureDetail,
-) -> ServiceRunResult:
-    return ServiceRunResult(
-        service_key=mapping.service_key,
-        object_group_name=mapping.object_group_name,
-        status=ServiceResultStatus.SKIPPED,
-        error_message=f"Skipped after router transport failure: {failure_detail.message}",
-        failure_detail=failure_detail,
-    )
-
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -572,60 +224,3 @@ def _utc_now() -> datetime:
 
 def _generate_run_id() -> str:
     return str(uuid4())
-
-
-class RunLogger(Protocol):
-    @property
-    def path(self) -> Path:
-        """Return the run log path."""
-
-    def event(
-        self,
-        event: str,
-        *,
-        step: RunStep | None = None,
-        router_id: str | None = None,
-        service_key: str | None = None,
-        object_group_name: str | None = None,
-        status: str | None = None,
-        message: str | None = None,
-    ) -> None:
-        """Emit a run-scoped log event."""
-
-    def close(self) -> None:
-        """Close resources owned by the logger."""
-
-
-class _NullRunLogger:
-    @property
-    def path(self) -> Path:
-        return Path("data/logs/null.log")
-
-    def event(
-        self,
-        event: str,
-        *,
-        step: RunStep | None = None,
-        router_id: str | None = None,
-        service_key: str | None = None,
-        object_group_name: str | None = None,
-        status: str | None = None,
-        message: str | None = None,
-    ) -> None:
-        return None
-
-    def close(self) -> None:
-        return None
-
-
-class _NullLoggerFactory:
-    def create(
-        self,
-        *,
-        config: AppConfig,
-        run_id: str,
-        mode: RunMode,
-        trigger: RunTrigger,
-    ) -> RunLogger:
-        del config, run_id, mode, trigger
-        return _NullRunLogger()
