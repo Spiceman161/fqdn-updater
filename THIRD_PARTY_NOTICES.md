@@ -16,6 +16,7 @@ Declared runtime dependencies are listed in `pyproject.toml`:
 
 - `pydantic`
 - `questionary`
+- `qrcode`
 - `rich`
 - `typer`
 

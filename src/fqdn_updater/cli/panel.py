@@ -51,6 +51,11 @@ from fqdn_updater.infrastructure.service_count_cache import (
 )
 
 CONTAINER_WORKDIR = Path("/work")
+DONATION_LABEL = "Донат на LLM-подписки"
+DONATION_URL = (
+    "https://qr.nspk.ru/AS1A00520UPQUQRN8GC8SL8EU39JPKV7?type=01&bank=100000000005&crc=2606"
+)
+DONATION_URL_DISPLAY_WIDTH = 72
 MAIN_MENU_HINT_LINES = (
     "Для начала работы добавьте маршрутизатор Keenetic с ОС версии 5 и выше.",
     "Затем настройте обновление списков по расписанию.",
@@ -179,6 +184,7 @@ class PanelController:
         )
         header = Text.assemble(title, "  ", subtitle)
         self._console.print(Panel(header, border_style="bright_cyan"))
+        self._console.print(_donation_panel())
 
         router_table = Table(show_header=True, header_style="bold white", box=None)
         router_table.add_column("Маршрутизатор", no_wrap=True)
@@ -968,3 +974,79 @@ def _menu_choice(
         disabled=disabled,
         answer_title=title,
     )
+
+
+def _donation_panel() -> Panel:
+    content = Table.grid()
+    content.add_column()
+    content.add_row(_donation_link_text())
+    content.add_row("")
+    content.add_row(_donation_qr_text())
+    return Panel(
+        content,
+        title=f"💜 {DONATION_LABEL} 🤖☕✨",
+        border_style="magenta",
+    )
+
+
+def _donation_link_text() -> Text:
+    text = Text.assemble(
+        ("Спасибо за поддержку проекта и LLM-подписок ", "bold white"),
+        ("🚀\n\n", "magenta"),
+        ("🔗 ", "bright_cyan"),
+    )
+    for index, chunk in enumerate(_donation_url_chunks(DONATION_URL)):
+        if index:
+            text.append("\n   ")
+        text.append(chunk, style=f"bright_cyan underline link {DONATION_URL}")
+    text.append("\n\nQR-код ниже можно отсканировать камерой ", style="dim")
+    text.append("📱", style="magenta")
+    return text
+
+
+def _donation_url_chunks(value: str) -> list[str]:
+    return [
+        value[index : index + DONATION_URL_DISPLAY_WIDTH]
+        for index in range(0, len(value), DONATION_URL_DISPLAY_WIDTH)
+    ]
+
+
+def _donation_qr_text() -> Text:
+    try:
+        lines = _donation_qr_lines(DONATION_URL)
+    except ModuleNotFoundError:
+        return Text("QR недоступен: не установлен пакет qrcode.", style="yellow")
+    return Text("\n".join(lines), style="bright_white")
+
+
+def _donation_qr_lines(value: str) -> list[str]:
+    import qrcode
+    from qrcode.constants import ERROR_CORRECT_M
+
+    qr = qrcode.QRCode(error_correction=ERROR_CORRECT_M, border=4)
+    qr.add_data(value)
+    qr.make(fit=True)
+    matrix = qr.get_matrix()
+    if len(matrix) % 2:
+        matrix.append([False] * len(matrix[0]))
+
+    lines: list[str] = []
+    for row_index in range(0, len(matrix), 2):
+        upper_row = matrix[row_index]
+        lower_row = matrix[row_index + 1]
+        line = "".join(
+            _qr_half_block(upper_module=upper_module, lower_module=lower_module)
+            for upper_module, lower_module in zip(upper_row, lower_row, strict=True)
+        )
+        lines.append(line)
+    return lines
+
+
+def _qr_half_block(*, upper_module: bool, lower_module: bool) -> str:
+    if upper_module and lower_module:
+        return "█"
+    if upper_module:
+        return "▀"
+    if lower_module:
+        return "▄"
+    return " "

@@ -291,6 +291,23 @@ def test_dashboard_renders_router_last_run_columns_without_services_column(tmp_p
     assert "fail" in output
 
 
+def test_dashboard_renders_donation_link_and_qr_code(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["exit"])
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(controller._config_path)
+
+    controller.run()
+
+    output = console.export_text()
+    assert panel_module.DONATION_LABEL in output
+    for chunk in panel_module._donation_url_chunks(panel_module.DONATION_URL):
+        assert chunk in output
+    assert "🤖" in output
+    assert "☕" in output
+    assert "✨" in output
+    assert any(character in output for character in ("█", "▀", "▄"))
+
+
 def test_main_menu_includes_manual_run_and_schedule_sections(tmp_path) -> None:
     prompts = ScriptedPromptAdapter(select_answers=["exit"])
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
