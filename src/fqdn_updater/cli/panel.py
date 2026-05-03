@@ -79,6 +79,7 @@ ROUTER_MENU_HINT_LINES = (
 
 @dataclass(frozen=True)
 class RouterLastRun:
+    started_at: datetime
     finished_at: datetime
     status: RouterResultStatus
 
@@ -206,7 +207,10 @@ class PanelController:
                 panel_formatting._router_state_label(router.enabled),
                 str(router.rci_url),
                 (
-                    panel_formatting._format_dashboard_last_run_at(last_run.finished_at)
+                    panel_formatting._format_dashboard_last_run_at(
+                        last_run.started_at,
+                        timezone_name=config.runtime.schedule.timezone,
+                    )
                     if last_run
                     else "[dim]-[/dim]"
                 ),
@@ -246,6 +250,7 @@ class PanelController:
                 existing = last_runs.get(router_result.router_id)
                 if existing is None or artifact.finished_at > existing.finished_at:
                     last_runs[router_result.router_id] = RouterLastRun(
+                        started_at=artifact.started_at,
                         finished_at=artifact.finished_at,
                         status=router_result.status,
                     )

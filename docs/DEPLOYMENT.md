@@ -25,7 +25,7 @@ fqdn-updater update
 Для конкретного release tag:
 
 ```bash
-fqdn-updater update --version v1.0.1
+fqdn-updater update --version v1.0.2
 ```
 
 ## Docker Compose runtime

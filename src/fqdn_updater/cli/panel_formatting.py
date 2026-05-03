@@ -4,8 +4,9 @@ import shlex
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from rich.text import Text
@@ -375,8 +376,21 @@ def _format_connected(value: bool | None) -> str:
     return f"[yellow]{ICON_DISABLED} нет[/yellow]"
 
 
-def _format_dashboard_last_run_at(value: datetime) -> str:
-    return value.strftime("%d.%m.%Y %H:%M")
+def _format_dashboard_last_run_at(value: datetime, *, timezone_name: str = "UTC") -> str:
+    return _format_timestamp(value, timezone_name=timezone_name, include_seconds=False)
+
+
+def _format_timestamp(
+    value: datetime,
+    *,
+    timezone_name: str,
+    include_seconds: bool = True,
+) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    display_value = value.astimezone(ZoneInfo(timezone_name))
+    time_format = "%H:%M:%S" if include_seconds else "%H:%M"
+    return display_value.strftime(f"%d.%m.%Y {time_format}")
 
 
 def _format_dashboard_router_run_status(status: RouterResultStatus) -> str:

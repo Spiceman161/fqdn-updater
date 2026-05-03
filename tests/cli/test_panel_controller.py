@@ -289,9 +289,68 @@ def test_dashboard_renders_router_last_run_columns_without_services_column(tmp_p
     assert run_history_service.calls == [("data/artifacts", controller._config_path, 50, 0)]
     assert "Сервисы" not in output
     assert "Последний запуск" in output
-    assert "25.04.2026 12:03" in output
+    assert "25.04.2026 12:00" in output
     assert "ok" in output
     assert "fail" in output
+
+
+def test_dashboard_formats_last_run_in_schedule_timezone(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["exit"])
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+        runtime={
+            "artifacts_dir": "data/artifacts",
+            "logs_dir": "data/logs",
+            "secrets_env_file": ".env.secrets",
+            "schedule": {
+                "mode": "daily",
+                "times": ["03:15"],
+                "timezone": "Europe/Moscow",
+            },
+        },
+    )
+    artifacts_dir = tmp_path / "data" / "artifacts"
+    controller._run_history_service = _RecordingRunHistoryService(  # type: ignore[method-assign]
+        artifacts_dir=artifacts_dir,
+        runs=(
+            RecentRun(
+                path=artifacts_dir / "run-001.json",
+                artifact=RunArtifact(
+                    run_id="run-001",
+                    trigger=RunTrigger.SCHEDULED,
+                    mode=RunMode.APPLY,
+                    status=RunStatus.SUCCESS,
+                    started_at=datetime(2026, 5, 4, 0, 15, tzinfo=timezone.utc),
+                    finished_at=datetime(2026, 5, 4, 1, 6, tzinfo=timezone.utc),
+                    log_path=Path("data/logs/run-001.log"),
+                    router_results=[
+                        RouterRunResult(
+                            router_id="router-1",
+                            status=RouterResultStatus.NO_CHANGES,
+                        ),
+                    ],
+                ),
+            ),
+        ),
+    )
+
+    controller.run()
+
+    output = console.export_text()
+    assert "04.05.2026 03:15" in output
+    assert "04.05.2026 04:06" not in output
+    assert "04.05.2026 00:15" not in output
 
 
 def test_support_menu_renders_sbp_and_ton_donation_methods(tmp_path) -> None:

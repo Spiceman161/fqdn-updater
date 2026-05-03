@@ -198,6 +198,49 @@ def test_runs_menu_opens_selected_run_details_with_log_hint(tmp_path) -> None:
     assert "router rejected update" in output
 
 
+def test_runs_menu_formats_history_in_schedule_timezone(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["run:0", "back", None])
+    controller, console = _panel_controller(tmp_path, prompts=prompts)
+    config = _config_with_schedule_timezone("Europe/Moscow")
+    artifacts_dir = tmp_path / "data" / "artifacts"
+    run_history_service = _RecordingRunHistoryService(
+        artifacts_dir=artifacts_dir,
+        runs=(
+            RecentRun(
+                path=artifacts_dir / "run-scheduled.json",
+                artifact=RunArtifact(
+                    run_id="run-scheduled",
+                    trigger=RunTrigger.SCHEDULED,
+                    mode=RunMode.APPLY,
+                    status=RunStatus.SUCCESS,
+                    started_at=datetime(2026, 5, 4, 0, 14, tzinfo=timezone.utc),
+                    finished_at=datetime(2026, 5, 4, 0, 15, tzinfo=timezone.utc),
+                    log_path=Path("data/logs/run-scheduled.log"),
+                    router_results=(
+                        RouterRunResult(
+                            router_id="router-1",
+                            status=RouterResultStatus.NO_CHANGES,
+                            service_results=(),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    controller._load_config = lambda: config  # type: ignore[method-assign]
+    controller._run_history_service = run_history_service  # type: ignore[method-assign]
+
+    controller._runs_menu()
+
+    assert prompts.history_select_calls[0]["choice_titles"] == [
+        "apply     scheduled  ✓ success  04.05.2026 03:15:00  Main router  изменено=0 ошибок=0",
+    ]
+    output = console.export_text()
+    assert "04.05.2026 03:14:00" in output
+    assert "04.05.2026 03:15:00" in output
+    assert "04.05.2026 00:15:00" not in output
+
+
 def test_runs_menu_maps_container_log_path_to_host_path_in_hint(tmp_path) -> None:
     prompts = ScriptedPromptAdapter(select_answers=["run:0", "back", None])
     controller, console = _panel_controller(tmp_path, prompts=prompts)
@@ -448,6 +491,35 @@ def _config() -> AppConfig:
             "services": [],
             "mappings": [],
             "runtime": {"artifacts_dir": "data/artifacts", "logs_dir": "data/logs"},
+        }
+    )
+
+
+def _config_with_schedule_timezone(timezone_name: str) -> AppConfig:
+    return AppConfig.model_validate(
+        {
+            "version": 1,
+            "routers": [
+                {
+                    "id": "router-1",
+                    "name": "Main router",
+                    "rci_url": "https://router-1.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_ONE_SECRET",
+                    "enabled": True,
+                }
+            ],
+            "services": [],
+            "mappings": [],
+            "runtime": {
+                "artifacts_dir": "data/artifacts",
+                "logs_dir": "data/logs",
+                "schedule": {
+                    "mode": "daily",
+                    "times": ["03:15"],
+                    "timezone": timezone_name,
+                },
+            },
         }
     )
 

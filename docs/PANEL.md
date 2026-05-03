@@ -67,6 +67,10 @@ WireGuard discovery читает интерфейсы с выбранного р
 
 Раздел `📜 Журнал` показывает последние runs, статус, количество изменений и ошибок. В деталях видны artifact path, log path, router/service results и failure details.
 
+Главный экран показывает время начала последнего run, журнал показывает начало и
+завершение run; оба экрана используют `runtime.schedule.timezone`. JSON artifacts
+продолжают хранить timestamps в UTC.
+
 `dry-run` не пишет на роутер. `sync` применяет только managed changes и сохраняет конфигурацию Keenetic после успешного apply.
 
 ## Расписание

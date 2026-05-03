@@ -184,7 +184,10 @@ class PanelRunsFlow:
                 artifact.mode.value,
                 artifact.trigger.value,
                 _format_run_status(artifact.status),
-                _format_history_finished_at(artifact.finished_at),
+                _format_history_finished_at(
+                    artifact.finished_at,
+                    timezone_name=config.runtime.schedule.timezone,
+                ),
                 _format_history_router_names(config=config, artifact=artifact),
                 _format_artifact_summary(artifact),
             )
@@ -244,8 +247,20 @@ class PanelRunsFlow:
         summary.add_row("Режим", artifact.mode.value)
         summary.add_row("Запуск", artifact.trigger.value)
         summary.add_row("Статус", _format_run_status(artifact.status))
-        summary.add_row("Начало", _format_history_finished_at(artifact.started_at))
-        summary.add_row("Завершён", _format_history_finished_at(artifact.finished_at))
+        summary.add_row(
+            "Начало",
+            _format_history_finished_at(
+                artifact.started_at,
+                timezone_name=config.runtime.schedule.timezone,
+            ),
+        )
+        summary.add_row(
+            "Завершён",
+            _format_history_finished_at(
+                artifact.finished_at,
+                timezone_name=config.runtime.schedule.timezone,
+            ),
+        )
         summary.add_row("Итог", _format_artifact_summary(artifact))
         self._console.print(
             Panel(
@@ -410,8 +425,12 @@ def _format_history_status_choice(status: RunStatus) -> str:
     return f"{panel_formatting.ICON_ERROR} {status.value}"
 
 
-def _format_history_finished_at(value) -> str:
-    return value.strftime("%d.%m.%Y %H:%M:%S")
+def _format_history_finished_at(value, *, timezone_name: str = "UTC") -> str:
+    return panel_formatting._format_timestamp(
+        value,
+        timezone_name=timezone_name,
+        include_seconds=True,
+    )
 
 
 def _format_history_page_text(*, total_count: int, page_index: int, page_size: int) -> str:
@@ -431,11 +450,15 @@ def _format_history_router_names(*, config: AppConfig, artifact: RunArtifact) ->
 
 def _format_history_run_choice_title(*, config: AppConfig, run: RecentRun) -> str:
     artifact = run.artifact
+    finished_at = _format_history_finished_at(
+        artifact.finished_at,
+        timezone_name=config.runtime.schedule.timezone,
+    )
     return (
         f"{artifact.mode.value:<8}  "
         f"{artifact.trigger.value:<9}  "
         f"{_format_history_status_choice(artifact.status):<9}  "
-        f"{_format_history_finished_at(artifact.finished_at)}  "
+        f"{finished_at}  "
         f"{_format_history_router_names(config=config, artifact=artifact)}  "
         f"{_format_artifact_summary(artifact)}"
     )
