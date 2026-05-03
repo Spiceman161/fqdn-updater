@@ -154,6 +154,7 @@ def test_main_menu_passes_dashboard_hint_lines_to_prompt(tmp_path) -> None:
 
     output = console.export_text()
     assert f"FQDN-updater v{__version__}" in output
+    assert panel_module.DONATION_LABEL not in output
     assert "Подсказка" not in output
     assert prompts.select_calls[0]["hint_lines"] == panel_module.MAIN_MENU_HINT_LINES
     assert prompts.select_calls[0]["hint_lines"] == (
@@ -293,21 +294,34 @@ def test_dashboard_renders_router_last_run_columns_without_services_column(tmp_p
     assert "fail" in output
 
 
-def test_dashboard_renders_donation_link_and_qr_code(tmp_path) -> None:
-    prompts = ScriptedPromptAdapter(select_answers=["exit"])
+def test_support_menu_renders_sbp_and_ton_donation_methods(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter()
     controller, console = make_panel_controller(tmp_path, prompts=prompts)
-    write_config(controller._config_path)
 
-    controller.run()
+    controller._support_menu()
 
     output = console.export_text()
     assert panel_module.DONATION_LABEL in output
+    assert "Спасибо за поддержку проекта 🚀" in output
+    assert "Спасибо за поддержку проекта и LLM-подписок" not in output
+    assert "Перевод СБП" in output
+    assert "Ссылка на СБП:" in output
+    assert "QR-код ниже можно отсканировать камерой" not in output
     for chunk in panel_module._donation_url_chunks(panel_module.DONATION_URL):
         assert chunk in output
+    assert "Перевод TON" in output
+    assert "Адрес TON:" in output
+    assert panel_module.TON_DONATION_ADDRESS in output
     assert "🤖" in output
     assert "☕" in output
     assert "✨" in output
+    for value in (panel_module.DONATION_URL, panel_module.TON_DONATION_QR_VALUE):
+        qr_lines = panel_module._donation_qr_lines(value)
+        assert len(qr_lines) <= 20
+        qr_width = max(len(line) for line in qr_lines)
+        assert abs(qr_width - len(qr_lines) * 2) <= 1
     assert any(character in output for character in ("█", "▀", "▄"))
+    assert prompts.pause_messages == ["Нажмите любую клавишу для продолжения..."]
 
 
 def test_main_menu_includes_manual_run_and_schedule_sections(tmp_path) -> None:
@@ -317,8 +331,11 @@ def test_main_menu_includes_manual_run_and_schedule_sections(tmp_path) -> None:
 
     controller.run()
 
-    assert "🚀 Ручной запуск" in prompts.select_calls[0]["choice_titles"]
-    assert "⏱ Расписание" in prompts.select_calls[0]["choice_titles"]
+    choice_titles = prompts.select_calls[0]["choice_titles"]
+    assert "🚀 Ручной запуск" in choice_titles
+    assert "⏱ Расписание" in choice_titles
+    assert "💜 Поддержать проект" in choice_titles
+    assert choice_titles[choice_titles.index("✅ Проверка конфига") + 1] == ("💜 Поддержать проект")
 
 
 def test_router_menu_passes_hint_lines_to_prompt(tmp_path) -> None:

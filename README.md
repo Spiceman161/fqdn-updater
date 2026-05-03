@@ -30,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/insta
 Установка конкретного release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash -s -- --version v1.0.0
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash -s -- --version v1.0.1
 ```
 
 Installer разворачивает проект в `/opt/fqdn-updater`, сохраняет пользовательские `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, ставит host-команды `fqdn-updater` и `domaingo`, собирает Docker image и устанавливает systemd timer.
@@ -48,7 +48,7 @@ fqdn-updater update
 Для фиксации на конкретном release tag:
 
 ```bash
-fqdn-updater update --version v1.0.0
+fqdn-updater update --version v1.0.1
 ```
 
 ## Первый запуск

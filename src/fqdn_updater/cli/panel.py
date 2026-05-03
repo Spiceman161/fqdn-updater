@@ -56,7 +56,10 @@ DONATION_LABEL = "Донат на LLM-подписки"
 DONATION_URL = (
     "https://qr.nspk.ru/AS1A00520UPQUQRN8GC8SL8EU39JPKV7?type=01&bank=100000000005&crc=2606"
 )
+TON_DONATION_ADDRESS = "UQB1i96cSlZFaCZIdsJ5v_tTMZcv53cEbgQe9JDj0qbLTsAA"
+TON_DONATION_QR_VALUE = f"ton://transfer/{TON_DONATION_ADDRESS}"
 DONATION_URL_DISPLAY_WIDTH = 72
+DONATION_QR_BORDER_MODULES = 1
 MAIN_MENU_HINT_LINES = (
     "Для начала работы добавьте маршрутизатор Keenetic с ОС версии 5 и выше.",
     "Затем настройте обновление списков по расписанию.",
@@ -133,6 +136,7 @@ class PanelController:
                     _menu_choice(panel_formatting.ICON_SCHEDULE, "Расписание", "schedule"),
                     _menu_choice(panel_formatting.ICON_HISTORY, "Журнал", "runs"),
                     _menu_choice(panel_formatting.ICON_CONFIG, "Проверка конфига", "config"),
+                    _menu_choice("💜", "Поддержать проект", "support"),
                     _menu_choice(panel_formatting.ICON_ABOUT, "О панели", "about"),
                     _menu_choice(panel_formatting.ICON_EXIT, "Выход", "exit"),
                 ],
@@ -154,6 +158,8 @@ class PanelController:
                 self._runs_menu()
             elif choice == "config":
                 self._config_menu(config=config)
+            elif choice == "support":
+                self._support_menu()
             elif choice == "about":
                 self._about_menu()
 
@@ -185,7 +191,6 @@ class PanelController:
         )
         header = Text.assemble(title, "  ", subtitle)
         self._console.print(Panel(header, border_style="bright_cyan"))
-        self._console.print(_donation_panel())
 
         router_table = Table(show_header=True, header_style="bold white", box=None)
         router_table.add_column("Маршрутизатор", no_wrap=True)
@@ -507,6 +512,10 @@ class PanelController:
             f"mappings={len(config.mappings)}"
         )
         self._console.print(f"secrets_env_file={config.runtime.secrets_env_file}")
+        self._pause()
+
+    def _support_menu(self) -> None:
+        self._console.print(_support_panel())
         self._pause()
 
     def _about_menu(self) -> None:
@@ -977,31 +986,59 @@ def _menu_choice(
     )
 
 
-def _donation_panel() -> Panel:
-    content = Table.grid()
-    content.add_column()
-    content.add_row(_donation_link_text())
-    content.add_row("")
-    content.add_row(_donation_qr_text())
+def _support_panel() -> Panel:
     return Panel(
-        content,
+        _support_content_text(),
         title=f"💜 {DONATION_LABEL} 🤖☕✨",
         border_style="magenta",
     )
 
 
-def _donation_link_text() -> Text:
+def _support_content_text() -> Text:
     text = Text.assemble(
-        ("Спасибо за поддержку проекта и LLM-подписок ", "bold white"),
-        ("🚀\n\n", "magenta"),
-        ("🔗 ", "bright_cyan"),
+        ("Спасибо за поддержку проекта ", "bold white"),
+        ("🚀\n", "magenta"),
     )
-    for index, chunk in enumerate(_donation_url_chunks(DONATION_URL)):
+    text.append_text(
+        _donation_method_text(
+            title="Перевод СБП",
+            qr_value=DONATION_URL,
+            value_label="Ссылка на СБП:",
+            display_value=DONATION_URL,
+            link_target=DONATION_URL,
+        )
+    )
+    text.append("\n\n")
+    text.append_text(
+        _donation_method_text(
+            title="Перевод TON",
+            qr_value=TON_DONATION_QR_VALUE,
+            value_label="Адрес TON:",
+            display_value=TON_DONATION_ADDRESS,
+            link_target=TON_DONATION_QR_VALUE,
+        )
+    )
+    return text
+
+
+def _donation_method_text(
+    *,
+    title: str,
+    qr_value: str,
+    value_label: str,
+    display_value: str,
+    link_target: str,
+) -> Text:
+    text = Text.assemble((title, "bold magenta"), "\n")
+    text.append_text(_donation_qr_text(qr_value))
+    text.append("\n")
+    text.append(value_label, style="dim")
+    text.append("\n")
+    text.append("🔗 ", style="bright_cyan")
+    for index, chunk in enumerate(_donation_url_chunks(display_value)):
         if index:
             text.append("\n   ")
-        text.append(chunk, style=f"bright_cyan underline link {DONATION_URL}")
-    text.append("\n\nQR-код ниже можно отсканировать камерой ", style="dim")
-    text.append("📱", style="magenta")
+        text.append(chunk, style=f"bright_cyan underline link {link_target}")
     return text
 
 
@@ -1012,9 +1049,9 @@ def _donation_url_chunks(value: str) -> list[str]:
     ]
 
 
-def _donation_qr_text() -> Text:
+def _donation_qr_text(value: str) -> Text:
     try:
-        lines = _donation_qr_lines(DONATION_URL)
+        lines = _donation_qr_lines(value)
     except ModuleNotFoundError:
         return Text("QR недоступен: не установлен пакет qrcode.", style="yellow")
     return Text("\n".join(lines), style="bright_white")
@@ -1024,12 +1061,10 @@ def _donation_qr_lines(value: str) -> list[str]:
     import qrcode
     from qrcode.constants import ERROR_CORRECT_M
 
-    qr = qrcode.QRCode(error_correction=ERROR_CORRECT_M, border=4)
+    qr = qrcode.QRCode(error_correction=ERROR_CORRECT_M, border=DONATION_QR_BORDER_MODULES)
     qr.add_data(value)
     qr.make(fit=True)
-    matrix = qr.get_matrix()
-    if len(matrix) % 2:
-        matrix.append([False] * len(matrix[0]))
+    matrix = _pad_qr_matrix_for_half_blocks(qr.get_matrix())
 
     lines: list[str] = []
     for row_index in range(0, len(matrix), 2):
@@ -1041,6 +1076,13 @@ def _donation_qr_lines(value: str) -> list[str]:
         )
         lines.append(line)
     return lines
+
+
+def _pad_qr_matrix_for_half_blocks(matrix: list[list[bool]]) -> list[list[bool]]:
+    padded_matrix = [list(row) for row in matrix]
+    if len(padded_matrix) % 2:
+        padded_matrix.append([False] * len(padded_matrix[0]))
+    return padded_matrix
 
 
 def _qr_half_block(*, upper_module: bool, lower_module: bool) -> str:
