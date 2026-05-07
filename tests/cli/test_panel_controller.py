@@ -376,8 +376,9 @@ def test_support_menu_renders_sbp_and_ton_donation_methods(tmp_path) -> None:
     assert "✨" in output
     for value in (panel_module.DONATION_URL, panel_module.TON_DONATION_QR_VALUE):
         qr_lines = panel_module._donation_qr_lines(value)
-        assert len(qr_lines) <= 20
+        assert len(qr_lines) <= 18
         qr_width = max(len(line) for line in qr_lines)
+        assert qr_width <= 35
         assert abs(qr_width - len(qr_lines) * 2) <= 1
     assert any(character in output for character in ("█", "▀", "▄"))
     assert prompts.pause_messages == ["Нажмите любую клавишу для продолжения..."]
@@ -443,6 +444,8 @@ def test_about_menu_describes_project_scope_and_source_repository(tmp_path) -> N
     assert "FQDN-updater panel" in output
     assert "Keenetic (Netcraze)" in output
     assert "https://github.com/itdoginfo/allow-domains" in output
+    assert "https://github.com/Spiceman161/fqdn-updater" in output
+    assert "Issues репозитория проекта" in output
     assert "поддерживает эти списки в актуальном состоянии" in output
     assert "ручной запуск" in output
     assert prompts.pause_messages == ["Нажмите любую клавишу для продолжения..."]

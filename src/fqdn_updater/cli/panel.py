@@ -60,6 +60,7 @@ TON_DONATION_ADDRESS = "UQB1i96cSlZFaCZIdsJ5v_tTMZcv53cEbgQe9JDj0qbLTsAA"
 TON_DONATION_QR_VALUE = f"ton://transfer/{TON_DONATION_ADDRESS}"
 DONATION_URL_DISPLAY_WIDTH = 72
 DONATION_QR_BORDER_MODULES = 1
+DONATION_QR_OPTIMIZE_CHUNK_SIZE = 5
 MAIN_MENU_HINT_LINES = (
     "Для начала работы добавьте маршрутизатор Keenetic с ОС версии 5 и выше.",
     "Затем настройте обновление списков по расписанию.",
@@ -538,6 +539,10 @@ class PanelController:
         self._console.print(
             "Панель помогает безопасно настроить маршрутизаторы, списки, маршруты, "
             "расписание и ручной запуск без прямого редактирования config."
+        )
+        self._console.print("Репозиторий проекта: https://github.com/Spiceman161/fqdn-updater")
+        self._console.print(
+            "Пожелания и предложения лучше писать в Issues репозитория проекта."
         )
         self._pause()
 
@@ -1064,10 +1069,10 @@ def _donation_qr_text(value: str) -> Text:
 
 def _donation_qr_lines(value: str) -> list[str]:
     import qrcode
-    from qrcode.constants import ERROR_CORRECT_M
+    from qrcode.constants import ERROR_CORRECT_L
 
-    qr = qrcode.QRCode(error_correction=ERROR_CORRECT_M, border=DONATION_QR_BORDER_MODULES)
-    qr.add_data(value)
+    qr = qrcode.QRCode(error_correction=ERROR_CORRECT_L, border=DONATION_QR_BORDER_MODULES)
+    qr.add_data(value, optimize=DONATION_QR_OPTIMIZE_CHUNK_SIZE)
     qr.make(fit=True)
     matrix = _pad_qr_matrix_for_half_blocks(qr.get_matrix())
 
