@@ -541,9 +541,7 @@ class PanelController:
             "расписание и ручной запуск без прямого редактирования config."
         )
         self._console.print("Репозиторий проекта: https://github.com/Spiceman161/fqdn-updater")
-        self._console.print(
-            "Пожелания и предложения лучше писать в Issues репозитория проекта."
-        )
+        self._console.print("Пожелания и предложения лучше писать в Issues репозитория проекта.")
         self._pause()
 
     def _select_router(
