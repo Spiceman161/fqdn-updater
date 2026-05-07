@@ -43,12 +43,18 @@ Installer разворачивает проект в `/opt/fqdn-updater`, сох
 fqdn-updater update
 ```
 
-Она повторно запускает официальный installer, пересобирает Docker image и переустанавливает wrapper/systemd units. Пользовательские файлы остаются на месте.
+Она запускает установленный локальный installer `/opt/fqdn-updater/install.sh` через временную копию, пересобирает Docker image и переустанавливает wrapper/systemd units. Пользовательские файлы остаются на месте.
 
 Для фиксации на конкретном release tag:
 
 ```bash
 fqdn-updater update --version v1.0.2
+```
+
+Если локальный installer отсутствует или недоступен для чтения, wrapper завершится с ошибкой и покажет команду ручной переустановки для Ubuntu 22.04+:
+
+```bash
+curl -fsSL https://github.com/Spiceman161/fqdn-updater/raw/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
 ```
 
 ## Первый запуск

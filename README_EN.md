@@ -42,7 +42,13 @@ fqdn-updater update
 fqdn-updater update --version v1.0.2
 ```
 
-The update command reruns the official installer, rebuilds the Docker image, and keeps operator-owned runtime files in place.
+The update command runs the installed local installer from `/opt/fqdn-updater/install.sh` through a temporary copy, rebuilds the Docker image, and keeps operator-owned runtime files in place.
+
+If the local installer is missing or unreadable, the wrapper fails and prints the manual reinstall command for Ubuntu 22.04 or later:
+
+```bash
+curl -fsSL https://github.com/Spiceman161/fqdn-updater/raw/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
+```
 
 ## First Run
 

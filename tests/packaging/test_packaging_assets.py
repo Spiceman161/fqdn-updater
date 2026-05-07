@@ -278,18 +278,39 @@ def test_install_script_uses_clean_deploy_while_preserving_operator_state() -> N
 
 def test_install_script_wrapper_routes_and_security_constraints() -> None:
     install_script = _read("install.sh")
+    wrapper_start = install_script.index("install_wrapper()")
+    main_start = install_script.index("main()")
+    wrapper_block = install_script[wrapper_start:main_start]
+    run_update_start = wrapper_block.index("run_update()")
+    run_update_end = wrapper_block.index('cd "${INSTALL_DIR}"')
+    run_update_block = wrapper_block[run_update_start:run_update_end]
 
     for text in [
         "sync|dry-run|status)",
         'exec docker compose run --rm fqdn-updater "${command_name}" "$@"',
-        'readonly INSTALLER_URL="https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh"',
+        'readonly LOCAL_INSTALLER="${INSTALL_DIR}/install.sh"',
+        "printf 'readonly REINSTALL_RELEASE_TAG=%q\\n'",
+        "For Ubuntu 22.04 or later, reinstall from a versioned release tag with:",
+        "https://github.com/Spiceman161/fqdn-updater/raw/%s/install.sh",
         "update)",
         'run_update "$@"',
-        'exec bash -c \'curl -fsSL "$0" | sudo bash -s -- "$@"\' "${INSTALLER_URL}" "$@"',
+        '[[ ! -r "${LOCAL_INSTALLER}" ]]',
+        'temp_copy="$(mktemp)"',
+        'cp "${LOCAL_INSTALLER}" "${temp_copy}"',
+        'chmod 0700 "${temp_copy}"',
+        'bash "${temp_copy}" "$@"',
+        'sudo bash "${temp_copy}" "$@"',
+        'rm -f "${temp_copy}"',
+        'exit "${status}"',
         "panel|init|config|router|mapping|schedule)",
         'exec "${VENV_CLI}" "${command_name}" "$@"',
     ]:
-        assert text in install_script, text
+        assert text in wrapper_block, text
+
+    assert "readonly INSTALLER_URL" not in wrapper_block
+    assert "raw.githubusercontent.com" not in wrapper_block
+    assert "main/install.sh" not in wrapper_block
+    assert "curl -fsSL" not in run_update_block
 
     for marker in [
         "ghp_",
@@ -305,3 +326,16 @@ def test_install_script_wrapper_routes_and_security_constraints() -> None:
         "bash_profile",
     ]:
         assert marker not in install_script, marker
+
+
+def test_install_script_generates_versioned_reinstall_guidance() -> None:
+    install_script = _read("install.sh")
+
+    resolve_start = install_script.index("resolve_wrapper_reinstall_tag()")
+    install_wrapper_start = install_script.index("install_wrapper()")
+    resolve_block = install_script[resolve_start:install_wrapper_start]
+
+    assert 'if [[ "${release_ref}" == tags/* ]]; then' in resolve_block
+    assert "printf '%s\\n' \"${release_ref#tags/}\"" in resolve_block
+    assert "from fqdn_updater import __version__; print(__version__)" in resolve_block
+    assert "printf 'v%s\\n' \"${package_version}\"" in resolve_block

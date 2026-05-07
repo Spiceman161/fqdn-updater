@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/insta
 fqdn-updater update
 ```
 
+Update использует локальный `/opt/fqdn-updater/install.sh`; если он отсутствует или недоступен для чтения, wrapper покажет команду ручной переустановки из versioned release tag для Ubuntu 22.04+.
+
 ## 2. Откройте панель
 
 ```bash

@@ -51,6 +51,8 @@ Installer ставит проект в `/opt/fqdn-updater`.
 
 Host wrapper запускает `sync`, `dry-run` и `status` через Docker Compose. Команды управления (`panel`, `init`, `config`, `router`, `mapping`, `schedule`) идут через локальный Python venv.
 
+`fqdn-updater update` запускает локальный `/opt/fqdn-updater/install.sh` через временную копию. Если локальный installer отсутствует или недоступен для чтения, wrapper должен завершиться с ошибкой и показать versioned reinstall command для Ubuntu 22.04+.
+
 ## Команды
 
 Основной gate:

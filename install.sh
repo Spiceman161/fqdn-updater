@@ -303,26 +303,81 @@ build_runtime_image() {
     )
 }
 
+resolve_wrapper_reinstall_tag() {
+    local release_ref="$1"
+
+    if [[ "${release_ref}" == tags/* ]]; then
+        printf '%s\n' "${release_ref#tags/}"
+        return
+    fi
+
+    local package_version
+    package_version="$("${VENV_DIR}/bin/python" -c 'from fqdn_updater import __version__; print(__version__)')" \
+        || fail "Cannot determine installed package version."
+    [[ -n "${package_version}" ]] || fail "Cannot determine installed package version."
+
+    if [[ "${package_version}" == v* ]]; then
+        printf '%s\n' "${package_version}"
+    else
+        printf 'v%s\n' "${package_version}"
+    fi
+}
+
 install_wrapper() {
+    local release_ref="$1"
+    local reinstall_release_tag
+    reinstall_release_tag="$(resolve_wrapper_reinstall_tag "${release_ref}")"
+
     cat > "${WRAPPER_PATH}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
 readonly INSTALL_DIR="/opt/fqdn-updater"
 readonly VENV_CLI="${INSTALL_DIR}/.venv/bin/fqdn-updater"
-readonly INSTALLER_URL="https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh"
+readonly LOCAL_INSTALLER="${INSTALL_DIR}/install.sh"
+EOF
+    printf 'readonly REINSTALL_RELEASE_TAG=%q\n' "${reinstall_release_tag}" >> "${WRAPPER_PATH}"
+    cat >> "${WRAPPER_PATH}" <<'EOF'
+
+print_reinstall_command() {
+    printf 'For Ubuntu 22.04 or later, reinstall from a versioned release tag with:\n' >&2
+    printf 'curl -fsSL https://github.com/Spiceman161/fqdn-updater/raw/%s/install.sh | sudo bash -s -- --version %s\n' \
+        "${REINSTALL_RELEASE_TAG}" \
+        "${REINSTALL_RELEASE_TAG}" \
+        >&2
+}
 
 run_update() {
-    if [[ "${EUID}" -eq 0 ]]; then
-        exec bash -c 'curl -fsSL "$0" | bash -s -- "$@"' "${INSTALLER_URL}" "$@"
+    if [[ ! -r "${LOCAL_INSTALLER}" ]]; then
+        printf 'Error: Local installer %s is missing or unreadable.\n' "${LOCAL_INSTALLER}" >&2
+        print_reinstall_command
+        exit 1
     fi
 
-    if ! command -v sudo >/dev/null 2>&1; then
+    if [[ "${EUID}" -ne 0 ]] && ! command -v sudo >/dev/null 2>&1; then
         printf 'Error: sudo is required to update fqdn-updater. Re-run as root.\n' >&2
         exit 1
     fi
 
-    exec bash -c 'curl -fsSL "$0" | sudo bash -s -- "$@"' "${INSTALLER_URL}" "$@"
+    local temp_copy
+    temp_copy="$(mktemp)"
+    trap 'rm -f "${temp_copy}"' EXIT
+    cp "${LOCAL_INSTALLER}" "${temp_copy}"
+    chmod 0700 "${temp_copy}"
+
+    local status
+    set +e
+    if [[ "${EUID}" -eq 0 ]]; then
+        bash "${temp_copy}" "$@"
+    else
+        sudo bash "${temp_copy}" "$@"
+    fi
+    status=$?
+    set -e
+
+    rm -f "${temp_copy}"
+    trap - EXIT
+    exit "${status}"
 }
 
 cd "${INSTALL_DIR}"
@@ -376,7 +431,7 @@ main() {
     set_config_permissions
     install_schedule
     build_runtime_image
-    install_wrapper
+    install_wrapper "${release_ref}"
 
     printf 'fqdn-updater %s installed in %s\n' "${release_ref}" "${INSTALL_DIR}"
 }
