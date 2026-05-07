@@ -107,7 +107,7 @@ def test_operator_docs_cover_docker_compose_systemd_and_runtime_paths() -> None:
     assert "docs/LLM_CONTEXT.md" in readme
     assert "schedule install" in readme
     assert (
-        "curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh"
+        "curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.4/install.sh"
         in readme
     )
 

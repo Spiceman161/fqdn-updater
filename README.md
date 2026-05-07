@@ -5,15 +5,18 @@
 [![Verify](https://github.com/Spiceman161/fqdn-updater/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/Spiceman161/fqdn-updater/actions/workflows/verify.yml)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
 
-**FQDN-updater** — source-available CLI-инструмент для безопасной синхронизации managed FQDN object-group, DNS-proxy route bindings и CIDR static routes на роутерах Keenetic через KeenDNS RCI API.
+**FQDN-updater** — source-available CLI-инструмент для безопасной синхронизации Статических маршрутов (managed FQDN object-group, DNS-proxy route bindings и CIDR static routes) на роутерах Keenetic (Netcraze) через KeenDNS RCI API.
 
-Проект рассчитан на небольшой VPS или домашний сервер. Оператор хранит конфиг и секреты локально, проверяет изменения через `status` и `dry-run`, применяет только явно управляемые mappings через `sync`, а регулярный запуск выполняет как одноразовый Docker Compose job под systemd timer.
+Проект рассчитан для установки на небольшой VPS или домашний сервер. Оператор хранит конфиг и секреты локально, проверяет изменения через `status` и `dry-run`, применяет только явно управляемые mappings через `sync`, а регулярный запуск выполняет как одноразовый Docker Compose job под systemd timer.
+
+Для управления и настройки FQDN-updater имеет удобную TUI панель.
 
 ## Модель безопасности
 
-- Только Keenetic.
+- Только Keenetic (Netcraze).
 - Только KeenDNS RCI API по HTTPS с HTTP Digest Auth.
 - Только отдельный low-privilege API-пользователь для опубликованного RCI web application.
+- Только сгенерированные стойкие пароли для RCI API.
 - Любой apply сначала читает текущее состояние роутера, строит deterministic diff и только затем пишет изменения.
 - Инструмент меняет только managed object-group, DNS route bindings и static routes, описанные в `config.json`.
 - `status`, `dry-run`, журнал и read-only проверки панели не выполняют удалённых write-операций.
@@ -24,7 +27,7 @@
 На чистой Ubuntu 22.04 и новее используйте versioned release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.4/install.sh | sudo bash -s -- --version v1.0.4
 ```
 
 Если installer запущен без `--version`, он установит latest GitHub Release. Если latest release недоступен или ответ GitHub некорректен, установка завершится с ошибкой до скачивания кода проекта.
@@ -46,13 +49,13 @@ fqdn-updater update
 Для фиксации на конкретном release tag:
 
 ```bash
-fqdn-updater update --version v1.0.3
+fqdn-updater update --version v1.0.4
 ```
 
 Если локальный installer отсутствует или недоступен для чтения, wrapper завершится с ошибкой и покажет команду ручной переустановки для Ubuntu 22.04+:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.4/install.sh | sudo bash -s -- --version v1.0.4
 ```
 
 ## Первый запуск

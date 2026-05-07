@@ -5,15 +5,18 @@ English | [Русский](README.md)
 [![Verify](https://github.com/Spiceman161/fqdn-updater/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/Spiceman161/fqdn-updater/actions/workflows/verify.yml)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
 
-**FQDN-updater** is a source-available CLI tool for safely synchronizing managed Keenetic FQDN object-groups, DNS-proxy route bindings, and CIDR static routes through the KeenDNS RCI API.
+**FQDN-updater** is a source-available CLI tool for safely synchronizing Static Routes (managed FQDN object-groups, DNS-proxy route bindings, and CIDR static routes) on Keenetic (Netcraze) routers through the KeenDNS RCI API.
 
-It is built for a small VPS or home server: keep config and secrets locally, inspect router state with `status`, preview changes with `dry-run`, apply only explicitly managed mappings with `sync`, and run the same one-shot Docker Compose job from a systemd timer.
+It is intended to be installed on a small VPS or home server: keep config and secrets locally, inspect router state with `status`, preview changes with `dry-run`, apply only explicitly managed mappings with `sync`, and run the same one-shot Docker Compose job from a systemd timer.
+
+FQDN-updater includes a convenient TUI panel for management and setup.
 
 ## Safety Model
 
-- Keenetic only.
+- Keenetic (Netcraze) only.
 - KeenDNS RCI API over HTTPS only, with HTTP Digest Auth.
 - Dedicated low-privilege API user for the published RCI web application.
+- Generated strong passwords for the RCI API only.
 - Every apply reads current router state first, builds a deterministic diff, and only then writes changes.
 - The tool changes only managed object-groups, DNS route bindings, and static routes declared in `config.json`.
 - `status`, `dry-run`, run history, and read-only panel checks do not perform remote writes.
@@ -24,7 +27,7 @@ It is built for a small VPS or home server: keep config and secrets locally, ins
 On a clean Ubuntu 22.04 or later host, use a versioned release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.4/install.sh | sudo bash -s -- --version v1.0.4
 ```
 
 If the installer is run without `--version`, it installs the latest GitHub Release. If the latest release is unavailable or GitHub returns malformed metadata, installation fails before downloading project code.
@@ -37,7 +40,7 @@ The installer deploys the project to `/opt/fqdn-updater`, preserves existing `co
 
 ```bash
 fqdn-updater update
-fqdn-updater update --version v1.0.3
+fqdn-updater update --version v1.0.4
 ```
 
 The update command runs the installed local installer from `/opt/fqdn-updater/install.sh` through a temporary copy, installs the latest GitHub Release, verifies the release tarball against the mandatory `.sha256` asset, rebuilds the Docker image, and keeps operator-owned runtime files in place. It does not fall back to `main`: if the latest release cannot be resolved or checksum verification fails, update stops before extraction and deployment.
@@ -45,7 +48,7 @@ The update command runs the installed local installer from `/opt/fqdn-updater/in
 If the local installer is missing or unreadable, the wrapper fails and prints the manual reinstall command for Ubuntu 22.04 or later:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.4/install.sh | sudo bash -s -- --version v1.0.4
 ```
 
 ## First Run

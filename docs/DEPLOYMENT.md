@@ -3,7 +3,7 @@
 ## Ubuntu 22.04+
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.4/install.sh | sudo bash -s -- --version v1.0.4
 ```
 
 По умолчанию используется `/opt/fqdn-updater`. Installer требует systemd, ставит Docker Engine/Compose plugin при необходимости, создаёт Python venv, собирает Docker image и устанавливает host wrapper `/usr/local/bin/fqdn-updater` плюс alias `domaingo`. Production-установка должна идти из versioned release tag; запуск installer без `--version` устанавливает latest GitHub Release и завершается с ошибкой, если latest release нельзя определить.
@@ -27,13 +27,13 @@ Wrapper запускает локальный installer `/opt/fqdn-updater/insta
 Для конкретного release tag:
 
 ```bash
-fqdn-updater update --version v1.0.3
+fqdn-updater update --version v1.0.4
 ```
 
 Если `/opt/fqdn-updater/install.sh` отсутствует или недоступен для чтения, wrapper завершится с ошибкой и покажет точную команду ручной переустановки для Ubuntu 22.04+:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.4/install.sh | sudo bash -s -- --version v1.0.4
 ```
 
 ## Release assets для maintainers
@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/ins
 Перед публикацией release tag подготовьте оба обязательных asset:
 
 ```bash
-TAG=v1.0.3
+TAG=v1.0.4
 mkdir -p dist
 git archive --format=tar.gz --prefix="fqdn-updater-${TAG}/" -o "dist/fqdn-updater-${TAG}.tar.gz" "${TAG}"
 (
