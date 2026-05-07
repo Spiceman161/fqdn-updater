@@ -3,10 +3,10 @@
 ## Ubuntu 22.04+
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
 ```
 
-По умолчанию используется `/opt/fqdn-updater`. Installer требует systemd, ставит Docker Engine/Compose plugin при необходимости, создаёт Python venv, собирает Docker image и устанавливает host wrapper `/usr/local/bin/fqdn-updater` плюс alias `domaingo`.
+По умолчанию используется `/opt/fqdn-updater`. Installer требует systemd, ставит Docker Engine/Compose plugin при необходимости, создаёт Python venv, собирает Docker image и устанавливает host wrapper `/usr/local/bin/fqdn-updater` плюс alias `domaingo`. Production-установка должна идти из versioned release tag; запуск installer без `--version` устанавливает latest GitHub Release и завершается с ошибкой, если latest release нельзя определить.
 
 Wrapper без аргументов открывает панель. `sync`, `dry-run` и `status` запускаются через Docker Compose, чтобы scheduled runtime совпадал с ручным runtime.
 
@@ -18,7 +18,7 @@ Wrapper без аргументов открывает панель. `sync`, `dr
 fqdn-updater update
 ```
 
-Wrapper запускает локальный installer `/opt/fqdn-updater/install.sh` через временную копию, чтобы обновление не зависело от файла, который deployment может заменить. Installer скачивает latest GitHub Release, а если release недоступен — текущий `main`, заменяет код в `/opt/fqdn-updater`, пересобирает Docker image и переустанавливает systemd units.
+Wrapper запускает локальный installer `/opt/fqdn-updater/install.sh` через временную копию, чтобы обновление не зависело от файла, который deployment может заменить. Installer скачивает latest GitHub Release, заменяет код в `/opt/fqdn-updater`, пересобирает Docker image и переустанавливает systemd units. Если latest release недоступен или GitHub вернул некорректные metadata, update завершается с ошибкой до скачивания кода проекта; fallback на `main` отсутствует.
 
 Перед заменой он сохраняет пользовательские `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, затем возвращает их обратно.
 
@@ -31,7 +31,7 @@ fqdn-updater update --version v1.0.2
 Если `/opt/fqdn-updater/install.sh` отсутствует или недоступен для чтения, wrapper завершится с ошибкой и покажет точную команду ручной переустановки для Ubuntu 22.04+:
 
 ```bash
-curl -fsSL https://github.com/Spiceman161/fqdn-updater/raw/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
 ```
 
 ## Docker Compose runtime

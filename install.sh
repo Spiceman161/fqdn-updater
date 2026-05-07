@@ -5,7 +5,6 @@ readonly REPOSITORY_OWNER="Spiceman161"
 readonly REPOSITORY_NAME="fqdn-updater"
 readonly REPOSITORY_SLUG="${REPOSITORY_OWNER}/${REPOSITORY_NAME}"
 readonly GITHUB_API_URL="https://api.github.com/repos/${REPOSITORY_SLUG}"
-readonly DEFAULT_BRANCH="main"
 readonly INSTALL_DIR="/opt/fqdn-updater"
 readonly VENV_DIR="${INSTALL_DIR}/.venv"
 readonly CONFIG_PATH="${INSTALL_DIR}/config.json"
@@ -45,6 +44,7 @@ parse_args() {
             --version)
                 [[ $# -ge 2 ]] || fail "--version requires a tag value."
                 RELEASE_VERSION="$2"
+                [[ -n "${RELEASE_VERSION}" ]] || fail "--version requires a non-empty tag value."
                 shift 2
                 ;;
             -h|--help)
@@ -148,34 +148,51 @@ install_docker_packages() {
     docker_runtime_available || fail "Docker with Compose plugin is required."
 }
 
-resolve_release_ref() {
+resolve_release_tag() {
     if [[ -n "${RELEASE_VERSION}" ]]; then
-        printf 'tags/%s\n' "${RELEASE_VERSION}"
+        printf '%s\n' "${RELEASE_VERSION}"
         return
     fi
 
     local latest_release_json
-    if latest_release_json="$(curl \
+    latest_release_json="$(curl \
         -fsSL \
         -H "Accept: application/vnd.github+json" \
         -H "User-Agent: fqdn-updater-installer" \
         "${GITHUB_API_URL}/releases/latest" \
-        2>/dev/null)"; then
-        local latest_version
-        latest_version="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])' \
-            <<< "${latest_release_json}")"
-        printf 'tags/%s\n' "${latest_version}"
-        return
-    fi
+        2>/dev/null)" \
+        || fail "Cannot resolve latest GitHub Release for ${REPOSITORY_SLUG}."
 
-    printf 'heads/%s\n' "${DEFAULT_BRANCH}"
+    local latest_version
+    latest_version="$(python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+
+tag_name = payload.get("tag_name")
+if not isinstance(tag_name, str):
+    sys.exit(1)
+
+tag_name = tag_name.strip()
+if not tag_name:
+    sys.exit(1)
+
+print(tag_name)
+' <<< "${latest_release_json}")" \
+        || fail "Cannot parse latest GitHub Release response."
+
+    printf '%s\n' "${latest_version}"
 }
 
 download_release_tarball() {
-    local release_ref="$1"
+    local release_tag="$1"
     local archive_path="${TEMP_DIR}/release.tar.gz"
     local extract_dir="${TEMP_DIR}/release"
-    local archive_url="https://github.com/${REPOSITORY_SLUG}/archive/refs/${release_ref}.tar.gz"
+    local archive_url="https://github.com/${REPOSITORY_SLUG}/archive/refs/tags/${release_tag}.tar.gz"
 
     mkdir -p "${extract_dir}"
     curl --fail --silent --show-error --location \
@@ -303,30 +320,9 @@ build_runtime_image() {
     )
 }
 
-resolve_wrapper_reinstall_tag() {
-    local release_ref="$1"
-
-    if [[ "${release_ref}" == tags/* ]]; then
-        printf '%s\n' "${release_ref#tags/}"
-        return
-    fi
-
-    local package_version
-    package_version="$("${VENV_DIR}/bin/python" -c 'from fqdn_updater import __version__; print(__version__)')" \
-        || fail "Cannot determine installed package version."
-    [[ -n "${package_version}" ]] || fail "Cannot determine installed package version."
-
-    if [[ "${package_version}" == v* ]]; then
-        printf '%s\n' "${package_version}"
-    else
-        printf 'v%s\n' "${package_version}"
-    fi
-}
-
 install_wrapper() {
-    local release_ref="$1"
-    local reinstall_release_tag
-    reinstall_release_tag="$(resolve_wrapper_reinstall_tag "${release_ref}")"
+    local reinstall_release_tag="$1"
+    [[ -n "${reinstall_release_tag}" ]] || fail "Cannot install wrapper without a release tag."
 
     cat > "${WRAPPER_PATH}" <<'EOF'
 #!/usr/bin/env bash
@@ -341,7 +337,7 @@ EOF
 
 print_reinstall_command() {
     printf 'For Ubuntu 22.04 or later, reinstall from a versioned release tag with:\n' >&2
-    printf 'curl -fsSL https://github.com/Spiceman161/fqdn-updater/raw/%s/install.sh | sudo bash -s -- --version %s\n' \
+    printf 'curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/%s/install.sh | sudo bash -s -- --version %s\n' \
         "${REINSTALL_RELEASE_TAG}" \
         "${REINSTALL_RELEASE_TAG}" \
         >&2
@@ -421,9 +417,9 @@ main() {
     install_base_packages
     install_docker_packages
 
-    local release_ref
-    release_ref="$(resolve_release_ref)"
-    download_release_tarball "${release_ref}"
+    local release_tag
+    release_tag="$(resolve_release_tag)"
+    download_release_tarball "${release_tag}"
 
     deploy_release "${DOWNLOAD_RELEASE_DIR}"
     install_virtualenv
@@ -431,9 +427,9 @@ main() {
     set_config_permissions
     install_schedule
     build_runtime_image
-    install_wrapper "${release_ref}"
+    install_wrapper "${release_tag}"
 
-    printf 'fqdn-updater %s installed in %s\n' "${release_ref}" "${INSTALL_DIR}"
+    printf 'fqdn-updater %s installed in %s\n' "${release_tag}" "${INSTALL_DIR}"
 }
 
 main "$@"

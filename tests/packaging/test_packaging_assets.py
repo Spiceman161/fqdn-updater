@@ -107,7 +107,7 @@ def test_operator_docs_cover_docker_compose_systemd_and_runtime_paths() -> None:
     assert "docs/LLM_CONTEXT.md" in readme
     assert "schedule install" in readme
     assert (
-        "curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh"
+        "curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh"
         in readme
     )
 
@@ -152,7 +152,6 @@ def test_install_script_covers_expected_installation_contract() -> None:
         'readonly REPOSITORY_OWNER="Spiceman161"',
         'readonly REPOSITORY_NAME="fqdn-updater"',
         'readonly REPOSITORY_SLUG="${REPOSITORY_OWNER}/${REPOSITORY_NAME}"',
-        'readonly DEFAULT_BRANCH="main"',
         'DOWNLOAD_RELEASE_DIR=""',
         "/opt/fqdn-updater",
         "/usr/local/bin/fqdn-updater",
@@ -162,10 +161,12 @@ def test_install_script_covers_expected_installation_contract() -> None:
         "docker_runtime_available",
         "require_ubuntu_22_or_later",
         "This installer supports Ubuntu 22.04 and later only.",
+        "--version requires a non-empty tag value.",
         "${VERSION_CODENAME} stable",
         '"${GITHUB_API_URL}/releases/latest"',
-        "printf 'heads/%s\\n' \"${DEFAULT_BRANCH}\"",
-        "archive/refs/${release_ref}.tar.gz",
+        "Cannot resolve latest GitHub Release for ${REPOSITORY_SLUG}.",
+        "Cannot parse latest GitHub Release response.",
+        "archive/refs/tags/${release_tag}.tar.gz",
         "Downloaded archive does not contain pyproject.toml.",
         "set_config_permissions",
         'install -m 0600 /dev/null "${INSTALL_DIR}/.env.secrets"',
@@ -188,7 +189,7 @@ def test_install_script_preserves_existing_docker_runtime() -> None:
 
     runtime_check_start = install_script.index("docker_runtime_available()")
     install_start = install_script.index("install_docker_packages()")
-    install_end = install_script.index("resolve_release_ref()")
+    install_end = install_script.index("resolve_release_tag()")
     runtime_check_block = install_script[runtime_check_start:install_start]
     install_block = install_script[install_start:install_end]
 
@@ -206,18 +207,22 @@ def test_install_script_preserves_existing_docker_runtime() -> None:
     )
 
 
-def test_install_script_installs_main_when_no_github_release_exists() -> None:
+def test_install_script_resolves_latest_release_without_main_fallback() -> None:
     install_script = _read("install.sh")
 
-    resolve_start = install_script.index("resolve_release_ref()")
+    resolve_start = install_script.index("resolve_release_tag()")
     download_start = install_script.index("download_release_tarball()")
     resolve_block = install_script[resolve_start:download_start]
 
-    assert "printf 'tags/%s\\n' \"${RELEASE_VERSION}\"" in resolve_block
+    assert "printf '%s\\n' \"${RELEASE_VERSION}\"" in resolve_block
     assert '"${GITHUB_API_URL}/releases/latest"' in resolve_block
     assert "2>/dev/null" in resolve_block
-    assert "printf 'tags/%s\\n' \"${latest_version}\"" in resolve_block
-    assert "printf 'heads/%s\\n' \"${DEFAULT_BRANCH}\"" in resolve_block
+    assert '|| fail "Cannot resolve latest GitHub Release for ${REPOSITORY_SLUG}."' in resolve_block
+    assert '|| fail "Cannot parse latest GitHub Release response."' in resolve_block
+    assert 'payload.get("tag_name")' in resolve_block
+    assert "printf '%s\\n' \"${latest_version}\"" in resolve_block
+    assert "heads/" not in resolve_block
+    assert "DEFAULT_BRANCH" not in resolve_block
     assert "git ls-remote" not in resolve_block
 
 
@@ -232,12 +237,16 @@ def test_install_script_validates_archive_before_deploy() -> None:
 
     assert "--retry 5" in download_block
     assert "--retry-all-errors" in download_block
+    assert "archive/refs/tags/${release_tag}.tar.gz" in download_block
     assert '|| fail "Cannot download ${archive_url}."' in download_block
     assert '|| fail "Cannot extract ${archive_url}."' in download_block
     assert '[[ -f "${extract_dir}/pyproject.toml" ]]' in download_block
     assert 'DOWNLOAD_RELEASE_DIR="${extract_dir}"' in download_block
-    assert 'release_dir="$(download_release_tarball "${release_ref}")"' not in main_block
+    assert 'release_tag="$(resolve_release_tag)"' in main_block
+    assert 'download_release_tarball "${release_tag}"' in main_block
     assert 'deploy_release "${DOWNLOAD_RELEASE_DIR}"' in main_block
+    assert 'install_wrapper "${release_tag}"' in main_block
+    assert "release_ref" not in main_block
 
 
 def test_runtime_code_does_not_use_python_3_11_datetime_utc_alias() -> None:
@@ -291,7 +300,7 @@ def test_install_script_wrapper_routes_and_security_constraints() -> None:
         'readonly LOCAL_INSTALLER="${INSTALL_DIR}/install.sh"',
         "printf 'readonly REINSTALL_RELEASE_TAG=%q\\n'",
         "For Ubuntu 22.04 or later, reinstall from a versioned release tag with:",
-        "https://github.com/Spiceman161/fqdn-updater/raw/%s/install.sh",
+        "https://raw.githubusercontent.com/Spiceman161/fqdn-updater/%s/install.sh",
         "update)",
         'run_update "$@"',
         '[[ ! -r "${LOCAL_INSTALLER}" ]]',
@@ -308,7 +317,7 @@ def test_install_script_wrapper_routes_and_security_constraints() -> None:
         assert text in wrapper_block, text
 
     assert "readonly INSTALLER_URL" not in wrapper_block
-    assert "raw.githubusercontent.com" not in wrapper_block
+    assert "raw.githubusercontent.com/Spiceman161/fqdn-updater/main" not in wrapper_block
     assert "main/install.sh" not in wrapper_block
     assert "curl -fsSL" not in run_update_block
 
@@ -328,14 +337,28 @@ def test_install_script_wrapper_routes_and_security_constraints() -> None:
         assert marker not in install_script, marker
 
 
-def test_install_script_generates_versioned_reinstall_guidance() -> None:
+def test_install_script_installs_wrapper_with_resolved_release_tag() -> None:
     install_script = _read("install.sh")
 
-    resolve_start = install_script.index("resolve_wrapper_reinstall_tag()")
-    install_wrapper_start = install_script.index("install_wrapper()")
-    resolve_block = install_script[resolve_start:install_wrapper_start]
+    wrapper_start = install_script.index("install_wrapper()")
+    main_start = install_script.index("main()")
+    wrapper_block = install_script[wrapper_start:main_start]
 
-    assert 'if [[ "${release_ref}" == tags/* ]]; then' in resolve_block
-    assert "printf '%s\\n' \"${release_ref#tags/}\"" in resolve_block
-    assert "from fqdn_updater import __version__; print(__version__)" in resolve_block
-    assert "printf 'v%s\\n' \"${package_version}\"" in resolve_block
+    assert 'local reinstall_release_tag="$1"' in wrapper_block
+    assert '[[ -n "${reinstall_release_tag}" ]]' in wrapper_block
+    assert "printf 'readonly REINSTALL_RELEASE_TAG=%q\\n'" in wrapper_block
+    assert "from fqdn_updater import __version__; print(__version__)" not in install_script
+    assert "resolve_wrapper_reinstall_tag" not in install_script
+
+
+def test_operator_docs_do_not_document_main_installer_path() -> None:
+    for relative_path in [
+        "README.md",
+        "README_EN.md",
+        "docs/DEPLOYMENT.md",
+        "docs/USER_QUICKSTART.md",
+        "docs/LLM_CONTEXT.md",
+    ]:
+        text = _read(relative_path)
+        assert "/main/install.sh" not in text, relative_path
+        assert "archive/refs/heads/main" not in text, relative_path

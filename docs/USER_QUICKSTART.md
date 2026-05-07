@@ -5,7 +5,7 @@ Happy path для первого рабочего запуска FQDN-updater н
 ## 1. Установите проект
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
 ```
 
 Проект будет установлен в `/opt/fqdn-updater`. Installer сохранит существующие `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, если они уже есть.
@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/insta
 fqdn-updater update
 ```
 
-Update использует локальный `/opt/fqdn-updater/install.sh`; если он отсутствует или недоступен для чтения, wrapper покажет команду ручной переустановки из versioned release tag для Ubuntu 22.04+.
+Update использует локальный `/opt/fqdn-updater/install.sh` и без `--version` ставит latest GitHub Release. Если latest release нельзя определить, update завершается с ошибкой до скачивания кода проекта. Если локальный installer отсутствует или недоступен для чтения, wrapper покажет команду ручной переустановки из versioned release tag для Ubuntu 22.04+.
 
 ## 2. Откройте панель
 

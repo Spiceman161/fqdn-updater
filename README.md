@@ -21,17 +21,13 @@
 
 ## Установка
 
-На чистой Ubuntu 22.04 и новее:
+На чистой Ubuntu 22.04 и новее используйте versioned release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
 ```
 
-Установка конкретного release tag:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/install.sh | sudo bash -s -- --version v1.0.2
-```
+Если installer запущен без `--version`, он установит latest GitHub Release. Если latest release недоступен или ответ GitHub некорректен, установка завершится с ошибкой до скачивания кода проекта.
 
 Installer разворачивает проект в `/opt/fqdn-updater`, сохраняет пользовательские `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, ставит host-команды `fqdn-updater` и `domaingo`, собирает Docker image и устанавливает systemd timer.
 
@@ -43,7 +39,7 @@ Installer разворачивает проект в `/opt/fqdn-updater`, сох
 fqdn-updater update
 ```
 
-Она запускает установленный локальный installer `/opt/fqdn-updater/install.sh` через временную копию, пересобирает Docker image и переустанавливает wrapper/systemd units. Пользовательские файлы остаются на месте.
+Она запускает установленный локальный installer `/opt/fqdn-updater/install.sh` через временную копию, устанавливает latest GitHub Release, пересобирает Docker image и переустанавливает wrapper/systemd units. Пользовательские файлы остаются на месте. Fallback на `main` не используется: если latest release нельзя определить, update завершается с ошибкой до скачивания кода проекта.
 
 Для фиксации на конкретном release tag:
 
@@ -54,7 +50,7 @@ fqdn-updater update --version v1.0.2
 Если локальный installer отсутствует или недоступен для чтения, wrapper завершится с ошибкой и покажет команду ручной переустановки для Ubuntu 22.04+:
 
 ```bash
-curl -fsSL https://github.com/Spiceman161/fqdn-updater/raw/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
 ```
 
 ## Первый запуск
