@@ -14,6 +14,9 @@ readonly ALIAS_PATH="/usr/local/bin/domaingo"
 RELEASE_VERSION=""
 TEMP_DIR=""
 DOWNLOAD_RELEASE_DIR=""
+RESOLVED_RELEASE_TAG=""
+RELEASE_TARBALL_URL=""
+RELEASE_CHECKSUM_URL=""
 
 cleanup() {
     if [[ -n "${TEMP_DIR}" && -d "${TEMP_DIR}" ]]; then
@@ -148,23 +151,29 @@ install_docker_packages() {
     docker_runtime_available || fail "Docker with Compose plugin is required."
 }
 
-resolve_release_tag() {
+resolve_release_metadata() {
+    local release_json
+
     if [[ -n "${RELEASE_VERSION}" ]]; then
-        printf '%s\n' "${RELEASE_VERSION}"
-        return
+        release_json="$(curl \
+            -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: fqdn-updater-installer" \
+            "${GITHUB_API_URL}/releases/tags/${RELEASE_VERSION}" \
+            2>/dev/null)" \
+            || fail "Cannot resolve GitHub Release for tag ${RELEASE_VERSION}."
+    else
+        release_json="$(curl \
+            -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: fqdn-updater-installer" \
+            "${GITHUB_API_URL}/releases/latest" \
+            2>/dev/null)" \
+            || fail "Cannot resolve latest GitHub Release for ${REPOSITORY_SLUG}."
     fi
 
-    local latest_release_json
-    latest_release_json="$(curl \
-        -fsSL \
-        -H "Accept: application/vnd.github+json" \
-        -H "User-Agent: fqdn-updater-installer" \
-        "${GITHUB_API_URL}/releases/latest" \
-        2>/dev/null)" \
-        || fail "Cannot resolve latest GitHub Release for ${REPOSITORY_SLUG}."
-
-    local latest_version
-    latest_version="$(python3 -c '
+    local parsed_release
+    parsed_release="$(python3 -c '
 import json
 import sys
 
@@ -181,29 +190,111 @@ tag_name = tag_name.strip()
 if not tag_name:
     sys.exit(1)
 
-print(tag_name)
-' <<< "${latest_release_json}")" \
-        || fail "Cannot parse latest GitHub Release response."
+tarball_name = f"fqdn-updater-{tag_name}.tar.gz"
+checksum_name = f"{tarball_name}.sha256"
+required_names = {tarball_name, checksum_name}
+asset_urls = {}
 
-    printf '%s\n' "${latest_version}"
+assets = payload.get("assets")
+if not isinstance(assets, list):
+    sys.exit(1)
+
+for asset in assets:
+    if not isinstance(asset, dict):
+        continue
+    name = asset.get("name")
+    url = asset.get("browser_download_url")
+    if name not in required_names:
+        continue
+    if not isinstance(url, str):
+        sys.exit(1)
+    url = url.strip()
+    if not url:
+        sys.exit(1)
+    asset_urls[name] = url
+
+if required_names - asset_urls.keys():
+    sys.exit(1)
+
+print(tag_name)
+print(asset_urls[tarball_name])
+print(asset_urls[checksum_name])
+' <<< "${release_json}")" \
+        || fail "Cannot parse GitHub Release asset metadata."
+
+    local -a release_metadata
+    mapfile -t release_metadata <<< "${parsed_release}"
+    [[ "${#release_metadata[@]}" -eq 3 ]] \
+        || fail "Cannot parse GitHub Release asset metadata."
+
+    RESOLVED_RELEASE_TAG="${release_metadata[0]}"
+    RELEASE_TARBALL_URL="${release_metadata[1]}"
+    RELEASE_CHECKSUM_URL="${release_metadata[2]}"
+
+    if [[ -n "${RELEASE_VERSION}" && "${RESOLVED_RELEASE_TAG}" != "${RELEASE_VERSION}" ]]; then
+        fail "GitHub Release tag mismatch: expected ${RELEASE_VERSION}, got ${RESOLVED_RELEASE_TAG}."
+    fi
+}
+
+verify_release_checksum() {
+    local archive_path="$1"
+    local checksum_path="$2"
+    local archive_name="$3"
+
+    local expected_checksum
+    expected_checksum="$(python3 -c '
+from pathlib import Path
+import re
+import sys
+
+try:
+    lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+except Exception:
+    sys.exit(1)
+
+checksum_lines = [line.strip() for line in lines if line.strip()]
+if len(checksum_lines) != 1:
+    sys.exit(1)
+
+checksum = checksum_lines[0].split()[0]
+if re.fullmatch(r"[0-9A-Fa-f]{64}", checksum) is None:
+    sys.exit(1)
+
+print(checksum.lower())
+' "${checksum_path}")" \
+        || fail "Checksum asset ${archive_name}.sha256 is missing or malformed."
+
+    printf '%s  %s\n' "${expected_checksum}" "${archive_path}" \
+        | sha256sum --check --status \
+        || fail "Checksum verification failed for ${archive_name}."
 }
 
 download_release_tarball() {
-    local release_tag="$1"
-    local archive_path="${TEMP_DIR}/release.tar.gz"
+    local release_tag="${RESOLVED_RELEASE_TAG}"
+    local archive_name="fqdn-updater-${release_tag}.tar.gz"
+    local checksum_name="${archive_name}.sha256"
+    local archive_path="${TEMP_DIR}/${archive_name}"
+    local checksum_path="${TEMP_DIR}/${checksum_name}"
     local extract_dir="${TEMP_DIR}/release"
-    local archive_url="https://github.com/${REPOSITORY_SLUG}/archive/refs/tags/${release_tag}.tar.gz"
 
     mkdir -p "${extract_dir}"
     curl --fail --silent --show-error --location \
         --retry 5 \
         --retry-delay 2 \
         --retry-all-errors \
-        "${archive_url}" \
+        "${RELEASE_TARBALL_URL}" \
         -o "${archive_path}" \
-        || fail "Cannot download ${archive_url}."
+        || fail "Cannot download release asset ${archive_name}."
+    curl --fail --silent --show-error --location \
+        --retry 5 \
+        --retry-delay 2 \
+        --retry-all-errors \
+        "${RELEASE_CHECKSUM_URL}" \
+        -o "${checksum_path}" \
+        || fail "Cannot download release checksum asset ${checksum_name}."
+    verify_release_checksum "${archive_path}" "${checksum_path}" "${archive_name}"
     tar -xzf "${archive_path}" -C "${extract_dir}" --strip-components=1 \
-        || fail "Cannot extract ${archive_url}."
+        || fail "Cannot extract release asset ${archive_name}."
     [[ -f "${extract_dir}/pyproject.toml" ]] \
         || fail "Downloaded archive does not contain pyproject.toml."
 
@@ -417,9 +508,8 @@ main() {
     install_base_packages
     install_docker_packages
 
-    local release_tag
-    release_tag="$(resolve_release_tag)"
-    download_release_tarball "${release_tag}"
+    resolve_release_metadata
+    download_release_tarball
 
     deploy_release "${DOWNLOAD_RELEASE_DIR}"
     install_virtualenv
@@ -427,9 +517,9 @@ main() {
     set_config_permissions
     install_schedule
     build_runtime_image
-    install_wrapper "${release_tag}"
+    install_wrapper "${RESOLVED_RELEASE_TAG}"
 
-    printf 'fqdn-updater %s installed in %s\n' "${release_tag}" "${INSTALL_DIR}"
+    printf 'fqdn-updater %s installed in %s\n' "${RESOLVED_RELEASE_TAG}" "${INSTALL_DIR}"
 }
 
 main "$@"

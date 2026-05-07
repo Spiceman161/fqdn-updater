@@ -3,10 +3,12 @@
 ## Ubuntu 22.04+
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
 ```
 
 По умолчанию используется `/opt/fqdn-updater`. Installer требует systemd, ставит Docker Engine/Compose plugin при необходимости, создаёт Python venv, собирает Docker image и устанавливает host wrapper `/usr/local/bin/fqdn-updater` плюс alias `domaingo`. Production-установка должна идти из versioned release tag; запуск installer без `--version` устанавливает latest GitHub Release и завершается с ошибкой, если latest release нельзя определить.
+
+Каждый GitHub Release должен содержать assets `fqdn-updater-<tag>.tar.gz` и `fqdn-updater-<tag>.tar.gz.sha256`. Installer скачивает оба asset, проверяет SHA256 перед `tar -xzf` и не начинает deployment, если checksum asset отсутствует, повреждён или не совпадает с tarball.
 
 Wrapper без аргументов открывает панель. `sync`, `dry-run` и `status` запускаются через Docker Compose, чтобы scheduled runtime совпадал с ручным runtime.
 
@@ -18,21 +20,41 @@ Wrapper без аргументов открывает панель. `sync`, `dr
 fqdn-updater update
 ```
 
-Wrapper запускает локальный installer `/opt/fqdn-updater/install.sh` через временную копию, чтобы обновление не зависело от файла, который deployment может заменить. Installer скачивает latest GitHub Release, заменяет код в `/opt/fqdn-updater`, пересобирает Docker image и переустанавливает systemd units. Если latest release недоступен или GitHub вернул некорректные metadata, update завершается с ошибкой до скачивания кода проекта; fallback на `main` отсутствует.
+Wrapper запускает локальный installer `/opt/fqdn-updater/install.sh` через временную копию, чтобы обновление не зависело от файла, который deployment может заменить. Installer скачивает latest GitHub Release, проверяет release tarball по обязательному `.sha256` asset, заменяет код в `/opt/fqdn-updater`, пересобирает Docker image и переустанавливает systemd units. Если latest release недоступен, GitHub вернул некорректные metadata или checksum не проходит, update завершается с ошибкой до распаковки и deployment; fallback на `main` отсутствует.
 
 Перед заменой он сохраняет пользовательские `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, затем возвращает их обратно.
 
 Для конкретного release tag:
 
 ```bash
-fqdn-updater update --version v1.0.2
+fqdn-updater update --version v1.0.3
 ```
 
 Если `/opt/fqdn-updater/install.sh` отсутствует или недоступен для чтения, wrapper завершится с ошибкой и покажет точную команду ручной переустановки для Ubuntu 22.04+:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
 ```
+
+## Release assets для maintainers
+
+Перед публикацией release tag подготовьте оба обязательных asset:
+
+```bash
+TAG=v1.0.3
+mkdir -p dist
+git archive --format=tar.gz --prefix="fqdn-updater-${TAG}/" -o "dist/fqdn-updater-${TAG}.tar.gz" "${TAG}"
+(
+  cd dist
+  sha256sum "fqdn-updater-${TAG}.tar.gz" > "fqdn-updater-${TAG}.tar.gz.sha256"
+)
+gh release upload "${TAG}" \
+  "dist/fqdn-updater-${TAG}.tar.gz" \
+  "dist/fqdn-updater-${TAG}.tar.gz.sha256" \
+  --clobber
+```
+
+Checksum защищает целостность скачанного release asset, но не заменяет подписи релиза и не полностью защищает от компрометации GitHub account или прав на публикацию release.
 
 ## Docker Compose runtime
 

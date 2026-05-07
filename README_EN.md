@@ -24,10 +24,12 @@ It is built for a small VPS or home server: keep config and secrets locally, ins
 On a clean Ubuntu 22.04 or later host, use a versioned release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
 ```
 
 If the installer is run without `--version`, it installs the latest GitHub Release. If the latest release is unavailable or GitHub returns malformed metadata, installation fails before downloading project code.
+
+Each GitHub Release must contain `fqdn-updater-<tag>.tar.gz` and `fqdn-updater-<tag>.tar.gz.sha256` assets. The installer verifies SHA256 before extraction; if the checksum asset is missing, malformed, or does not match the tarball, installation fails before deployment.
 
 The installer deploys the project to `/opt/fqdn-updater`, preserves existing `config.json`, `.env*`, `data/`, `secrets/`, and `.venv`, installs host commands `fqdn-updater` and `domaingo`, builds the Docker image, and installs the systemd timer.
 
@@ -35,15 +37,15 @@ The installer deploys the project to `/opt/fqdn-updater`, preserves existing `co
 
 ```bash
 fqdn-updater update
-fqdn-updater update --version v1.0.2
+fqdn-updater update --version v1.0.3
 ```
 
-The update command runs the installed local installer from `/opt/fqdn-updater/install.sh` through a temporary copy, installs the latest GitHub Release, rebuilds the Docker image, and keeps operator-owned runtime files in place. It does not fall back to `main`: if the latest release cannot be resolved, update fails before downloading project code.
+The update command runs the installed local installer from `/opt/fqdn-updater/install.sh` through a temporary copy, installs the latest GitHub Release, verifies the release tarball against the mandatory `.sha256` asset, rebuilds the Docker image, and keeps operator-owned runtime files in place. It does not fall back to `main`: if the latest release cannot be resolved or checksum verification fails, update stops before extraction and deployment.
 
 If the local installer is missing or unreadable, the wrapper fails and prints the manual reinstall command for Ubuntu 22.04 or later:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
 ```
 
 ## First Run

@@ -24,10 +24,12 @@
 На чистой Ubuntu 22.04 и новее используйте versioned release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
 ```
 
 Если installer запущен без `--version`, он установит latest GitHub Release. Если latest release недоступен или ответ GitHub некорректен, установка завершится с ошибкой до скачивания кода проекта.
+
+Каждый GitHub Release должен содержать assets `fqdn-updater-<tag>.tar.gz` и `fqdn-updater-<tag>.tar.gz.sha256`. Installer проверяет SHA256 перед распаковкой; если checksum asset отсутствует, повреждён или не совпадает с tarball, установка завершается до deployment.
 
 Installer разворачивает проект в `/opt/fqdn-updater`, сохраняет пользовательские `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, ставит host-команды `fqdn-updater` и `domaingo`, собирает Docker image и устанавливает systemd timer.
 
@@ -39,18 +41,18 @@ Installer разворачивает проект в `/opt/fqdn-updater`, сох
 fqdn-updater update
 ```
 
-Она запускает установленный локальный installer `/opt/fqdn-updater/install.sh` через временную копию, устанавливает latest GitHub Release, пересобирает Docker image и переустанавливает wrapper/systemd units. Пользовательские файлы остаются на месте. Fallback на `main` не используется: если latest release нельзя определить, update завершается с ошибкой до скачивания кода проекта.
+Она запускает установленный локальный installer `/opt/fqdn-updater/install.sh` через временную копию, устанавливает latest GitHub Release, проверяет release tarball по обязательному `.sha256` asset, пересобирает Docker image и переустанавливает wrapper/systemd units. Пользовательские файлы остаются на месте. Fallback на `main` не используется: если latest release нельзя определить или checksum не проходит, update завершается до распаковки и deployment.
 
 Для фиксации на конкретном release tag:
 
 ```bash
-fqdn-updater update --version v1.0.2
+fqdn-updater update --version v1.0.3
 ```
 
 Если локальный installer отсутствует или недоступен для чтения, wrapper завершится с ошибкой и покажет команду ручной переустановки для Ubuntu 22.04+:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh | sudo bash -s -- --version v1.0.2
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh | sudo bash -s -- --version v1.0.3
 ```
 
 ## Первый запуск

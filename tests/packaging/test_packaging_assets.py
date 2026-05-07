@@ -107,7 +107,7 @@ def test_operator_docs_cover_docker_compose_systemd_and_runtime_paths() -> None:
     assert "docs/LLM_CONTEXT.md" in readme
     assert "schedule install" in readme
     assert (
-        "curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.2/install.sh"
+        "curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.3/install.sh"
         in readme
     )
 
@@ -133,6 +133,27 @@ def test_operator_docs_cover_docker_compose_systemd_and_runtime_paths() -> None:
         "./scripts/verify.sh",
     ]:
         assert text in llm_context, text
+
+
+def test_operator_docs_cover_checksum_release_asset_contract() -> None:
+    docs = {
+        "README.md": _read("README.md"),
+        "README_EN.md": _read("README_EN.md"),
+        "docs/DEPLOYMENT.md": _read("docs/DEPLOYMENT.md"),
+        "docs/USER_QUICKSTART.md": _read("docs/USER_QUICKSTART.md"),
+        "docs/LLM_CONTEXT.md": _read("docs/LLM_CONTEXT.md"),
+        "SECURITY.md": _read("SECURITY.md"),
+    }
+
+    for relative_path, text in docs.items():
+        assert "fqdn-updater-<tag>.tar.gz" in text, relative_path
+        assert "fqdn-updater-<tag>.tar.gz.sha256" in text, relative_path
+
+    assert "gh release upload" in docs["docs/DEPLOYMENT.md"]
+    assert "не заменяет подписи релиза" in docs["docs/DEPLOYMENT.md"]
+    assert "компрометации GitHub account" in docs["docs/DEPLOYMENT.md"]
+    assert "signature scheme" in docs["SECURITY.md"]
+    assert "compromised GitHub account" in docs["SECURITY.md"]
 
 
 def test_install_script_exists_and_passes_bash_syntax_check() -> None:
@@ -163,10 +184,18 @@ def test_install_script_covers_expected_installation_contract() -> None:
         "This installer supports Ubuntu 22.04 and later only.",
         "--version requires a non-empty tag value.",
         "${VERSION_CODENAME} stable",
+        'RESOLVED_RELEASE_TAG=""',
+        'RELEASE_TARBALL_URL=""',
+        'RELEASE_CHECKSUM_URL=""',
         '"${GITHUB_API_URL}/releases/latest"',
         "Cannot resolve latest GitHub Release for ${REPOSITORY_SLUG}.",
-        "Cannot parse latest GitHub Release response.",
-        "archive/refs/tags/${release_tag}.tar.gz",
+        '"${GITHUB_API_URL}/releases/tags/${RELEASE_VERSION}"',
+        "Cannot resolve GitHub Release for tag ${RELEASE_VERSION}.",
+        "Cannot parse GitHub Release asset metadata.",
+        'tarball_name = f"fqdn-updater-{tag_name}.tar.gz"',
+        'checksum_name = f"{tarball_name}.sha256"',
+        "verify_release_checksum",
+        "sha256sum --check --status",
         "Downloaded archive does not contain pyproject.toml.",
         "set_config_permissions",
         'install -m 0600 /dev/null "${INSTALL_DIR}/.env.secrets"',
@@ -182,6 +211,7 @@ def test_install_script_covers_expected_installation_contract() -> None:
 
     assert "Ubuntu 24.04 only" not in install_script
     assert "noble stable" not in install_script
+    assert "archive/refs/tags/${release_tag}.tar.gz" not in install_script
 
 
 def test_install_script_preserves_existing_docker_runtime() -> None:
@@ -189,7 +219,7 @@ def test_install_script_preserves_existing_docker_runtime() -> None:
 
     runtime_check_start = install_script.index("docker_runtime_available()")
     install_start = install_script.index("install_docker_packages()")
-    install_end = install_script.index("resolve_release_tag()")
+    install_end = install_script.index("resolve_release_metadata()")
     runtime_check_block = install_script[runtime_check_start:install_start]
     install_block = install_script[install_start:install_end]
 
@@ -207,46 +237,87 @@ def test_install_script_preserves_existing_docker_runtime() -> None:
     )
 
 
-def test_install_script_resolves_latest_release_without_main_fallback() -> None:
+def test_install_script_resolves_release_metadata_without_main_fallback() -> None:
     install_script = _read("install.sh")
 
-    resolve_start = install_script.index("resolve_release_tag()")
+    resolve_start = install_script.index("resolve_release_metadata()")
     download_start = install_script.index("download_release_tarball()")
     resolve_block = install_script[resolve_start:download_start]
 
-    assert "printf '%s\\n' \"${RELEASE_VERSION}\"" in resolve_block
+    assert '"${GITHUB_API_URL}/releases/tags/${RELEASE_VERSION}"' in resolve_block
     assert '"${GITHUB_API_URL}/releases/latest"' in resolve_block
     assert "2>/dev/null" in resolve_block
     assert '|| fail "Cannot resolve latest GitHub Release for ${REPOSITORY_SLUG}."' in resolve_block
-    assert '|| fail "Cannot parse latest GitHub Release response."' in resolve_block
+    assert '|| fail "Cannot resolve GitHub Release for tag ${RELEASE_VERSION}."' in resolve_block
+    assert '|| fail "Cannot parse GitHub Release asset metadata."' in resolve_block
     assert 'payload.get("tag_name")' in resolve_block
-    assert "printf '%s\\n' \"${latest_version}\"" in resolve_block
+    assert 'payload.get("assets")' in resolve_block
+    assert 'asset.get("browser_download_url")' in resolve_block
+    assert 'tarball_name = f"fqdn-updater-{tag_name}.tar.gz"' in resolve_block
+    assert 'checksum_name = f"{tarball_name}.sha256"' in resolve_block
+    assert "print(asset_urls[tarball_name])" in resolve_block
+    assert "print(asset_urls[checksum_name])" in resolve_block
+    assert 'RESOLVED_RELEASE_TAG="${release_metadata[0]}"' in resolve_block
+    assert 'RELEASE_TARBALL_URL="${release_metadata[1]}"' in resolve_block
+    assert 'RELEASE_CHECKSUM_URL="${release_metadata[2]}"' in resolve_block
+    assert "GitHub Release tag mismatch" in resolve_block
     assert "heads/" not in resolve_block
     assert "DEFAULT_BRANCH" not in resolve_block
     assert "git ls-remote" not in resolve_block
+    assert "archive/refs/tags" not in resolve_block
 
 
-def test_install_script_validates_archive_before_deploy() -> None:
+def test_install_script_verifies_checksum_before_extracting_and_deploying() -> None:
     install_script = _read("install.sh")
 
+    verify_start = install_script.index("verify_release_checksum()")
     download_start = install_script.index("download_release_tarball()")
-    deploy_start = install_script.index("deploy_release()")
+    deploy_start = install_script.index("prepare_install_root()")
     main_start = install_script.index("main()")
+    verify_block = install_script[verify_start:download_start]
     download_block = install_script[download_start:deploy_start]
     main_block = install_script[main_start:]
 
+    assert "Checksum asset ${archive_name}.sha256 is missing or malformed." in verify_block
+    assert "sha256sum --check --status" in verify_block
+    assert "Checksum verification failed for ${archive_name}." in verify_block
+
     assert "--retry 5" in download_block
     assert "--retry-all-errors" in download_block
-    assert "archive/refs/tags/${release_tag}.tar.gz" in download_block
-    assert '|| fail "Cannot download ${archive_url}."' in download_block
-    assert '|| fail "Cannot extract ${archive_url}."' in download_block
+    assert "fqdn-updater-${release_tag}.tar.gz" in download_block
+    assert "${archive_name}.sha256" in download_block
+    assert '"${RELEASE_TARBALL_URL}"' in download_block
+    assert '"${RELEASE_CHECKSUM_URL}"' in download_block
+    assert '|| fail "Cannot download release asset ${archive_name}."' in download_block
+    assert '|| fail "Cannot download release checksum asset ${checksum_name}."' in download_block
+    assert 'verify_release_checksum "${archive_path}" "${checksum_path}" "${archive_name}"' in (
+        download_block
+    )
+    assert '|| fail "Cannot extract release asset ${archive_name}."' in download_block
     assert '[[ -f "${extract_dir}/pyproject.toml" ]]' in download_block
     assert 'DOWNLOAD_RELEASE_DIR="${extract_dir}"' in download_block
-    assert 'release_tag="$(resolve_release_tag)"' in main_block
-    assert 'download_release_tarball "${release_tag}"' in main_block
-    assert 'deploy_release "${DOWNLOAD_RELEASE_DIR}"' in main_block
-    assert 'install_wrapper "${release_tag}"' in main_block
+
+    assert download_block.index('"${RELEASE_TARBALL_URL}"') < download_block.index(
+        '"${RELEASE_CHECKSUM_URL}"'
+    )
+    assert download_block.index('"${RELEASE_CHECKSUM_URL}"') < download_block.index(
+        "verify_release_checksum"
+    )
+    assert download_block.index("verify_release_checksum") < download_block.index("tar -xzf")
+
+    assert "archive/refs/tags" not in download_block
+    assert "archive/refs/heads" not in download_block
     assert "release_ref" not in main_block
+    assert "deploy_release" not in download_block
+
+    assert "resolve_release_metadata" in main_block
+    assert "download_release_tarball" in main_block
+    assert 'deploy_release "${DOWNLOAD_RELEASE_DIR}"' in main_block
+    assert 'install_wrapper "${RESOLVED_RELEASE_TAG}"' in main_block
+    assert main_block.index("resolve_release_metadata") < main_block.index(
+        "download_release_tarball"
+    )
+    assert main_block.index("download_release_tarball") < main_block.index("deploy_release")
 
 
 def test_runtime_code_does_not_use_python_3_11_datetime_utc_alias() -> None:

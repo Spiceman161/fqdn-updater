@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fqdn-updater"
-version = "1.0.2"
+version = "1.0.3"
 description = "Source-available noncommercial CLI for synchronizing managed FQDN object-groups on Keenetic routers."
 readme = "README.md"
 requires-python = ">=3.10"

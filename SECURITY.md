@@ -26,3 +26,13 @@ FQDN-updater expects production secrets to live outside git:
 
 The repository `.gitignore` excludes those paths. Do not paste real Keenetic credentials into
 issues, pull requests, or logs.
+
+## Release Archive Integrity
+
+Installer releases must publish `fqdn-updater-<tag>.tar.gz` and
+`fqdn-updater-<tag>.tar.gz.sha256` assets. The installer verifies the SHA256 checksum before
+extracting or deploying the archive.
+
+This protects download integrity for the published release asset, but it is not a release
+signature scheme and does not fully protect against a compromised GitHub account or compromised
+release-publishing permissions.
