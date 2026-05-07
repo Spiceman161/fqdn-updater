@@ -17,12 +17,13 @@
 - Архитектурные границы: [Architecture](../ARCHITECTURE.md).
 - Продуктовый scope: [PRD](../PRD.md).
 - Контекст для LLM/агентов: [LLM_CONTEXT.md](LLM_CONTEXT.md).
+- План hardening для installer/update: [Installer Security Slices](INSTALLER_SECURITY_SLICES.md).
 - Правила contribution и verification gate: [Contributing](../CONTRIBUTING.md).
 
 ## Статус документов
 
 - Текущие операторские документы: `USER_QUICKSTART.md`, `PANEL.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, `CLI_REFERENCE.md`, `KEENETIC_RCI_SETUP.md`, `TROUBLESHOOTING.md`.
-- Текущие проектные документы: `PRD.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONTRIBUTING.md`, `LLM_CONTEXT.md`.
+- Текущие проектные документы: `PRD.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONTRIBUTING.md`, `LLM_CONTEXT.md`, `INSTALLER_SECURITY_SLICES.md`.
 - Исторический документ: `REFACTORING_PLAN.md`. Он описывает уже выполненный refactoring plan и не является текущим backlog.
 
 ## Runtime-файлы
