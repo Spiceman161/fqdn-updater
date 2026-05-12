@@ -339,22 +339,111 @@ class PanelController:
             router_id=router.id,
         )
         previously_selected = {mapping.service_key for mapping in editable_mappings}
+        default_route_interface = self._router_flow.prompt_default_route_interface(
+            config=config,
+            router=router,
+            default_value=router.default_route.interface if router.default_route else "",
+            missing_secret_message=None,
+        )
+        if default_route_interface is None:
+            return
+        discovered_interfaces = self._router_flow.cached_discovered_interfaces(router=router)
+        default_interface_state = panel_router_support.find_interface_state(
+            interfaces=discovered_interfaces,
+            value=default_route_interface,
+        )
+        direct_services_available = any(
+            service.enabled and service.key in panel_router_support.DIRECT_SERVICE_KEYS
+            for service in config.services
+        )
+        use_default_interface_for_mappings = False
+        default_is_vpn = (
+            default_interface_state.is_vpn_like if default_interface_state is not None else None
+        )
+        if default_is_vpn is None and not direct_services_available:
+            default_is_vpn = False
+            use_default_interface_for_mappings = True
+        elif default_is_vpn is None:
+            default_is_vpn = self._router_flow.prompt_default_route_mode()
+        if default_is_vpn is None:
+            return
+        if default_is_vpn and not direct_services_available:
+            use_default_interface_for_mappings = True
+            default_is_vpn = False
+        allowed_service_keys = panel_router_support.DIRECT_SERVICE_KEYS if default_is_vpn else None
+        effective_previous_selection = (
+            previously_selected & panel_router_support.DIRECT_SERVICE_KEYS
+            if default_is_vpn
+            else previously_selected - panel_router_support.DIRECT_SERVICE_KEYS
+        )
+        if not effective_previous_selection:
+            effective_previous_selection = (
+                set(panel_router_support.DEFAULT_SELECTED_DIRECT_SERVICES)
+                if default_is_vpn
+                else previously_selected
+            )
         selected_services = self._prompt_service_selection(
             config=config,
-            selected=previously_selected,
+            selected=effective_previous_selection,
+            allowed_service_keys=allowed_service_keys,
         )
         if selected_services is None:
             return
 
         mapping_plan = None
         if selected_services:
-            mapping_plan = self._prompt_mapping_plan(
-                config=config,
-                router=router,
-                editable_mappings=editable_mappings,
-                selected_services=selected_services,
-                missing_secret_message=None,
-            )
+            if use_default_interface_for_mappings:
+                mapping_plan = panel_router_support.MappingPlan(
+                    default_target=panel_router_support.RouteTargetDraft(
+                        "interface", default_route_interface
+                    )
+                )
+                if "google_ai" in selected_services and any(
+                    service_key != "google_ai" for service_key in selected_services
+                ):
+                    use_override = self._prompts.confirm(
+                        message="Использовать отдельный маршрут для google_ai?",
+                        default=False,
+                        hint_lines=panel_router_support.GOOGLE_AI_OVERRIDE_HINT_LINES,
+                    )
+                    if use_override is None:
+                        return
+                    if use_override:
+                        google_ai_target = self._prompt_route_target(
+                            config=config,
+                            router=router,
+                            label="Route target для google_ai",
+                            default_target=mapping_plan.default_target,
+                            missing_secret_message=None,
+                        )
+                        if google_ai_target is None:
+                            return
+                        mapping_plan = panel_router_support.MappingPlan(
+                            default_target=mapping_plan.default_target,
+                            google_ai_target=google_ai_target,
+                        )
+            elif default_is_vpn:
+                provider_target = self._router_flow.prompt_interface_target(
+                    config=config,
+                    router=router,
+                    label="Provider interface для direct-групп",
+                    default_value=panel_router_support.first_provider_interface_value(
+                        discovered_interfaces
+                    ),
+                    missing_secret_message=None,
+                    vpn_only=False,
+                )
+                if provider_target is None:
+                    return
+                mapping_plan = panel_router_support.MappingPlan(default_target=provider_target)
+            else:
+                mapping_plan = self._prompt_mapping_plan(
+                    config=config,
+                    router=router,
+                    editable_mappings=editable_mappings,
+                    selected_services=selected_services,
+                    missing_secret_message=None,
+                )
             if mapping_plan is None:
                 return
 
@@ -377,6 +466,7 @@ class PanelController:
             rows=[
                 ("Операция", "обновить списки и маршруты"),
                 ("Маршрутизатор", router.id),
+                ("Default route", f"interface:{default_route_interface}"),
                 ("Добавить", panel_formatting._format_service_list(added_services) or "нет"),
                 ("Удалить", panel_formatting._format_service_list(removed_services) or "нет"),
                 ("Оставить", panel_formatting._format_service_list(kept_services) or "нет"),
@@ -406,9 +496,10 @@ class PanelController:
         if not should_save:
             return
 
-        self._management_service.replace_router_mappings(
+        self._management_service.replace_router_default_route_and_mappings(
             path=self._config_path,
             router_id=router.id,
+            default_route={"interface": default_route_interface, "managed": True},
             mappings=full_mapping_payloads,
         )
         self._console.print("[green]Списки и маршруты сохранены.[/green]")
@@ -573,11 +664,13 @@ class PanelController:
         *,
         config: AppConfig,
         selected: set[str],
+        allowed_service_keys: frozenset[str] | None = None,
         hint_lines: tuple[str, ...] | None = None,
     ) -> set[str] | None:
         return self._router_flow.prompt_service_selection(
             config=config,
             selected=selected,
+            allowed_service_keys=allowed_service_keys,
             hint_lines=hint_lines,
         )
 

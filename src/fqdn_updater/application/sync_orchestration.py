@@ -19,6 +19,7 @@ from fqdn_updater.application.run_planning import (
     RunPlanningSnapshot,
     SourceLoader,
     build_classified_failure_detail,
+    build_default_route_run_result,
     build_failed_router_result,
     build_service_result_from_plan,
     build_skipped_service_result,
@@ -34,7 +35,9 @@ from fqdn_updater.application.run_support import (
 from fqdn_updater.application.service_plan_apply import ServicePlanApplyService
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.default_route import DefaultRoutePlan
 from fqdn_updater.domain.run_artifact import (
+    DefaultRouteRunResult,
     FailureDetail,
     RouterRunResult,
     RunArtifact,
@@ -52,6 +55,7 @@ class SyncExecutionResult(BaseModel):
     artifact: RunArtifact
     artifact_path: Path
     plans: tuple[ServiceSyncPlan, ...] = Field(default_factory=tuple)
+    default_route_plans: tuple[DefaultRoutePlan, ...] = Field(default_factory=tuple)
 
 
 class SyncOrchestrator:
@@ -98,6 +102,7 @@ class SyncOrchestrator:
                 snapshot = self._planning.prepare_run(config=config)
                 router_results: list[RouterRunResult] = []
                 plans: list[ServiceSyncPlan] = []
+                default_route_plans: list[DefaultRoutePlan] = []
 
                 for router in config.routers:
                     if not router.enabled:
@@ -111,10 +116,10 @@ class SyncOrchestrator:
                         continue
 
                     router_mappings = snapshot.mappings_for_router(router.id)
-                    if not router_mappings:
+                    if not router_mappings and not _has_managed_default_route(router):
                         continue
 
-                    router_result, router_plans = self._run_router(
+                    router_result, router_plans, router_default_route_plan = self._run_router(
                         logger=logger,
                         router=router,
                         mappings=router_mappings,
@@ -122,6 +127,8 @@ class SyncOrchestrator:
                     )
                     router_results.append(router_result)
                     plans.extend(router_plans)
+                    if router_default_route_plan is not None:
+                        default_route_plans.append(router_default_route_plan)
 
                 artifact = RunArtifact(
                     run_id=run_id,
@@ -144,6 +151,7 @@ class SyncOrchestrator:
                     artifact=artifact,
                     artifact_path=artifact_path,
                     plans=tuple(plans),
+                    default_route_plans=tuple(default_route_plans),
                 )
             finally:
                 logger.close()
@@ -155,10 +163,13 @@ class SyncOrchestrator:
         router: RouterConfig,
         mappings: Sequence[RouterServiceMappingConfig],
         snapshot: RunPlanningSnapshot,
-    ) -> tuple[RouterRunResult, list[ServiceSyncPlan]]:
+    ) -> tuple[RouterRunResult, list[ServiceSyncPlan], DefaultRoutePlan | None]:
         service_results: list[ServiceRunResult] = []
         plans: list[ServiceSyncPlan] = []
         changed_service_indexes: list[int] = []
+        default_route_plan: DefaultRoutePlan | None = None
+        default_route_result: DefaultRouteRunResult | None = None
+        default_route_changed = False
 
         session = self._planning.start_router(
             logger=logger,
@@ -174,11 +185,58 @@ class SyncOrchestrator:
                     failure_detail=session.startup_failure,
                 ),
                 plans,
+                default_route_plan,
             )
         if session.client is None:
             raise RuntimeError("router planning session is not ready")
 
         router_failure_detail: FailureDetail | None = None
+
+        (
+            default_route_plan,
+            default_route_result,
+            router_failure_detail,
+        ) = self._planning.plan_default_route(logger=logger, session=session)
+        if default_route_plan is not None and router_failure_detail is None:
+            for change in default_route_plan.priority_changes:
+                try:
+                    session.client.set_interface_global_priority(change.interface, change.priority)
+                except Exception as exc:
+                    router_failure_detail = build_classified_failure_detail(
+                        step=RunStep.SET_DEFAULT_ROUTE_PRIORITY,
+                        message=(
+                            "Default route priority update failed for interface "
+                            f"'{change.interface}': {exc}"
+                        ),
+                    )
+                    default_route_result = build_default_route_run_result(
+                        router=router,
+                        failure_detail=router_failure_detail,
+                    )
+                    logger.event(
+                        "default_route_failed",
+                        step=router_failure_detail.step,
+                        router_id=router.id,
+                        status="failed",
+                        message=router_failure_detail.message,
+                    )
+                    break
+            if router_failure_detail is None and default_route_plan.has_changes:
+                default_route_changed = True
+                default_route_result = build_default_route_run_result(
+                    router=router,
+                    plan=default_route_plan,
+                    status=ServiceResultStatus.UPDATED,
+                )
+                logger.event(
+                    "default_route_applied",
+                    router_id=router.id,
+                    status=default_route_result.status.value,
+                    message=(
+                        f"desired_interface={default_route_plan.desired_interface} "
+                        f"priority_changes={len(default_route_plan.priority_changes)}"
+                    ),
+                )
 
         for index, mapping in enumerate(mappings):
             if router_failure_detail is not None:
@@ -297,7 +355,7 @@ class SyncOrchestrator:
             router_failure_detail.message if router_failure_detail else None
         )
         router_failure_for_result = router_failure_detail
-        if changed_service_indexes and router_failure_detail is None:
+        if (changed_service_indexes or default_route_changed) and router_failure_detail is None:
             try:
                 session.client.save_config()
                 logger.event(
@@ -327,20 +385,30 @@ class SyncOrchestrator:
                             "failure_detail": save_failure_detail,
                         }
                     )
+                if default_route_changed and default_route_result is not None:
+                    default_route_result = build_default_route_run_result(
+                        router=router,
+                        failure_detail=save_failure_detail,
+                    )
                 router_error_message = save_failure_detail.message
                 router_failure_for_result = save_failure_detail
 
-        router_status = aggregate_router_status(service_results)
+        router_status = aggregate_router_status(
+            service_results,
+            default_route_result=default_route_result,
+        )
         logger.event("router_finished", router_id=router.id, status=router_status.value)
         return (
             RouterRunResult(
                 router_id=router.id,
                 status=router_status,
+                default_route_result=default_route_result,
                 service_results=service_results,
                 error_message=router_error_message,
                 failure_detail=router_failure_for_result,
             ),
             plans,
+            default_route_plan,
         )
 
 
@@ -350,3 +418,7 @@ def _utc_now() -> datetime:
 
 def _generate_run_id() -> str:
     return str(uuid4())
+
+
+def _has_managed_default_route(router: RouterConfig) -> bool:
+    return router.default_route is not None and router.default_route.managed

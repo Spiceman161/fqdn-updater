@@ -9,6 +9,7 @@ from fqdn_updater.domain.keenetic import (
     DnsProxyStatus,
     ObjectGroupState,
     RouteBindingState,
+    RouterInterfaceState,
     RouteTargetCandidate,
 )
 from fqdn_updater.domain.static_route_diff import (
@@ -66,6 +67,22 @@ def parse_wireguard_route_target_candidates(
         sorted(
             candidates_by_value.values(),
             key=lambda candidate: candidate.value.lower(),
+        )
+    )
+
+
+def parse_router_interfaces(interface_payload: Any) -> tuple[RouterInterfaceState, ...]:
+    interfaces_by_value: dict[str, RouterInterfaceState] = {}
+    for raw_interface in _iter_interface_payloads(interface_payload):
+        interface = _parse_router_interface(raw_interface)
+        if interface is None:
+            continue
+        interfaces_by_value.setdefault(interface.value, interface)
+
+    return tuple(
+        sorted(
+            interfaces_by_value.values(),
+            key=lambda interface: interface.value.lower(),
         )
     )
 
@@ -205,6 +222,10 @@ def _looks_like_interface_payload(payload: dict[str, Any]) -> bool:
         "link",
         "connected",
         "state",
+        "global",
+        "defaultgw",
+        "global-priority",
+        "priority",
     }
     return any(field_name in payload for field_name in interface_fields)
 
@@ -250,6 +271,86 @@ def _parse_wireguard_route_target_candidate(
     )
 
 
+def _parse_router_interface(raw_interface: dict[str, Any]) -> RouterInterfaceState | None:
+    interface_name = _first_non_blank_string(raw_interface, ("interface-name", "name"))
+    interface_id = _first_non_blank_string(raw_interface, ("id",))
+    value = interface_name or interface_id
+    if value is None:
+        return None
+
+    interface_type = _first_non_blank_string(raw_interface, ("type",))
+    interface_class = _first_non_blank_string(raw_interface, ("class",))
+    connected = _parse_optional_bool(raw_interface.get("connected"))
+    state = _first_non_blank_string(raw_interface, ("state", "link", "status"))
+    return RouterInterfaceState(
+        value=value,
+        display_name=value,
+        interface_type=interface_type,
+        interface_class=interface_class,
+        status=state,
+        connected=connected,
+        global_enabled=_parse_interface_global_enabled(raw_interface),
+        default_gateway=_parse_interface_default_gateway(raw_interface),
+        global_priority=_parse_interface_global_priority(raw_interface),
+    )
+
+
+def _parse_interface_global_enabled(raw_interface: dict[str, Any]) -> bool | None:
+    for key in ("global", "ip-global"):
+        parsed = _parse_optional_bool(raw_interface.get(key))
+        if parsed is not None:
+            return parsed
+    ip_payload = raw_interface.get("ip")
+    if isinstance(ip_payload, dict):
+        parsed = _parse_optional_bool(ip_payload.get("global"))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _parse_interface_default_gateway(raw_interface: dict[str, Any]) -> bool | None:
+    for key in ("defaultgw", "default-gateway", "default_gateway"):
+        parsed = _parse_optional_bool(raw_interface.get(key))
+        if parsed is not None:
+            return parsed
+    ip_payload = raw_interface.get("ip")
+    if isinstance(ip_payload, dict):
+        for key in ("defaultgw", "default-gateway", "default_gateway"):
+            parsed = _parse_optional_bool(ip_payload.get(key))
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _parse_interface_global_priority(raw_interface: dict[str, Any]) -> int | None:
+    for key in (
+        "global-priority",
+        "global_priority",
+        "priority",
+        "ip-global-priority",
+    ):
+        parsed = _parse_optional_int(raw_interface.get(key))
+        if parsed is not None:
+            return parsed
+
+    ip_payload = raw_interface.get("ip")
+    if isinstance(ip_payload, dict):
+        for key in ("global-priority", "global_priority", "priority"):
+            parsed = _parse_optional_int(ip_payload.get(key))
+            if parsed is not None:
+                return parsed
+
+    global_payload = raw_interface.get("global")
+    if isinstance(global_payload, dict):
+        parsed = _parse_optional_int(global_payload.get("priority"))
+        if parsed is not None:
+            return parsed
+        if _parse_optional_bool(global_payload.get("enabled")) is True:
+            return _parse_optional_int(raw_interface.get("priority"))
+
+    return None
+
+
 def _is_wireguard_interface(
     *,
     interface_id: str | None,
@@ -293,6 +394,15 @@ def _parse_optional_bool(value: Any) -> bool | None:
     if normalized_value in {"false", "no", "down", "disconnected", "0"}:
         return False
     return None
+
+
+def _parse_optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _looks_like_cli_group_container(payload: Any) -> bool:

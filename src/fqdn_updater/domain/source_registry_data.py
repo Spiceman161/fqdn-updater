@@ -901,6 +901,8 @@ _HODCA_FILTER_SUFFIXES: tuple[str, ...] = tuple(
 )
 
 _SERVICE_KEYS: tuple[str, ...] = (
+    "direct_ru_outside",
+    "direct_custom",
     "anime",
     "block",
     *_BLOCK_FILTER_KEYS,
@@ -932,6 +934,8 @@ _SERVICE_KEYS: tuple[str, ...] = (
 )
 
 _SERVICE_DESCRIPTIONS: dict[str, str] = {
+    "direct_ru_outside": "Russian direct-route domains from itdoginfo/allow-domains outside list.",
+    "direct_custom": "Project custom direct-route domains.",
     "anime": "Anime category domains from itdoginfo/allow-domains.",
     "block": "Blocked category domains from itdoginfo/allow-domains.",
     "block_p2p_streaming": "P2P, streaming mirrors, and piracy-related domains from block.",

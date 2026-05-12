@@ -8,6 +8,8 @@ def test_builtin_service_registry_contains_expected_v1_services() -> None:
     services_by_key = {service.key: service for service in services}
 
     assert [service.key for service in services] == [
+        "direct_ru_outside",
+        "direct_custom",
         "anime",
         "block",
         "block_p2p_streaming",
@@ -53,6 +55,15 @@ def test_builtin_service_registry_contains_expected_v1_services() -> None:
         "tiktok",
         "twitter",
         "youtube",
+    ]
+    assert [
+        str(source.url) for source in services_by_key["direct_ru_outside"].resolved_sources
+    ] == ["https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/outside-raw.lst"]
+    assert [source.format for source in services_by_key["direct_ru_outside"].resolved_sources] == [
+        "raw_domain_list"
+    ]
+    assert [str(source.url) for source in services_by_key["direct_custom"].resolved_sources] == [
+        "https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/source-lists/direct-custom.lst"
     ]
     for category_key in ("anime", "block", "geoblock", "hodca", "news", "porn"):
         assert [str(source.url) for source in services_by_key[category_key].resolved_sources] == [

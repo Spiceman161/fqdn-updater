@@ -17,6 +17,7 @@ from fqdn_updater.application.sync_orchestration import SyncExecutionResult, Syn
 from fqdn_updater.cli.panel import PanelController
 from fqdn_updater.domain._enum import StrEnum
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.default_route import DefaultRoutePlan
 from fqdn_updater.domain.run_artifact import RunStatus, RunTrigger
 from fqdn_updater.domain.schedule import RuntimeScheduleConfig, ScheduleWeekday
 from fqdn_updater.domain.status_diagnostics import StatusDiagnosticsResult
@@ -623,6 +624,7 @@ def _render_operation_human(
         for service in router.service_results
     )
     changed_services = sum(plan.has_changes for plan in result.plans)
+    changed_default_routes = sum(plan.has_changes for plan in result.default_route_plans)
     plan_index = {
         (plan.router_id, plan.service_key, plan.object_group_name): plan for plan in result.plans
     }
@@ -631,12 +633,40 @@ def _render_operation_human(
         f"{operation_name}: "
         f"run_id={artifact.run_id} status={artifact.status.value} "
         f"artifact_path={result.artifact_path} routers={len(artifact.router_results)} "
-        f"planned_changes={changed_services} failed_services={failed_services} "
+        f"planned_changes={changed_services + changed_default_routes} "
+        f"default_route_changes={changed_default_routes} failed_services={failed_services} "
         f"skipped_services={skipped_services}"
     ]
 
     for router in artifact.router_results:
         lines.append(f"Роутер {router.router_id}: status={router.status.value}")
+        if router.default_route_result is not None:
+            default_result = router.default_route_result
+            lines.append(
+                "  "
+                f"Default route interface={default_result.desired_interface} "
+                f"status={default_result.status.value} "
+                f"priority_changes={default_result.changed_count}"
+            )
+            if default_result.error_message is not None:
+                lines.append(f"    ошибка: {default_result.error_message}")
+            elif include_diff_details:
+                plan = next(
+                    (
+                        item
+                        for item in result.default_route_plans
+                        if item.router_id == router.router_id
+                    ),
+                    None,
+                )
+                if plan is not None and plan.has_changes:
+                    lines.append(
+                        "    priority_changes: "
+                        + ", ".join(
+                            f"{change.interface}={change.priority}"
+                            for change in plan.priority_changes
+                        )
+                    )
         for service in router.service_results:
             lines.append(
                 "  "
@@ -799,6 +829,9 @@ def _render_operation_json(
     payload = {
         "artifact_path": str(result.artifact_path),
         "artifact": result.artifact.model_dump(mode="json"),
+        "default_route_plans": [
+            _serialize_default_route_plan(plan) for plan in result.default_route_plans
+        ],
         "plans": [_serialize_service_sync_plan(plan) for plan in result.plans],
     }
     return json.dumps(payload, indent=2, sort_keys=True)
@@ -818,6 +851,15 @@ def _serialize_service_sync_plan(plan: ServiceSyncPlan) -> dict[str, object]:
         "route_binding_diff": plan.route_binding_diff.model_dump(mode="json"),
         "remove_route": plan.remove_route,
         "remove_object_group": plan.remove_object_group,
+        "has_changes": plan.has_changes,
+    }
+
+
+def _serialize_default_route_plan(plan: DefaultRoutePlan) -> dict[str, object]:
+    return {
+        "router_id": plan.router_id,
+        "desired_interface": plan.desired_interface,
+        "priority_changes": [change.model_dump(mode="json") for change in plan.priority_changes],
         "has_changes": plan.has_changes,
     }
 
@@ -849,7 +891,9 @@ def _format_route_binding_spec(binding) -> str:
 def _dry_run_exit_code(result: DryRunExecutionResult) -> int:
     if result.artifact.status in {RunStatus.PARTIAL, RunStatus.FAILED}:
         return 20
-    if any(plan.has_changes for plan in result.plans):
+    if any(plan.has_changes for plan in result.plans) or any(
+        plan.has_changes for plan in result.default_route_plans
+    ):
         return 30
     return 0
 
@@ -857,7 +901,9 @@ def _dry_run_exit_code(result: DryRunExecutionResult) -> int:
 def _sync_exit_code(result: SyncExecutionResult) -> int:
     if result.artifact.status in {RunStatus.PARTIAL, RunStatus.FAILED}:
         return 20
-    if any(plan.has_changes for plan in result.plans):
+    if any(plan.has_changes for plan in result.plans) or any(
+        plan.has_changes for plan in result.default_route_plans
+    ):
         return 10
     return 0
 

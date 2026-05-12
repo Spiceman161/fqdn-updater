@@ -68,6 +68,33 @@ def test_app_config_accepts_valid_runtime_ready_payload() -> None:
     assert config.services[0].resolved_sources[0].format == "raw_domain_list"
 
 
+def test_router_default_route_is_optional_and_validates_interface() -> None:
+    legacy_config = AppConfig.model_validate(_config_payload())
+    config = AppConfig.model_validate(
+        _config_payload(
+            routers=[
+                _router(default_route={"interface": "Wireguard0", "managed": True}),
+            ]
+        )
+    )
+
+    assert legacy_config.routers[0].default_route is None
+    assert config.routers[0].default_route is not None
+    assert config.routers[0].default_route.interface == "Wireguard0"
+    assert config.routers[0].default_route.managed is True
+
+
+def test_router_default_route_rejects_blank_interface() -> None:
+    payload = _config_payload(
+        routers=[
+            _router(default_route={"interface": "  ", "managed": True}),
+        ]
+    )
+
+    with pytest.raises(ValidationError, match="interface must not be empty"):
+        AppConfig.model_validate(payload)
+
+
 def test_service_definition_accepts_per_source_mixed_sources() -> None:
     payload = _config_payload(
         services=[

@@ -5,7 +5,7 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from fqdn_updater.domain.config_schema import RouterConfig
-from fqdn_updater.domain.keenetic import RouteTargetCandidate
+from fqdn_updater.domain.keenetic import RouterInterfaceState, RouteTargetCandidate
 
 
 class RouterSecretResolver(Protocol):
@@ -16,6 +16,9 @@ class RouterSecretResolver(Protocol):
 class RouteTargetDiscoveryClient(Protocol):
     def discover_wireguard_route_targets(self) -> tuple[RouteTargetCandidate, ...]:
         """Read WireGuard route target candidates from a router."""
+
+    def discover_interfaces(self) -> tuple[RouterInterfaceState, ...]:
+        """Read interface candidates from a router."""
 
 
 class RouteTargetDiscoveryClientFactory(Protocol):
@@ -28,6 +31,18 @@ class RouteTargetDiscoveryResult(BaseModel):
 
     router_id: str
     candidates: tuple[RouteTargetCandidate, ...] = Field(default_factory=tuple)
+    error_message: str | None = None
+
+    @property
+    def successful(self) -> bool:
+        return self.error_message is None
+
+
+class InterfaceDiscoveryResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    router_id: str
+    interfaces: tuple[RouterInterfaceState, ...] = Field(default_factory=tuple)
     error_message: str | None = None
 
     @property
@@ -69,3 +84,25 @@ class RouteTargetDiscoveryService:
             router_id=router.id,
             candidates=candidates,
         )
+
+    def discover_interfaces(
+        self,
+        *,
+        router: RouterConfig,
+        password_override: str | None = None,
+    ) -> InterfaceDiscoveryResult:
+        try:
+            password = (
+                password_override
+                if password_override is not None
+                else self._secret_resolver.resolve(router)
+            )
+            client = self._client_factory.create(router=router, password=password)
+            interfaces = client.discover_interfaces()
+        except Exception as exc:
+            return InterfaceDiscoveryResult(
+                router_id=router.id,
+                error_message=str(exc),
+            )
+
+        return InterfaceDiscoveryResult(router_id=router.id, interfaces=interfaces)

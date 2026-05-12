@@ -21,10 +21,12 @@ from fqdn_updater.application.run_support import (
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.application.transport_failure import classify_transport_failure
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.default_route import DefaultRoutePlan, build_default_route_plan
 from fqdn_updater.domain.keenetic import ObjectGroupState, RouteBindingState
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.object_group_sharding import managed_shard_names
 from fqdn_updater.domain.run_artifact import (
+    DefaultRouteRunResult,
     FailureDetail,
     RouterRunResult,
     RunArtifact,
@@ -183,36 +185,104 @@ class RunPlanningService:
                 message=str(exc),
             )
 
-        try:
-            validate_router_desired_fqdn_total(
-                router_id=router.id,
-                mappings=router_mappings,
-                desired_entries_by_service=snapshot.desired_entries_by_service,
-                source_failures_by_service=snapshot.source_failures_by_service,
-            )
-        except Exception as exc:
-            return self._failed_router_session(
-                logger=logger,
-                router=router,
-                mappings=router_mappings,
-                client=client,
-                step=RunStep.PLAN_SERVICE,
-                message=str(exc),
-            )
+        if router_mappings:
+            try:
+                validate_router_desired_fqdn_total(
+                    router_id=router.id,
+                    mappings=router_mappings,
+                    desired_entries_by_service=snapshot.desired_entries_by_service,
+                    source_failures_by_service=snapshot.source_failures_by_service,
+                )
+            except Exception as exc:
+                return self._failed_router_session(
+                    logger=logger,
+                    router=router,
+                    mappings=router_mappings,
+                    client=client,
+                    step=RunStep.PLAN_SERVICE,
+                    message=str(exc),
+                )
 
-        try:
-            client.get_dns_proxy_status()
-        except Exception as exc:
-            return self._failed_router_session(
-                logger=logger,
-                router=router,
-                mappings=router_mappings,
-                client=client,
-                step=RunStep.READ_DNS_PROXY_STATUS,
-                message=f"Router preflight failed: {exc}",
-            )
+            try:
+                client.get_dns_proxy_status()
+            except Exception as exc:
+                return self._failed_router_session(
+                    logger=logger,
+                    router=router,
+                    mappings=router_mappings,
+                    client=client,
+                    step=RunStep.READ_DNS_PROXY_STATUS,
+                    message=f"Router preflight failed: {exc}",
+                )
 
         return RouterPlanningSession(router=router, mappings=router_mappings, client=client)
+
+    def plan_default_route(
+        self,
+        *,
+        logger: RunLogger,
+        session: RouterPlanningSession,
+    ) -> tuple[DefaultRoutePlan | None, DefaultRouteRunResult | None, FailureDetail | None]:
+        if session.client is None:
+            raise RuntimeError("router planning session is not ready")
+        if session.router.default_route is None or not session.router.default_route.managed:
+            return None, None, None
+
+        try:
+            actual_interfaces = session.client.get_interfaces()
+        except Exception as exc:
+            failure_detail = self._failure_detail(
+                step=RunStep.READ_INTERFACES,
+                message=str(exc),
+            )
+            result = build_default_route_run_result(
+                router=session.router,
+                failure_detail=failure_detail,
+            )
+            logger.event(
+                "default_route_failed",
+                step=failure_detail.step,
+                router_id=session.router.id,
+                status="failed",
+                message=failure_detail.message,
+            )
+            return None, result, failure_detail
+
+        try:
+            plan = build_default_route_plan(
+                router_id=session.router.id,
+                desired_interface=session.router.default_route.interface,
+                actual_interfaces=actual_interfaces,
+            )
+        except Exception as exc:
+            failure_detail = self._failure_detail(
+                step=RunStep.PLAN_DEFAULT_ROUTE,
+                message=str(exc),
+            )
+            result = build_default_route_run_result(
+                router=session.router,
+                failure_detail=failure_detail,
+            )
+            logger.event(
+                "default_route_failed",
+                step=failure_detail.step,
+                router_id=session.router.id,
+                status="failed",
+                message=failure_detail.message,
+            )
+            return None, result, failure_detail
+
+        result = build_default_route_run_result(router=session.router, plan=plan)
+        logger.event(
+            "default_route_planned",
+            router_id=session.router.id,
+            status=result.status.value,
+            message=(
+                f"desired_interface={plan.desired_interface} "
+                f"priority_changes={len(plan.priority_changes)}"
+            ),
+        )
+        return plan, result, None
 
     def plan_mapping(
         self,
@@ -421,6 +491,42 @@ def build_service_result_from_plan(
         unchanged_count=len(diff.unchanged) + (len(static_diff.unchanged) if static_diff else 0),
         route_changed=plan.route_binding_diff.has_changes
         or (static_diff.has_changes if static_diff else False),
+    )
+
+
+def build_default_route_run_result(
+    *,
+    router: RouterConfig,
+    plan: DefaultRoutePlan | None = None,
+    status: ServiceResultStatus | None = None,
+    failure_detail: FailureDetail | None = None,
+) -> DefaultRouteRunResult:
+    desired_interface = (
+        router.default_route.interface
+        if router.default_route is not None
+        else plan.desired_interface
+        if plan is not None
+        else ""
+    )
+    if failure_detail is not None:
+        return DefaultRouteRunResult(
+            desired_interface=desired_interface,
+            status=ServiceResultStatus.FAILED,
+            error_message=failure_detail.message,
+            failure_detail=failure_detail,
+        )
+    if plan is None:
+        raise ValueError("plan is required for successful default route result")
+    return DefaultRouteRunResult(
+        desired_interface=desired_interface,
+        status=(
+            status
+            if status is not None
+            else ServiceResultStatus.UPDATED
+            if plan.has_changes
+            else ServiceResultStatus.NO_CHANGES
+        ),
+        changed_count=len(plan.priority_changes),
     )
 
 

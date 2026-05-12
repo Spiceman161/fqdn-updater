@@ -56,6 +56,7 @@ class RouterConfig(BaseModel):
     tags: list[str] = Field(default_factory=list)
     timeout_seconds: int = Field(default=30, ge=1)
     allowed_source_ips: list[str] = Field(default_factory=list)
+    default_route: RouterDefaultRouteConfig | None = None
 
     @field_validator("id", "name", "username", "password_env", "password_file", mode="before")
     @classmethod
@@ -105,6 +106,20 @@ class RouterConfig(BaseModel):
                 "password_file"
             )
         return self
+
+
+class RouterDefaultRouteConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    interface: str
+    managed: bool = True
+
+    @field_validator("interface", mode="before")
+    @classmethod
+    def _validate_interface(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("interface must not be empty")
+        return _require_non_blank(str(value), "interface")
 
 
 class ServiceSourceConfig(BaseModel):

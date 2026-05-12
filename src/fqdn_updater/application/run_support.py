@@ -7,6 +7,7 @@ from fqdn_updater.domain.config_schema import AppConfig, RouterServiceMappingCon
 from fqdn_updater.domain.keenetic_limits import validate_total_fqdn_entry_count
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.run_artifact import (
+    DefaultRouteRunResult,
     FailureCategory,
     FailureDetail,
     RouterResultStatus,
@@ -113,11 +114,14 @@ def build_failure_detail(
 
 def aggregate_router_status(
     service_results: Sequence[ServiceRunResult],
+    default_route_result: DefaultRouteRunResult | None = None,
 ) -> RouterResultStatus:
-    if not service_results:
+    default_statuses = (default_route_result.status,) if default_route_result is not None else ()
+    if not service_results and default_route_result is None:
         return RouterResultStatus.NO_CHANGES
 
     statuses = {result.status for result in service_results}
+    statuses.update(default_statuses)
     if statuses == {ServiceResultStatus.FAILED}:
         return RouterResultStatus.FAILED
     if statuses <= {ServiceResultStatus.NO_CHANGES, ServiceResultStatus.SKIPPED}:

@@ -173,11 +173,11 @@ def test_panel_run_adds_missing_builtin_services_to_existing_config(tmp_path) ->
     payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
     service_keys = [service["key"] for service in payload["services"]]
     assert service_keys[:5] == [
+        "direct_ru_outside",
+        "direct_custom",
         "anime",
         "block",
         "block_p2p_streaming",
-        "block_vpn_proxy_privacy",
-        "block_dev_hosting_security",
     ]
     assert "geoblock_ai" in service_keys
     assert service_keys.index("news") < service_keys.index("cloudflare")
@@ -1204,6 +1204,7 @@ def test_add_router_creates_config_secret_and_default_mappings(tmp_path, monkeyp
         {
             "allowed_source_ips": [],
             "auth_method": "digest",
+            "default_route": {"interface": "Wireguard0", "managed": True},
             "enabled": True,
             "id": "router-1",
             "name": "Router 1",
@@ -1413,7 +1414,7 @@ def test_edit_router_keeps_existing_password_when_user_does_not_update_it(
     assert payload["routers"][0]["password_env"] == "ROUTER_ONE_SECRET"
     assert payload["routers"][0]["password_file"] is None
     assert SecretEnvFile(path=secret_path).read() == {"ROUTER_ONE_SECRET": "old-secret"}
-    assert fake_service.password_overrides == [None]
+    assert fake_service.password_overrides == [None, None]
     assert prompts.confirm_calls[1]["message"] == "Сохранить изменения маршрутизатора?"
 
 
@@ -1494,15 +1495,15 @@ def test_edit_router_checks_connectivity_with_draft_router_before_save(
 
     controller._edit_router()
 
-    assert fake_service.calls == ["router-1"]
-    draft_router = fake_service.routers[0]
+    assert fake_service.calls == ["router-1", "router-1"]
+    draft_router = fake_service.routers[-1]
     assert draft_router.id == "router-1"
     assert draft_router.name == "Router One Renamed"
     assert str(draft_router.rci_url) == "https://router-1-renamed.example/rci/"
     assert draft_router.username == "api-updater-new"
     assert draft_router.password_env == "ROUTER_ONE_SECRET"
     assert draft_router.timeout_seconds == 30
-    assert fake_service.password_overrides == [generated_password]
+    assert fake_service.password_overrides == [generated_password, generated_password]
     assert prompts.confirm_calls[1]["message"] == "Сохранить изменения маршрутизатора?"
 
 
@@ -1989,6 +1990,7 @@ def test_edit_router_switches_password_file_to_env_and_clears_password_file(
         {
             "allowed_source_ips": [],
             "auth_method": "digest",
+            "default_route": {"interface": "Wireguard0", "managed": True},
             "enabled": True,
             "id": "router-2",
             "name": "Router 2",

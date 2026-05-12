@@ -1104,6 +1104,8 @@ def test_init_creates_scaffold_config(tmp_path) -> None:
     assert payload["version"] == 1
     assert payload["routers"] == []
     assert [service["key"] for service in payload["services"]] == [
+        "direct_ru_outside",
+        "direct_custom",
         "anime",
         "block",
         "block_p2p_streaming",

@@ -37,11 +37,11 @@ def test_sync_builtin_services_adds_missing_builtins_and_refreshes_builtin_sourc
     result = ConfigManagementService(repository=repository).sync_builtin_services(path=config_path)
 
     assert result.added_service_keys[:5] == (
+        "direct_ru_outside",
+        "direct_custom",
         "anime",
         "block",
         "block_p2p_streaming",
-        "block_vpn_proxy_privacy",
-        "block_dev_hosting_security",
     )
     assert "geoblock_ai" in result.added_service_keys
     news = next(service for service in result.config.services if service.key == "news")
@@ -52,11 +52,11 @@ def test_sync_builtin_services_adds_missing_builtins_and_refreshes_builtin_sourc
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     service_keys = [service["key"] for service in payload["services"]]
     assert service_keys[:5] == [
+        "direct_ru_outside",
+        "direct_custom",
         "anime",
         "block",
         "block_p2p_streaming",
-        "block_vpn_proxy_privacy",
-        "block_dev_hosting_security",
     ]
     assert "geoblock_ai" in service_keys
     assert service_keys.index("news") < service_keys.index("cloudflare")

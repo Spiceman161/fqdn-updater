@@ -32,7 +32,11 @@
   "enabled": true,
   "tags": ["prod"],
   "timeout_seconds": 30,
-  "allowed_source_ips": ["203.0.113.10/32"]
+  "allowed_source_ips": ["203.0.113.10/32"],
+  "default_route": {
+    "interface": "Wireguard0",
+    "managed": true
+  }
 }
 ```
 
@@ -43,10 +47,12 @@
 - `auth_method` сейчас только `digest`.
 - Enabled router должен иметь ровно один secret source: `password_env` или `password_file`.
 - `allowed_source_ips` — audit/операторская подсказка для whitelist публикации; доступ на Keenetic настраивается отдельно.
+- `default_route` опционален. Если `managed=true`, `dry-run` читает `show interface` и показывает diff, а `sync` перед mappings выставляет выбранному интерфейсу `ip global 65534`. Конфиги без `default_route` работают как раньше и не меняют default route.
+- При конфликте `65534` updater понижает только другие интерфейсы с таким же priority до `65533`, `65532` и далее; `no ip global` не используется.
 
 ## Services
 
-Service описывает один логический список. Встроенный registry использует raw-URL из `itdoginfo/allow-domains`; сами upstream lists не вендорятся в репозиторий.
+Service описывает один логический список. Встроенный registry использует raw-URL из `itdoginfo/allow-domains`; сами upstream lists не вендорятся в репозиторий. Исключение — локальный шаблон `source-lists/direct-custom.lst`, который публикуется как raw-list для `direct_custom`.
 
 Новый формат:
 
@@ -92,6 +98,11 @@ Legacy формат всё ещё валиден:
 - `include_domain_suffixes` и `exclude_domain_suffixes` доступны только для domain sources.
 - Если один source сервиса не загрузился или не распарсился, сервис помечается failed; updater не делает blind deletion по неполному source.
 
+Встроенные direct-сервисы для сценария “default route через VPN, отдельные группы напрямую”:
+
+- `direct_ru_outside` — `https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/outside-raw.lst`;
+- `direct_custom` — `https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/source-lists/direct-custom.lst`.
+
 ## Mappings
 
 Mapping связывает router, service и managed route target:
@@ -115,6 +126,7 @@ Mapping связывает router, service и managed route target:
 - для domain entries создаёт или обновляет managed `object-group fqdn`;
 - для FQDN object-groups создаёт DNS-proxy route binding на `route_target_value`;
 - для CIDR entries создаёт managed IPv4/IPv6 static routes с comment prefix `fqdn-updater:<service>`;
+- если у роутера настроен managed `default_route`, планирует и применяет priority diff `ip global` даже когда mappings пустые;
 - меняет только mappings с `managed=true`;
 - не трогает unrelated object-groups, DNS routes и static routes.
 

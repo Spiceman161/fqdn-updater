@@ -39,6 +39,7 @@ In scope:
 - Managed object-group diff/apply.
 - Managed DNS route binding diff/apply.
 - Managed static route diff/apply for CIDR entries.
+- Optional managed default route priority через Keenetic `ip global`.
 - Read-before-write для любого apply.
 - `status`, `dry-run`, `sync`.
 - Docker Compose runtime.
@@ -71,6 +72,7 @@ Out of scope:
 - Конфиг хранит routers, services, mappings и runtime settings.
 - CLI и панель позволяют добавить/изменить роутер без ручного JSON editing.
 - Для роутера задаются `rci_url`, `username`, `password_env` или `password_file`, `enabled`, timeout и audit tags.
+- Опционально задаётся `default_route.interface`; если `managed=true`, updater управляет default route priority для выбранного интерфейса.
 - `rci_url` хранится как внешний HTTPS endpoint вида `https://rci.<domain>/rci/`.
 
 ### Keenetic state read
@@ -84,10 +86,12 @@ Out of scope:
 - Diff содержит добавления, удаления, unchanged entries и route changes.
 - Если изменений нет, write-команды не отправляются.
 - Apply меняет только mappings с `managed=true`.
+- Apply меняет router-level default route только если `routers[].default_route.managed=true`.
 - FQDN entries пишутся в managed object-groups.
 - CIDR entries пишутся в managed IPv4/IPv6 static routes с comment prefix `fqdn-updater:<service>`.
 - Для RCI большие command batches должны чанковаться.
 - После успешных write-изменений вызывается `system configuration save`.
+- Default route write выставляет выбранному интерфейсу `ip global 65534` и понижает только другие интерфейсы с конфликтующим `65534`; `no ip global` не используется.
 - Списки выше 300 FQDN entries шардируются в deterministic managed groups; общий FQDN plan выше 1024 entries на роутер отклоняется до любой записи.
 
 ### Dry run

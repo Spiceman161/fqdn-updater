@@ -14,6 +14,7 @@ from fqdn_updater.infrastructure.keenetic_rci_commands import (
     build_remove_route_command,
     build_remove_static_route_command,
     build_save_config_command,
+    build_set_interface_global_priority_command,
 )
 
 
@@ -99,6 +100,12 @@ def test_static_route_commands_match_rci_payloads() -> None:
 
 def test_save_config_command_matches_rci_payload() -> None:
     assert build_save_config_command() == {"parse": "system configuration save"}
+
+
+def test_interface_global_priority_command_matches_cli_payload() -> None:
+    assert build_set_interface_global_priority_command("Wireguard0", 65534) == {
+        "parse": "interface Wireguard0 ip global 65534"
+    }
 
 
 def test_cli_commands_reject_whitespace_arguments() -> None:

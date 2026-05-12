@@ -5,7 +5,7 @@
 [![Verify](https://github.com/Spiceman161/fqdn-updater/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/Spiceman161/fqdn-updater/actions/workflows/verify.yml)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
 
-**FQDN-updater** — source-available CLI-инструмент для безопасной синхронизации Статических маршрутов (managed FQDN object-group, DNS-proxy route bindings и CIDR static routes) на роутерах Keenetic (Netcraze) через KeenDNS RCI API.
+**FQDN-updater** — source-available CLI-инструмент для безопасной синхронизации Статических маршрутов (managed FQDN object-group, DNS-proxy route bindings, CIDR static routes и optional managed default route priority) на роутерах Keenetic (Netcraze) через KeenDNS RCI API.
 
 Проект рассчитан для установки на небольшой VPS или домашний сервер. Оператор хранит конфиг и секреты локально, проверяет изменения через `status` и `dry-run`, применяет только явно управляемые mappings через `sync`, а регулярный запуск выполняет как одноразовый Docker Compose job под systemd timer.
 
@@ -18,7 +18,7 @@
 - Только отдельный low-privilege API-пользователь для опубликованного RCI web application.
 - Только сгенерированные стойкие пароли для RCI API.
 - Любой apply сначала читает текущее состояние роутера, строит deterministic diff и только затем пишет изменения.
-- Инструмент меняет только managed object-group, DNS route bindings и static routes, описанные в `config.json`.
+- Инструмент меняет только managed object-group, DNS route bindings, static routes и router-level `default_route`, описанные в `config.json`.
 - `status`, `dry-run`, журнал и read-only проверки панели не выполняют удалённых write-операций.
 - В текущем scope нет web UI, daemon-процесса, уведомлений, SSH production transport и поддержки не-Keenetic устройств.
 
@@ -73,7 +73,7 @@ domaingo
 fqdn-updater panel --config /opt/fqdn-updater/config.json
 ```
 
-В панели можно создать конфиг, добавить роутер, сгенерировать пароль для RCI-пользователя, выбрать списки, обнаружить WireGuard-интерфейсы, настроить расписание и выполнить `dry-run` перед `sync`.
+В панели можно создать конфиг, добавить роутер, сгенерировать пароль для RCI-пользователя, выбрать default interface, direct/VPN-routed списки, обнаружить интерфейсы Keenetic, настроить расписание и выполнить `dry-run` перед `sync`.
 
 ## Базовые команды
 

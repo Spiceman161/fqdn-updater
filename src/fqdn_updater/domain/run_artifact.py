@@ -48,7 +48,10 @@ class RunStep(StrEnum):
     READ_ROUTE_BINDING = "read_route_binding"
     READ_STATIC_ROUTES = "read_static_routes"
     READ_DNS_PROXY_STATUS = "read_dns_proxy_status"
+    READ_INTERFACES = "read_interfaces"
+    PLAN_DEFAULT_ROUTE = "plan_default_route"
     PLAN_SERVICE = "plan_service"
+    SET_DEFAULT_ROUTE_PRIORITY = "set_default_route_priority"
     ENSURE_OBJECT_GROUP = "ensure_object_group"
     REMOVE_OBJECT_GROUP = "remove_object_group"
     REMOVE_ENTRIES = "remove_entries"
@@ -94,11 +97,24 @@ class ServiceRunResult(BaseModel):
     failure_detail: FailureDetail | None = None
 
 
+class DefaultRouteRunResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    desired_interface: str
+    status: ServiceResultStatus
+    changed_count: int = Field(default=0, ge=0)
+    error_message: str | None = None
+    failure_detail: FailureDetail | None = None
+
+
 class RouterRunResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     router_id: str
     status: RouterResultStatus
+    default_route_result: DefaultRouteRunResult | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     service_results: list[ServiceRunResult] = Field(default_factory=list)
     error_message: str | None = None
     failure_detail: FailureDetail | None = None

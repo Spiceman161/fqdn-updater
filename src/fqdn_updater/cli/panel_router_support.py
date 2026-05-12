@@ -10,6 +10,7 @@ from fqdn_updater.domain.config_schema import (
     RouterConfig,
     RouterServiceMappingConfig,
 )
+from fqdn_updater.domain.keenetic import RouterInterfaceState
 from fqdn_updater.infrastructure.secret_env_file import password_env_key_for_router_id
 
 DEFAULT_SELECTED_SERVICES = frozenset(
@@ -39,6 +40,8 @@ DEFAULT_SELECTED_SERVICES = frozenset(
         "youtube",
     }
 )
+DIRECT_SERVICE_KEYS = frozenset({"direct_ru_outside", "direct_custom"})
+DEFAULT_SELECTED_DIRECT_SERVICES = DIRECT_SERVICE_KEYS
 DEFAULT_INTERFACE_NAME = "Wireguard0"
 DEFAULT_RCI_TIMEOUT_SECONDS = 30
 SERVICE_SELECTION_HINT_LINES = (
@@ -178,6 +181,30 @@ def default_interface_target_value(default_target: RouteTargetDraft) -> str:
     if default_target.route_interface:
         return default_target.route_interface
     return DEFAULT_INTERFACE_NAME
+
+
+def find_interface_state(
+    *,
+    interfaces: tuple[RouterInterfaceState, ...],
+    value: str,
+) -> RouterInterfaceState | None:
+    normalized_value = value.strip()
+    for interface in interfaces:
+        if interface.value == normalized_value:
+            return interface
+    return None
+
+
+def first_provider_interface_value(interfaces: tuple[RouterInterfaceState, ...]) -> str:
+    for interface in interfaces:
+        if interface.is_vpn_like:
+            continue
+        if interface.global_priority is not None or interface.global_enabled:
+            return interface.value
+    for interface in interfaces:
+        if not interface.is_vpn_like:
+            return interface.value
+    return "Provider"
 
 
 def derive_router_id(*, name: str, config: AppConfig) -> str:

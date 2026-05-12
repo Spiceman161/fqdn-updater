@@ -9,6 +9,10 @@ from typing import Any
 
 from rich.console import Console
 
+from fqdn_updater.application.route_target_discovery import (
+    InterfaceDiscoveryResult,
+    RouteTargetDiscoveryResult,
+)
 from fqdn_updater.cli.panel import PanelController
 from fqdn_updater.cli.panel_dependencies import PanelDependencies, build_panel_dependencies
 from fqdn_updater.cli.panel_prompts import CheckboxTableMeta, PromptChoice
@@ -56,6 +60,8 @@ class ScriptedPromptAdapter:
                 "hint_lines": hint_lines,
             }
         )
+        if message == "Режим списков для default route":
+            return "provider"
         return self._pop(self._select_answers, f"select:{message}")
 
     def checkbox(
@@ -110,6 +116,8 @@ class ScriptedPromptAdapter:
                 "hint_lines": hint_lines,
             }
         )
+        if message == "Базовый интерфейс маршрутизации" and not self._text_answers:
+            return default or "Wireguard0"
         return self._pop(self._text_answers, f"text:{message}")
 
     def confirm(
@@ -201,6 +209,24 @@ def make_empty_source_load_report() -> SourceLoadReport:
     return SourceLoadReport()
 
 
+class EmptyDiscoveryService:
+    def discover_wireguard_targets(
+        self,
+        *,
+        router,
+        password_override: str | None = None,
+    ) -> RouteTargetDiscoveryResult:
+        return RouteTargetDiscoveryResult(router_id=router.id, candidates=())
+
+    def discover_interfaces(
+        self,
+        *,
+        router,
+        password_override: str | None = None,
+    ) -> InterfaceDiscoveryResult:
+        return InterfaceDiscoveryResult(router_id=router.id, interfaces=())
+
+
 def make_panel_controller(
     tmp_path: Path,
     *,
@@ -212,6 +238,7 @@ def make_panel_controller(
     panel_dependencies = replace(
         dependencies or build_panel_dependencies(),
         source_loading_service=source_loading_service,
+        route_target_discovery_service=EmptyDiscoveryService(),
     )
     controller = PanelController(
         config_path=tmp_path / "config.json",

@@ -54,7 +54,9 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 
 Панель сгенерирует router id из имени, предложит `api_updater`, создаст пароль и покажет подсказки для Keenetic. Пароль сохраняется в `.env.secrets`, а в config остаётся ссылка вида `FQDN_UPDATER_ROUTER_<ID>_PASSWORD`.
 
-После проверки RCI URL можно сразу выбрать сервисы и route target. Если discovery недоступен, route target можно ввести вручную.
+После проверки RCI URL панель показывает интерфейсы из `show interface`: тип, состояние, `global/defaultgw/priority`. Затем выбирается default interface. Если discovery недоступен, интерфейс можно ввести вручную и выбрать режим списков.
+
+Если default interface похож на VPN, панель предлагает direct-группы (`direct_*`) и отдельно спрашивает provider interface для этих групп. Если default interface не VPN, используется прежний сценарий: выбираются VPN-routed списки и общий route target, с optional override для `google_ai`.
 
 ## Удаление роутера
 
@@ -70,7 +72,7 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 
 Выбранные сервисы получают deterministic managed group names. Domain entries шардируются по FQDN object-groups, CIDR entries планируются как static routes.
 
-WireGuard discovery читает интерфейсы с выбранного роутера через RCI. Для `google_ai` можно задать отдельный override, если AI-сервисы Google должны идти через другой интерфейс или gateway.
+Interface discovery читает интерфейсы с выбранного роутера через RCI. Сначала выбирается managed default route, затем набор списков: direct-группы для VPN default или обычный каталог для provider default. Для `google_ai` можно задать отдельный override, если AI-сервисы Google должны идти через другой интерфейс или gateway.
 
 ## Журнал и проверки
 
@@ -82,7 +84,7 @@ WireGuard discovery читает интерфейсы с выбранного р
 завершение run; оба экрана используют `runtime.schedule.timezone`. JSON artifacts
 продолжают хранить timestamps в UTC.
 
-`dry-run` не пишет на роутер. `sync` применяет только managed changes и сохраняет конфигурацию Keenetic после успешного apply.
+`dry-run` не пишет на роутер. `sync` применяет только managed changes, включая managed default route priority diff, и сохраняет конфигурацию Keenetic после успешного apply.
 
 ## Расписание
 

@@ -11,6 +11,7 @@ from fqdn_updater.domain.keenetic import (
     ObjectGroupState,
     RouteBindingSpec,
     RouteBindingState,
+    RouterInterfaceState,
     RouteTargetCandidate,
 )
 from fqdn_updater.domain.static_route_diff import (
@@ -27,6 +28,7 @@ from fqdn_updater.infrastructure.keenetic_rci_commands import (
     build_remove_route_command,
     build_remove_static_route_command,
     build_save_config_command,
+    build_set_interface_global_priority_command,
     show_dns_proxy_config_command,
     show_dns_proxy_status_command,
     show_interfaces_command,
@@ -39,6 +41,7 @@ from fqdn_updater.infrastructure.keenetic_rci_parsers import (
     parse_dns_proxy_status,
     parse_object_group_state,
     parse_route_binding_state,
+    parse_router_interfaces,
     parse_static_routes,
     parse_wireguard_route_target_candidates,
     unwrap_response_path,
@@ -152,6 +155,19 @@ class KeeneticRciClient(KeeneticClient):
             )
         )
 
+    def get_interfaces(self) -> tuple[RouterInterfaceState, ...]:
+        response_payload = self._post_commands(
+            operation="get_interfaces",
+            commands=[show_interfaces_command()],
+        )
+        interface_payload = unwrap_response_path(
+            response_payload,
+            operation="get_interfaces",
+            path=("show", "interface"),
+            runtime_error=self._runtime_error,
+        )
+        return parse_router_interfaces(interface_payload)
+
     def ensure_object_group(self, name: str) -> None:
         normalized_name = _require_non_blank(name, "name")
         self._post_commands(
@@ -213,6 +229,12 @@ class KeeneticRciClient(KeeneticClient):
             commands=[build_remove_static_route_command(route)],
         )
 
+    def set_interface_global_priority(self, interface: str, priority: int) -> None:
+        self._post_commands(
+            operation=f"set_interface_global_priority({interface})",
+            commands=[build_set_interface_global_priority_command(interface, priority)],
+        )
+
     def save_config(self) -> None:
         self._post_commands(
             operation="save_config",
@@ -247,6 +269,9 @@ class KeeneticRciClient(KeeneticClient):
             runtime_error=self._runtime_error,
         )
         return parse_wireguard_route_target_candidates(interface_payload)
+
+    def discover_interfaces(self) -> tuple[RouterInterfaceState, ...]:
+        return self.get_interfaces()
 
     def _post_commands(self, *, operation: str, commands: Sequence[dict[str, Any]]) -> Any:
         if not commands:

@@ -81,6 +81,8 @@ SERVICE_SELECTION_GROUPS = {
     ),
 }
 SERVICE_DISPLAY_LABELS = {
+    "direct_ru_outside": "direct RU outside",
+    "direct_custom": "direct custom",
     "block": "block (full)",
     "block_p2p_streaming": "   p2p/media",
     "block_vpn_proxy_privacy": "   vpn/privacy",

@@ -9,6 +9,7 @@ from fqdn_updater.domain.keenetic import (
     ObjectGroupState,
     RouteBindingSpec,
     RouteBindingState,
+    RouterInterfaceState,
 )
 from fqdn_updater.domain.static_route_diff import StaticRouteSpec, StaticRouteState
 
@@ -25,6 +26,10 @@ class KeeneticClient(ABC):
     @abstractmethod
     def get_static_routes(self) -> tuple[StaticRouteState, ...]:
         """Read current static routes from the router."""
+
+    def get_interfaces(self) -> tuple[RouterInterfaceState, ...]:
+        """Read current interface state from the router."""
+        raise NotImplementedError
 
     @abstractmethod
     def ensure_object_group(self, name: str) -> None:
@@ -57,6 +62,10 @@ class KeeneticClient(ABC):
     @abstractmethod
     def remove_static_route(self, route: StaticRouteState) -> None:
         """Remove a managed static route."""
+
+    def set_interface_global_priority(self, interface: str, priority: int) -> None:
+        """Set an interface global priority."""
+        raise NotImplementedError
 
     @abstractmethod
     def save_config(self) -> None:

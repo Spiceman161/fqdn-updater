@@ -9,6 +9,7 @@ FQDN-updater — Python CLI для безопасной синхронизаци
 - FQDN entries попадают в managed `object-group fqdn`;
 - DNS-proxy route bindings связывают managed object-group с interface/gateway;
 - CIDR entries попадают в managed static routes с comment prefix `fqdn-updater:<service>`.
+- Optional router-level `default_route` управляет default connection priority через Keenetic `ip global`.
 
 Production transport только один: KeenDNS RCI по HTTPS с HTTP Digest Auth. SSH, web UI, daemon, notifications и не-Keenetic устройства вне текущего scope.
 
@@ -32,6 +33,7 @@ Production transport только один: KeenDNS RCI по HTTPS с HTTP Diges
 - Source formats: `raw_domain_list`, `raw_cidr_list`, `mixed`.
 - Domain suffix filters работают только для domain sources.
 - `sync` применяет только mappings с `managed=true`.
+- `routers[].default_route` опционален; при `managed=true` sync читает `show interface`, ставит выбранному интерфейсу priority `65534` и понижает только другие интерфейсы с конфликтующим `65534`.
 - `dry-run` не пишет на роутер.
 - Любой apply делает read-before-write и пишет минимальный diff.
 - Выключенные routers (`enabled=false`) не читаются и не пишутся; в новых run artifacts

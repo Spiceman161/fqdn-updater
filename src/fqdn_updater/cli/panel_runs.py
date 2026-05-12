@@ -469,12 +469,22 @@ def _format_history_run_choice_title(*, config: AppConfig, run: RecentRun) -> st
 def _format_artifact_summary(artifact: RunArtifact) -> str:
     changed_services = 0
     failed_services = 0
+    default_route_changes = 0
     for router in artifact.router_results:
+        if router.default_route_result is not None:
+            if router.default_route_result.error_message is not None:
+                failed_services += 1
+            default_route_changes += router.default_route_result.changed_count
         for service in router.service_results:
             if service.error_message is not None:
                 failed_services += 1
             if service.added_count > 0 or service.removed_count > 0 or service.route_changed:
                 changed_services += 1
+    if default_route_changes:
+        return (
+            f"изменено={changed_services} default_route={default_route_changes} "
+            f"ошибок={failed_services}"
+        )
     return f"изменено={changed_services} ошибок={failed_services}"
 
 
@@ -484,11 +494,21 @@ def _format_router_result_summary(router: RouterRunResult) -> str:
 
     changed_services = 0
     failed_services = 0
+    default_route_changes = 0
+    if router.default_route_result is not None:
+        if router.default_route_result.error_message is not None:
+            failed_services += 1
+        default_route_changes = router.default_route_result.changed_count
     for service in router.service_results:
         if service.error_message is not None:
             failed_services += 1
         if service.added_count > 0 or service.removed_count > 0 or service.route_changed:
             changed_services += 1
+    if default_route_changes:
+        return (
+            f"изменено={changed_services} default_route={default_route_changes} "
+            f"ошибок={failed_services}"
+        )
     return f"изменено={changed_services} ошибок={failed_services}"
 
 

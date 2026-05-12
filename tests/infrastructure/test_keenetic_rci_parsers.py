@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from fqdn_updater.domain.keenetic import RouteTargetCandidate
+from fqdn_updater.domain.keenetic import RouterInterfaceState, RouteTargetCandidate
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.static_route_diff import StaticRouteState
 from fqdn_updater.infrastructure.keenetic_rci_parsers import (
     parse_dns_proxy_status,
     parse_object_group_state,
     parse_route_binding_state,
+    parse_router_interfaces,
     parse_static_routes,
     parse_wireguard_route_target_candidates,
     unwrap_response_path,
@@ -33,6 +34,47 @@ def test_unwrap_response_path_preserves_client_error_shape() -> None:
             path=("show", "sc", "object-group", "fqdn"),
             runtime_error=_runtime_error,
         )
+
+
+def test_parse_router_interfaces_reads_global_defaultgw_and_priority_shapes() -> None:
+    interfaces = parse_router_interfaces(
+        {
+            "Provider0": {
+                "id": "Provider0",
+                "type": "ethernet",
+                "state": "up",
+                "connected": "yes",
+                "ip": {"global": True, "defaultgw": True, "priority": "65534"},
+            },
+            "Wireguard0": {
+                "id": "Wireguard0",
+                "type": "WireGuard",
+                "state": "connected",
+                "global": {"enabled": True, "priority": 100},
+            },
+        }
+    )
+
+    assert interfaces == (
+        RouterInterfaceState(
+            value="Provider0",
+            display_name="Provider0",
+            interface_type="ethernet",
+            status="up",
+            connected=True,
+            global_enabled=True,
+            default_gateway=True,
+            global_priority=65534,
+        ),
+        RouterInterfaceState(
+            value="Wireguard0",
+            display_name="Wireguard0",
+            interface_type="WireGuard",
+            status="connected",
+            global_priority=100,
+        ),
+    )
+    assert interfaces[1].is_vpn_like is True
 
 
 def test_parse_object_group_state_preserves_cli_style_behavior() -> None:

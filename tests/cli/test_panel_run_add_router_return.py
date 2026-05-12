@@ -7,7 +7,7 @@ from .panel_test_support import ScriptedPromptAdapter, make_panel_controller, wr
 
 def test_run_returns_to_root_dashboard_after_successful_add_router(tmp_path, monkeypatch) -> None:
     prompts = ScriptedPromptAdapter(
-        select_answers=["routers", "add", "exit"],
+        select_answers=["routers", "add", "back", "exit"],
         checkbox_answers=[["telegram", "google_ai"]],
         text_answers=[
             "Router 1",
@@ -35,9 +35,11 @@ def test_run_returns_to_root_dashboard_after_successful_add_router(tmp_path, mon
 
     controller.run()
 
-    assert dashboard_router_counts == [0, 1]
+    assert dashboard_router_counts == [0, 1, 1]
     assert [call["message"] for call in prompts.select_calls] == [
         "Выберите раздел панели",
         "Маршрутизаторы",
+        "Режим списков для default route",
+        "Выберите раздел панели",
         "Выберите раздел панели",
     ]

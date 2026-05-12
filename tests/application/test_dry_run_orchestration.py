@@ -6,7 +6,12 @@ from pathlib import Path
 from fqdn_updater.application.dry_run_orchestration import DryRunOrchestrator
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
-from fqdn_updater.domain.keenetic import DnsProxyStatus, ObjectGroupState, RouteBindingState
+from fqdn_updater.domain.keenetic import (
+    DnsProxyStatus,
+    ObjectGroupState,
+    RouteBindingState,
+    RouterInterfaceState,
+)
 from fqdn_updater.domain.run_artifact import (
     FailureCategory,
     RouterResultStatus,
@@ -635,6 +640,65 @@ def test_dry_run_orchestrator_marks_route_only_changes_as_updated() -> None:
     assert result.plans[0].route_binding_diff.has_changes is True
 
 
+def test_dry_run_orchestrator_plans_default_route_without_writes() -> None:
+    config = AppConfig.model_validate(
+        {
+            "routers": [
+                {
+                    "id": "router-1",
+                    "name": "Router 1",
+                    "rci_url": "https://router-1.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_ONE_PASSWORD",
+                    "enabled": True,
+                    "default_route": {"interface": "Wireguard0", "managed": True},
+                },
+            ],
+            "services": [],
+            "mappings": [],
+        }
+    )
+    client_factory = RecordingClientFactory(
+        states={},
+        route_bindings={},
+        interfaces={
+            "router-1": (
+                RouterInterfaceState(value="Provider0", global_priority=65534),
+                RouterInterfaceState(value="Wireguard0", global_priority=100),
+            )
+        },
+    )
+    orchestrator = DryRunOrchestrator(
+        source_loader=StubSourceLoader(SourceLoadReport()),
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
+            ]
+        ),
+        run_id_factory=lambda: "run-default-route-dry",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    assert client.read_calls == ["interfaces"]
+    assert result.artifact.router_results[0].status is RouterResultStatus.UPDATED
+    assert result.artifact.router_results[0].default_route_result is not None
+    assert result.artifact.router_results[0].default_route_result.changed_count == 2
+    assert [
+        (change.interface, change.priority)
+        for change in result.default_route_plans[0].priority_changes
+    ] == [
+        ("Wireguard0", 65534),
+        ("Provider0", 65533),
+    ]
+
+
 class StubSourceLoader:
     def __init__(self, report: SourceLoadReport) -> None:
         self.report = report
@@ -668,12 +732,14 @@ class RecordingClientFactory:
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
         static_routes: dict[str, tuple[StaticRouteState, ...]] | None = None,
+        interfaces: dict[str, tuple[RouterInterfaceState, ...]] | None = None,
         preflight_errors: dict[str, str] | None = None,
         errors: dict[tuple[str, str], str] | None = None,
     ) -> None:
         self.states = states
         self.route_bindings = route_bindings
         self.static_routes = static_routes or {}
+        self.interfaces = interfaces or {}
         self.preflight_errors = preflight_errors or {}
         self.errors = errors or {}
         self.created_passwords: list[tuple[str, str]] = []
@@ -686,6 +752,7 @@ class RecordingClientFactory:
             states=self.states,
             route_bindings=self.route_bindings,
             static_routes=self.static_routes.get(router.id, ()),
+            interfaces=self.interfaces.get(router.id, ()),
             preflight_errors=self.preflight_errors,
             errors=self.errors,
         )
@@ -701,6 +768,7 @@ class RecordingClient:
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
         static_routes: tuple[StaticRouteState, ...],
+        interfaces: tuple[RouterInterfaceState, ...],
         preflight_errors: dict[str, str],
         errors: dict[tuple[str, str], str],
     ) -> None:
@@ -708,6 +776,7 @@ class RecordingClient:
         self.states = states
         self.route_bindings = route_bindings
         self.static_routes = static_routes
+        self.interfaces = interfaces
         self.preflight_errors = preflight_errors
         self.errors = errors
         self.read_calls: list[str] = []
@@ -732,6 +801,10 @@ class RecordingClient:
     def get_static_routes(self) -> tuple[StaticRouteState, ...]:
         self.read_calls.append("static_routes")
         return self.static_routes
+
+    def get_interfaces(self) -> tuple[RouterInterfaceState, ...]:
+        self.read_calls.append("interfaces")
+        return self.interfaces
 
     def get_dns_proxy_status(self) -> DnsProxyStatus:
         if self.router_id in self.preflight_errors:

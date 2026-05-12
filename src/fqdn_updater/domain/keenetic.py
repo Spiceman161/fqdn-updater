@@ -197,6 +197,67 @@ class DnsProxyStatus(BaseModel):
     enabled: bool
 
 
+class RouterInterfaceState(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    value: str
+    display_name: str | None = None
+    interface_type: str | None = None
+    interface_class: str | None = None
+    status: str | None = None
+    connected: bool | None = None
+    global_enabled: bool | None = None
+    default_gateway: bool | None = None
+    global_priority: int | None = None
+
+    @field_validator(
+        "value",
+        "display_name",
+        "interface_type",
+        "interface_class",
+        "status",
+        mode="before",
+    )
+    @classmethod
+    def _validate_text_fields(cls, value: Any, info: Any) -> str | None:
+        if value is None:
+            return None
+        return _require_non_blank(str(value), info.field_name)
+
+    @field_validator("global_priority")
+    @classmethod
+    def _validate_global_priority(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if not 1 <= value <= 65534:
+            raise ValueError("global_priority must be between 1 and 65534")
+        return value
+
+    @property
+    def is_vpn_like(self) -> bool:
+        search_text = " ".join(
+            value or ""
+            for value in (
+                self.value,
+                self.display_name,
+                self.interface_type,
+                self.interface_class,
+            )
+        ).lower()
+        return any(
+            marker in search_text
+            for marker in (
+                "wireguard",
+                "openvpn",
+                "sstp",
+                "l2tp",
+                "ipsec",
+                "pptp",
+                "vpn",
+            )
+        )
+
+
 class RouteTargetCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

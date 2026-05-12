@@ -6,7 +6,12 @@ from pathlib import Path
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.application.sync_orchestration import SyncOrchestrator
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig
-from fqdn_updater.domain.keenetic import DnsProxyStatus, ObjectGroupState, RouteBindingState
+from fqdn_updater.domain.keenetic import (
+    DnsProxyStatus,
+    ObjectGroupState,
+    RouteBindingState,
+    RouterInterfaceState,
+)
 from fqdn_updater.domain.run_artifact import (
     FailureCategory,
     RouterResultStatus,
@@ -823,6 +828,64 @@ def test_sync_orchestrator_applies_route_only_changes_and_saves() -> None:
     assert service_result.removed_count == 0
 
 
+def test_sync_orchestrator_applies_default_route_only_changes_and_saves() -> None:
+    config = AppConfig.model_validate(
+        {
+            "routers": [
+                {
+                    "id": "router-1",
+                    "name": "Router 1",
+                    "rci_url": "https://router-1.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_ONE_PASSWORD",
+                    "enabled": True,
+                    "default_route": {"interface": "Wireguard0", "managed": True},
+                },
+            ],
+            "services": [],
+            "mappings": [],
+        }
+    )
+    client_factory = RecordingClientFactory(
+        states={},
+        route_bindings={},
+        interfaces={
+            "router-1": (
+                RouterInterfaceState(value="Provider0", global_priority=65534),
+                RouterInterfaceState(value="Wireguard0", global_priority=100),
+            )
+        },
+    )
+    orchestrator = SyncOrchestrator(
+        source_loader=StubSourceLoader(SourceLoadReport()),
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
+            ]
+        ),
+        run_id_factory=lambda: "run-default-route",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    assert client.read_calls == ["interfaces"]
+    assert client.write_calls == [
+        "set_interface_global_priority:Wireguard0:65534",
+        "set_interface_global_priority:Provider0:65533",
+        "save_config",
+    ]
+    assert result.artifact.router_results[0].status is RouterResultStatus.UPDATED
+    assert result.artifact.router_results[0].default_route_result is not None
+    assert result.artifact.router_results[0].default_route_result.changed_count == 2
+    assert result.default_route_plans[0].has_changes is True
+
+
 def test_sync_orchestrator_rejects_router_total_above_keenetic_fqdn_limit_before_writes() -> None:
     config = _config_with_four_services_one_router()
     source_loader = StubSourceLoader(
@@ -900,6 +963,7 @@ class RecordingClientFactory:
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
         static_routes: dict[str, tuple[StaticRouteState, ...]] | None = None,
+        interfaces: dict[str, tuple[RouterInterfaceState, ...]] | None = None,
         preflight_errors: dict[str, str] | None = None,
         read_errors: dict[tuple[str, str], str] | None = None,
         write_errors: dict[tuple[str, str, str], str] | None = None,
@@ -908,6 +972,7 @@ class RecordingClientFactory:
         self.states = states
         self.route_bindings = route_bindings
         self.static_routes = static_routes or {}
+        self.interfaces = interfaces or {}
         self.preflight_errors = preflight_errors or {}
         self.read_errors = read_errors or {}
         self.write_errors = write_errors or {}
@@ -920,6 +985,7 @@ class RecordingClientFactory:
             states=self.states,
             route_bindings=self.route_bindings,
             static_routes=self.static_routes.get(router.id, ()),
+            interfaces=self.interfaces.get(router.id, ()),
             preflight_errors=self.preflight_errors,
             read_errors=self.read_errors,
             write_errors=self.write_errors,
@@ -937,6 +1003,7 @@ class RecordingClient:
         states: dict[tuple[str, str], ObjectGroupState],
         route_bindings: dict[tuple[str, str], RouteBindingState],
         static_routes: tuple[StaticRouteState, ...],
+        interfaces: tuple[RouterInterfaceState, ...],
         preflight_errors: dict[str, str],
         read_errors: dict[tuple[str, str], str],
         write_errors: dict[tuple[str, str, str], str],
@@ -946,6 +1013,7 @@ class RecordingClient:
         self.states = states
         self.route_bindings = route_bindings
         self.static_routes = static_routes
+        self.interfaces = interfaces
         self.preflight_errors = preflight_errors
         self.read_errors = read_errors
         self.write_errors = write_errors
@@ -973,6 +1041,10 @@ class RecordingClient:
     def get_static_routes(self) -> tuple[StaticRouteState, ...]:
         self.read_calls.append("static_routes")
         return self.static_routes
+
+    def get_interfaces(self) -> tuple[RouterInterfaceState, ...]:
+        self.read_calls.append("interfaces")
+        return self.interfaces
 
     def ensure_object_group(self, name: str) -> None:
         self.write_calls.append(f"ensure_object_group:{name}")
@@ -1005,6 +1077,10 @@ class RecordingClient:
     def remove_static_route(self, route: StaticRouteState) -> None:
         self.write_calls.append(f"remove_static_route:{route.network}")
         self._raise_write_error("remove_static_route", route.network)
+
+    def set_interface_global_priority(self, interface: str, priority: int) -> None:
+        self.write_calls.append(f"set_interface_global_priority:{interface}:{priority}")
+        self._raise_write_error("set_interface_global_priority", interface)
 
     def save_config(self) -> None:
         self.write_calls.append("save_config")

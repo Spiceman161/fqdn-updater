@@ -18,6 +18,24 @@ from fqdn_updater.domain.source_registry_data import (
 
 
 def _service_definition(key: str) -> ServiceDefinitionConfig:
+    if key == "direct_ru_outside":
+        return ServiceDefinitionConfig(
+            key=key,
+            source_urls=[
+                "https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/outside-raw.lst"
+            ],
+            format="raw_domain_list",
+            description=_SERVICE_DESCRIPTIONS[key],
+        )
+    if key == "direct_custom":
+        return ServiceDefinitionConfig(
+            key=key,
+            source_urls=[
+                "https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/source-lists/direct-custom.lst"
+            ],
+            format="raw_domain_list",
+            description=_SERVICE_DESCRIPTIONS[key],
+        )
     if key in _BLOCK_FILTERS:
         return _filtered_category_definition(
             key=key,

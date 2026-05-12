@@ -107,6 +107,14 @@ def build_remove_static_route_command(route: StaticRouteState) -> dict[str, Any]
     return {namespace: {"route": _build_static_route_payload(route=route, remove=True)}}
 
 
+def build_set_interface_global_priority_command(interface: str, priority: int) -> dict[str, Any]:
+    if not 1 <= priority <= 65534:
+        raise ValueError("priority must be between 1 and 65534")
+    return {
+        "parse": (f"interface {_format_cli_argument(interface, 'interface')} ip global {priority}")
+    }
+
+
 def build_save_config_command() -> dict[str, Any]:
     return {"parse": "system configuration save"}
 

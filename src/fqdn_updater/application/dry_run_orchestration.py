@@ -30,7 +30,9 @@ from fqdn_updater.application.run_support import (
 )
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.default_route import DefaultRoutePlan
 from fqdn_updater.domain.run_artifact import (
+    DefaultRouteRunResult,
     FailureDetail,
     RouterRunResult,
     RunArtifact,
@@ -46,6 +48,7 @@ class DryRunExecutionResult(BaseModel):
     artifact: RunArtifact
     artifact_path: Path
     plans: tuple[ServiceSyncPlan, ...] = Field(default_factory=tuple)
+    default_route_plans: tuple[DefaultRoutePlan, ...] = Field(default_factory=tuple)
 
 
 class DryRunOrchestrator:
@@ -91,6 +94,7 @@ class DryRunOrchestrator:
                 snapshot = self._planning.prepare_run(config=config)
                 router_results: list[RouterRunResult] = []
                 plans: list[ServiceSyncPlan] = []
+                default_route_plans: list[DefaultRoutePlan] = []
 
                 for router in config.routers:
                     if not router.enabled:
@@ -104,10 +108,10 @@ class DryRunOrchestrator:
                         continue
 
                     router_mappings = snapshot.mappings_for_router(router.id)
-                    if not router_mappings:
+                    if not router_mappings and not _has_managed_default_route(router):
                         continue
 
-                    router_result, router_plans = self._run_router(
+                    router_result, router_plans, router_default_route_plan = self._run_router(
                         logger=logger,
                         router=router,
                         mappings=router_mappings,
@@ -115,6 +119,8 @@ class DryRunOrchestrator:
                     )
                     router_results.append(router_result)
                     plans.extend(router_plans)
+                    if router_default_route_plan is not None:
+                        default_route_plans.append(router_default_route_plan)
 
                 artifact = RunArtifact(
                     run_id=run_id,
@@ -137,6 +143,7 @@ class DryRunOrchestrator:
                     artifact=artifact,
                     artifact_path=artifact_path,
                     plans=tuple(plans),
+                    default_route_plans=tuple(default_route_plans),
                 )
             finally:
                 logger.close()
@@ -148,9 +155,11 @@ class DryRunOrchestrator:
         router: RouterConfig,
         mappings: Sequence[RouterServiceMappingConfig],
         snapshot: RunPlanningSnapshot,
-    ) -> tuple[RouterRunResult, list[ServiceSyncPlan]]:
+    ) -> tuple[RouterRunResult, list[ServiceSyncPlan], DefaultRoutePlan | None]:
         service_results: list[ServiceRunResult] = []
         plans: list[ServiceSyncPlan] = []
+        default_route_plan: DefaultRoutePlan | None = None
+        default_route_result: DefaultRouteRunResult | None = None
 
         session = self._planning.start_router(
             logger=logger,
@@ -166,9 +175,16 @@ class DryRunOrchestrator:
                     failure_detail=session.startup_failure,
                 ),
                 plans,
+                default_route_plan,
             )
 
         router_failure_detail: FailureDetail | None = None
+
+        (
+            default_route_plan,
+            default_route_result,
+            router_failure_detail,
+        ) = self._planning.plan_default_route(logger=logger, session=session)
 
         for mapping in mappings:
             if router_failure_detail is not None:
@@ -216,12 +232,16 @@ class DryRunOrchestrator:
                     ),
                 )
 
-        router_status = aggregate_router_status(service_results)
+        router_status = aggregate_router_status(
+            service_results,
+            default_route_result=default_route_result,
+        )
         logger.event("router_finished", router_id=router.id, status=router_status.value)
         return (
             RouterRunResult(
                 router_id=router.id,
                 status=router_status,
+                default_route_result=default_route_result,
                 service_results=service_results,
                 error_message=(
                     router_failure_detail.message if router_failure_detail is not None else None
@@ -229,6 +249,7 @@ class DryRunOrchestrator:
                 failure_detail=router_failure_detail,
             ),
             plans,
+            default_route_plan,
         )
 
 
@@ -238,3 +259,7 @@ def _utc_now() -> datetime:
 
 def _generate_run_id() -> str:
     return str(uuid4())
+
+
+def _has_managed_default_route(router: RouterConfig) -> bool:
+    return router.default_route is not None and router.default_route.managed

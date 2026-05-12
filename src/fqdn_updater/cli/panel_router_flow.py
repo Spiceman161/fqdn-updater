@@ -35,8 +35,10 @@ from fqdn_updater.cli.panel_router_support import (
     ADD_ROUTER_USERNAME_HINT_LINES,
     BASE_ROUTE_INTERFACE_HINT_LINES,
     DEFAULT_RCI_TIMEOUT_SECONDS,
+    DEFAULT_SELECTED_DIRECT_SERVICES,
     DEFAULT_SELECTED_SERVICES,
     DELETE_ROUTER_HINT_LINES,
+    DIRECT_SERVICE_KEYS,
     EDIT_ROUTER_PASSWORD_HINT_LINES,
     GOOGLE_AI_OVERRIDE_HINT_LINES,
     SERVICE_SELECTION_HINT_LINES,
@@ -46,6 +48,8 @@ from fqdn_updater.cli.panel_router_support import (
     derive_mapping_plan_defaults,
     derive_router_id,
     ensure_password_env_available,
+    find_interface_state,
+    first_provider_interface_value,
     is_missing_password_env_error,
 )
 from fqdn_updater.domain.config_schema import (
@@ -53,7 +57,7 @@ from fqdn_updater.domain.config_schema import (
     RouterConfig,
     RouterServiceMappingConfig,
 )
-from fqdn_updater.domain.keenetic import RouteTargetCandidate
+from fqdn_updater.domain.keenetic import RouterInterfaceState, RouteTargetCandidate
 from fqdn_updater.infrastructure.secret_env_file import (
     SecretEnvFile,
     password_env_key_for_router_id,
@@ -68,6 +72,7 @@ class PanelRouterFlow:
 
     def __init__(self, *, panel: PanelController) -> None:
         self._panel = panel
+        self._last_interface_discovery: tuple[str, tuple[RouterInterfaceState, ...]] | None = None
 
     @property
     def _config_path(self):
@@ -205,9 +210,43 @@ class PanelRouterFlow:
             self._pause()
             return False
 
+        default_route_interface = self.prompt_default_route_interface(
+            config=config,
+            router=draft_router,
+            default_value="",
+            discovery_password=password,
+            hint_lines=BASE_ROUTE_INTERFACE_HINT_LINES,
+        )
+        if default_route_interface is None:
+            return False
+        discovered_interfaces = self.cached_discovered_interfaces(router=draft_router)
+        default_interface_state = find_interface_state(
+            interfaces=discovered_interfaces,
+            value=default_route_interface,
+        )
+        direct_services_available = _has_enabled_direct_services(config)
+        use_default_interface_for_mappings = False
+        default_is_vpn = default_interface_state.is_vpn_like if default_interface_state else None
+        if default_is_vpn is None and not direct_services_available:
+            default_is_vpn = False
+            use_default_interface_for_mappings = True
+        elif default_is_vpn is None:
+            default_is_vpn = self.prompt_default_route_mode()
+        if default_is_vpn is None:
+            return False
+        if default_is_vpn and not direct_services_available:
+            use_default_interface_for_mappings = True
+            default_is_vpn = False
+        service_filter = DIRECT_SERVICE_KEYS if default_is_vpn else None
+        default_selected_services = (
+            set(DEFAULT_SELECTED_DIRECT_SERVICES)
+            if default_is_vpn
+            else set(DEFAULT_SELECTED_SERVICES)
+        )
         selected_services = self.prompt_service_selection(
             config=config,
-            selected=DEFAULT_SELECTED_SERVICES,
+            selected=default_selected_services,
+            allowed_service_keys=service_filter,
             hint_lines=ADD_ROUTER_HINT_LINES,
         )
         if selected_services is None:
@@ -215,14 +254,60 @@ class PanelRouterFlow:
 
         mapping_plan = None
         if selected_services:
-            mapping_plan = self.prompt_mapping_plan(
-                config=config,
-                router=draft_router,
-                editable_mappings=[],
-                selected_services=selected_services,
-                discovery_password=password,
-                hint_lines=ADD_ROUTER_HINT_LINES,
-            )
+            if use_default_interface_for_mappings:
+                mapping_plan = MappingPlan(
+                    default_target=RouteTargetDraft("interface", default_route_interface)
+                )
+                if "google_ai" in selected_services and any(
+                    service_key != "google_ai" for service_key in selected_services
+                ):
+                    use_override = self._prompts.confirm(
+                        message="Использовать отдельный маршрут для google_ai?",
+                        default=False,
+                        hint_lines=GOOGLE_AI_OVERRIDE_HINT_LINES,
+                    )
+                    if use_override is None:
+                        return False
+                    if use_override:
+                        google_ai_target = self.prompt_route_target(
+                            config=config,
+                            router=draft_router,
+                            label="Route target для google_ai",
+                            default_target=mapping_plan.default_target,
+                            missing_secret_message=None,
+                            discovery_password=password,
+                            hint_lines=ADD_ROUTER_HINT_LINES,
+                        )
+                        if google_ai_target is None:
+                            return False
+                        mapping_plan = MappingPlan(
+                            default_target=mapping_plan.default_target,
+                            google_ai_target=google_ai_target,
+                        )
+            elif default_is_vpn:
+                provider_default = first_provider_interface_value(discovered_interfaces)
+                provider_target = self.prompt_interface_target(
+                    config=config,
+                    router=draft_router,
+                    label="Provider interface для direct-групп",
+                    default_value=provider_default,
+                    missing_secret_message=None,
+                    discovery_password=password,
+                    hint_lines=ADD_ROUTER_HINT_LINES,
+                    vpn_only=False,
+                )
+                if provider_target is None:
+                    return False
+                mapping_plan = MappingPlan(default_target=provider_target)
+            else:
+                mapping_plan = self.prompt_mapping_plan(
+                    config=config,
+                    router=draft_router,
+                    editable_mappings=[],
+                    selected_services=selected_services,
+                    discovery_password=password,
+                    hint_lines=ADD_ROUTER_HINT_LINES,
+                )
             if mapping_plan is None:
                 return False
 
@@ -242,6 +327,7 @@ class PanelRouterFlow:
                 ("RCI URL", normalize_rci_url_input(rci_url)),
                 ("Username", username),
                 ("Timeout", str(timeout_seconds)),
+                ("Default route", f"interface:{default_route_interface}"),
                 ("Password env", password_env),
                 ("Сервисы", _format_service_list(sorted(selected_services)) or "нет"),
                 (
@@ -278,6 +364,7 @@ class PanelRouterFlow:
             tags=[],
             timeout_seconds=timeout_seconds,
             allowed_source_ips=[],
+            default_route={"interface": default_route_interface, "managed": True},
             replace_mappings=new_mappings,
         )
         try:
@@ -371,6 +458,11 @@ class PanelRouterFlow:
                     "tags": list(router.tags),
                     "timeout_seconds": timeout_seconds,
                     "allowed_source_ips": list(router.allowed_source_ips),
+                    "default_route": (
+                        router.default_route.model_dump(mode="json")
+                        if router.default_route is not None
+                        else None
+                    ),
                 }
             )
         except ValidationError as exc:
@@ -379,6 +471,15 @@ class PanelRouterFlow:
                 f"{_format_validation_error(exc)}"
             )
             self._pause()
+            return
+
+        default_route_interface = self.prompt_default_route_interface(
+            config=config,
+            router=draft_router,
+            default_value=router.default_route.interface if router.default_route else "",
+            discovery_password=connectivity_password_override,
+        )
+        if default_route_interface is None:
             return
 
         self._render_summary(
@@ -391,6 +492,7 @@ class PanelRouterFlow:
                 ("Username", username),
                 ("Timeout", str(timeout_seconds)),
                 ("Статус", "включён" if router.enabled else "выключен"),
+                ("Default route", f"interface:{default_route_interface}"),
                 ("Password env", password_env or "нет"),
                 ("Password file", password_file or "нет"),
             ],
@@ -422,6 +524,7 @@ class PanelRouterFlow:
             tags=list(router.tags),
             timeout_seconds=timeout_seconds,
             allowed_source_ips=list(router.allowed_source_ips),
+            default_route={"interface": default_route_interface, "managed": True},
         )
         if update_password:
             assert password_env is not None
@@ -591,10 +694,16 @@ class PanelRouterFlow:
         *,
         config: AppConfig,
         selected: set[str],
+        allowed_service_keys: frozenset[str] | None = None,
         hint_lines: tuple[str, ...] | None = None,
     ) -> set[str] | None:
         service_counts = self.load_service_entry_counts(config=config)
-        enabled_service_keys = {service.key for service in config.services if service.enabled}
+        enabled_service_keys = {
+            service.key
+            for service in config.services
+            if service.enabled
+            and (allowed_service_keys is None or service.key in allowed_service_keys)
+        }
         selection_groups = _enabled_service_selection_groups(enabled_service_keys)
         service_choices = [
             PromptChoice(
@@ -608,6 +717,7 @@ class PanelRouterFlow:
             )
             for service in config.services
             if service.enabled
+            and (allowed_service_keys is None or service.key in allowed_service_keys)
         ]
         if not service_choices:
             self._console.print("[yellow]Нет enabled сервисов для выбора.[/yellow]")
@@ -755,12 +865,24 @@ class PanelRouterFlow:
         missing_secret_message: str | None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        vpn_only: bool = True,
     ) -> RouteTargetDraft | None:
-        candidates = self.discover_route_targets(
-            config=config,
-            router=router,
-            missing_secret_message=missing_secret_message,
-            discovery_password=discovery_password,
+        candidates = (
+            self.discover_route_targets(
+                config=config,
+                router=router,
+                missing_secret_message=missing_secret_message,
+                discovery_password=discovery_password,
+            )
+            if vpn_only
+            else _route_candidates_from_interfaces(
+                self.discover_interfaces(
+                    config=config,
+                    router=router,
+                    missing_secret_message=missing_secret_message,
+                    discovery_password=discovery_password,
+                )
+            )
         )
         if candidates:
             self._render_route_target_candidates(candidates=candidates)
@@ -808,6 +930,166 @@ class PanelRouterFlow:
             route_target_type="interface",
             route_target_value=normalized_value,
             route_interface=None,
+        )
+
+    def prompt_default_route_interface(
+        self,
+        *,
+        config: AppConfig,
+        router: RouterConfig,
+        default_value: str,
+        label: str = "Базовый интерфейс маршрутизации",
+        missing_secret_message: str | None = None,
+        discovery_password: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
+    ) -> str | None:
+        interfaces = self.discover_interfaces(
+            config=config,
+            router=router,
+            missing_secret_message=missing_secret_message,
+            discovery_password=discovery_password,
+        )
+        if interfaces:
+            self.render_interfaces(interfaces=interfaces)
+            choices = [
+                PromptChoice(
+                    title=_interface_choice_title(interface),
+                    value=interface.value,
+                )
+                for interface in interfaces
+            ]
+            choices.append(
+                _flow_choice(panel_formatting.ICON_EDIT, "Ввести интерфейс вручную", "manual")
+            )
+            choices.append(_flow_choice(panel_formatting.ICON_BACK, "Назад", "__back__"))
+            default_choice = (
+                default_value
+                if any(interface.value == default_value for interface in interfaces)
+                else interfaces[0].value
+            )
+            selected_value = self._prompts.select(
+                message=label,
+                choices=choices,
+                default=default_choice,
+                hint_lines=hint_lines,
+            )
+            if selected_value in {None, "__back__"}:
+                return None
+            if selected_value != "manual":
+                return selected_value
+
+        manual_value = self._prompts.text(
+            message=label,
+            default=default_value,
+            instruction="Введите имя интерфейса Keenetic.",
+            hint_lines=hint_lines,
+        )
+        if manual_value is None:
+            return None
+        normalized_value = manual_value.strip() or default_value
+        return normalized_value
+
+    def prompt_default_route_mode(self) -> bool | None:
+        selected_mode = self._prompts.select(
+            message="Режим списков для default route",
+            choices=[
+                _flow_choice(panel_formatting.ICON_ROUTE, "default VPN, direct groups", "vpn"),
+                _flow_choice(
+                    panel_formatting.ICON_ROUTE,
+                    "default provider, VPN-routed groups",
+                    "provider",
+                ),
+                _flow_choice(panel_formatting.ICON_BACK, "Назад", "__back__"),
+            ],
+            default="vpn",
+        )
+        if selected_mode in {None, "__back__"}:
+            return None
+        return selected_mode == "vpn"
+
+    def discover_interfaces(
+        self,
+        *,
+        config: AppConfig,
+        router: RouterConfig | None,
+        missing_secret_message: str | None = None,
+        discovery_password: str | None = None,
+    ) -> tuple[RouterInterfaceState, ...]:
+        if router is None:
+            return ()
+
+        if discovery_password is None:
+            try:
+                SecretEnvFile(path=self._secrets_env_path(config=config)).load_into_environment()
+            except RuntimeError as exc:
+                self._print_discovery_error(str(exc))
+                return ()
+
+        if hasattr(self._route_target_discovery_service, "discover_interfaces"):
+            result = self._route_target_discovery_service.discover_interfaces(
+                router=router,
+                password_override=discovery_password,
+            )
+        else:
+            wireguard_result = self._route_target_discovery_service.discover_wireguard_targets(
+                router=router,
+                password_override=discovery_password,
+            )
+            result = _interface_result_from_route_targets(wireguard_result)
+        if result.error_message is not None:
+            if missing_secret_message is not None and is_missing_password_env_error(
+                result.error_message
+            ):
+                self._console.print(f"[yellow]{missing_secret_message}[/yellow]")
+                return ()
+            self._print_discovery_error(result.error_message)
+            return ()
+        if not result.interfaces:
+            self._console.print("[yellow]Интерфейсы не обнаружены.[/yellow]")
+            return ()
+        self._last_interface_discovery = (router.id, result.interfaces)
+        return result.interfaces
+
+    def cached_discovered_interfaces(
+        self,
+        *,
+        router: RouterConfig,
+    ) -> tuple[RouterInterfaceState, ...]:
+        if (
+            self._last_interface_discovery is not None
+            and self._last_interface_discovery[0] == router.id
+        ):
+            return self._last_interface_discovery[1]
+        return ()
+
+    def render_interfaces(self, *, interfaces: tuple[RouterInterfaceState, ...]) -> None:
+        from rich.panel import Panel
+        from rich.table import Table
+
+        table = Table(show_header=True, header_style="bold white")
+        table.add_column("Интерфейс")
+        table.add_column("Тип")
+        table.add_column("Status")
+        table.add_column("Global")
+        table.add_column("Default GW")
+        table.add_column("Priority")
+        for interface in interfaces:
+            table.add_row(
+                interface.display_name or interface.value,
+                interface.interface_type or interface.interface_class or "-",
+                interface.status or "-",
+                _format_optional_bool(interface.global_enabled),
+                _format_optional_bool(interface.default_gateway),
+                str(interface.global_priority) if interface.global_priority is not None else "-",
+            )
+        self._console.print(
+            Panel(
+                table,
+                title=panel_formatting._icon_label(
+                    panel_formatting.ICON_SEARCH, "Keenetic interfaces"
+                ),
+                border_style="cyan",
+            )
         )
 
     def prompt_gateway_target(
@@ -949,4 +1231,85 @@ def _flow_choice(icon: str, title: str, value: str) -> PromptChoice:
         title=panel_formatting._icon_label(icon, title),
         value=value,
         answer_title=title,
+    )
+
+
+def _route_candidates_from_interfaces(
+    interfaces: tuple[RouterInterfaceState, ...],
+) -> tuple[RouteTargetCandidate, ...]:
+    return tuple(
+        RouteTargetCandidate(
+            value=interface.value,
+            display_name=interface.display_name or interface.value,
+            status=interface.status,
+            detail=_interface_detail(interface),
+            connected=interface.connected,
+        )
+        for interface in interfaces
+    )
+
+
+def _interface_choice_title(interface: RouterInterfaceState) -> str:
+    priority = interface.global_priority if interface.global_priority is not None else "-"
+    return " | ".join(
+        (
+            interface.display_name or interface.value,
+            interface.interface_type or interface.interface_class or "-",
+            interface.status or "-",
+            f"global={_format_optional_bool(interface.global_enabled)}",
+            f"defaultgw={_format_optional_bool(interface.default_gateway)}",
+            f"priority={priority}",
+        )
+    )
+
+
+def _interface_detail(interface: RouterInterfaceState) -> str | None:
+    parts = tuple(
+        part
+        for part in (
+            f"type={interface.interface_type}" if interface.interface_type else None,
+            f"class={interface.interface_class}" if interface.interface_class else None,
+            (
+                f"priority={interface.global_priority}"
+                if interface.global_priority is not None
+                else None
+            ),
+        )
+        if part is not None
+    )
+    return ", ".join(parts) if parts else None
+
+
+def _format_optional_bool(value: bool | None) -> str:
+    if value is None:
+        return "-"
+    return "yes" if value else "no"
+
+
+def _interface_result_from_route_targets(result: Any) -> Any:
+    if getattr(result, "error_message", None) is not None:
+        return result
+    interfaces = tuple(
+        RouterInterfaceState(
+            value=candidate.value,
+            display_name=candidate.display_name,
+            interface_type="WireGuard",
+            status=candidate.status,
+            connected=candidate.connected,
+        )
+        for candidate in getattr(result, "candidates", ())
+    )
+
+    class _Result:
+        def __init__(self, *, router_id: str, interfaces: tuple[RouterInterfaceState, ...]) -> None:
+            self.router_id = router_id
+            self.interfaces = interfaces
+            self.error_message = None
+
+    return _Result(router_id=getattr(result, "router_id", ""), interfaces=interfaces)
+
+
+def _has_enabled_direct_services(config: AppConfig) -> bool:
+    return any(
+        service.enabled and service.key in DIRECT_SERVICE_KEYS for service in config.services
     )
