@@ -125,6 +125,25 @@ class ConfigManagementService:
     def list_routers(self, *, path: Path) -> list[RouterConfig]:
         return list(self._repository.load(path=path).routers)
 
+    def remove_router(self, *, path: Path, router_id: str) -> bool:
+        config = self._repository.load(path=path)
+        payload = config.model_dump(mode="json")
+        existing_index = self._find_router_index(
+            routers=payload["routers"],
+            router_id=router_id,
+        )
+        if existing_index is None:
+            return False
+
+        del payload["routers"][existing_index]
+        payload["mappings"] = [
+            mapping for mapping in payload["mappings"] if mapping["router_id"] != router_id
+        ]
+
+        updated_config = self._repository.validate_payload(path=path, payload=payload)
+        self._repository.overwrite(path=path, config=updated_config)
+        return True
+
     def replace_router(
         self,
         *,

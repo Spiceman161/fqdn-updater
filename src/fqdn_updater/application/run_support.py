@@ -89,6 +89,13 @@ def build_failed_service_result(
     )
 
 
+def build_skipped_router_result(*, router_id: str) -> RouterRunResult:
+    return RouterRunResult(
+        router_id=router_id,
+        status=RouterResultStatus.SKIPPED,
+    )
+
+
 def build_failure_detail(
     *,
     step: RunStep,

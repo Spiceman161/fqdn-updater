@@ -36,6 +36,7 @@ ICON_EXIT = "🚪"
 ICON_ADD = "➕"
 ICON_EDIT = "✏"
 ICON_TOGGLE = "🔁"
+ICON_DELETE = "🗑"
 ICON_SEARCH = "🔎"
 ICON_SAVE = "💾"
 ICON_BACK = "↩"
@@ -396,6 +397,8 @@ def _format_timestamp(
 def _format_dashboard_router_run_status(status: RouterResultStatus) -> str:
     if status in {RouterResultStatus.UPDATED, RouterResultStatus.NO_CHANGES}:
         return f"[green]{ICON_OK} ok[/green]"
+    if status is RouterResultStatus.SKIPPED:
+        return f"[dim]{ICON_DISABLED} skipped[/dim]"
     if status is RouterResultStatus.PARTIAL:
         return f"[yellow]{ICON_WARNING} partial[/yellow]"
     return f"[red]{ICON_ERROR} fail[/red]"

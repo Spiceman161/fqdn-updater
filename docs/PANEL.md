@@ -28,6 +28,7 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 Локальные записи:
 
 - создаёт или обновляет `config.json`;
+- удаляет маршрутизатор из `config.json` вместе с его mappings после подтверждения;
 - синхронизирует builtin service registry;
 - записывает generated password в `.env.secrets`;
 - читает и показывает run history из `data/artifacts`;
@@ -55,6 +56,14 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 
 После проверки RCI URL можно сразу выбрать сервисы и route target. Если discovery недоступен, route target можно ввести вручную.
 
+## Удаление роутера
+
+Откройте `📡 Маршрутизаторы` -> `🗑 Удалить маршрутизатор`.
+
+Панель покажет summary и попросит подтверждение. После подтверждения из `config.json`
+удаляются запись маршрутизатора и связанные mappings. `.env.secrets` не очищается
+автоматически.
+
 ## Списки и маршруты
 
 Экран выбора списков показывает сервис, количество доменов, IPv4 и IPv6. Счётчики берутся из live load или cache `service-count-cache.json`.
@@ -66,6 +75,8 @@ WireGuard discovery читает интерфейсы с выбранного р
 ## Журнал и проверки
 
 Раздел `📜 Журнал` показывает последние runs, статус, количество изменений и ошибок. В деталях видны artifact path, log path, router/service results и failure details.
+Выключенные маршрутизаторы в новых run artifacts отображаются как `skipped`, без
+ошибки и без сетевых запросов к Keenetic.
 
 Главный экран показывает время начала последнего run, журнал показывает начало и
 завершение run; оба экрана используют `runtime.schedule.timezone`. JSON artifacts

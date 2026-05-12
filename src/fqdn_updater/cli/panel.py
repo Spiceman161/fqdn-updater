@@ -287,6 +287,12 @@ class PanelController:
                         "status",
                         disabled=None if has_routers else "Нет настроенных маршрутизаторов",
                     ),
+                    _menu_choice(
+                        panel_formatting.ICON_DELETE,
+                        "Удалить маршрутизатор",
+                        "delete",
+                        disabled=None if has_routers else "Нет настроенных маршрутизаторов",
+                    ),
                     _menu_choice(panel_formatting.ICON_BACK, "Главное меню", "back"),
                 ],
                 default="add",
@@ -301,6 +307,8 @@ class PanelController:
                 self._edit_router()
             elif choice == "toggle":
                 self._toggle_router_enabled()
+            elif choice == "delete":
+                self._delete_router()
             elif choice == "status":
                 self._run_status_diagnostics()
 
@@ -309,6 +317,9 @@ class PanelController:
 
     def _edit_router(self) -> None:
         self._router_flow.edit_router()
+
+    def _delete_router(self) -> None:
+        self._router_flow.delete_router()
 
     def _toggle_router_enabled(self) -> None:
         self._router_flow.toggle_router_enabled()

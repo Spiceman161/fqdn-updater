@@ -289,6 +289,87 @@ def test_sync_orchestrator_skips_writes_and_save_when_diff_is_empty() -> None:
     )
 
 
+def test_sync_orchestrator_marks_disabled_router_skipped_without_client() -> None:
+    base_config = _config_with_two_routers()
+    config = base_config.model_copy(
+        update={
+            "routers": [
+                base_config.routers[0],
+                base_config.routers[1].model_copy(update={"enabled": False}),
+            ]
+        }
+    )
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(
+                NormalizedServiceSource(service_key="telegram", entries=("keep.example",)),
+                NormalizedServiceSource(service_key="youtube", entries=("keep.example",)),
+            )
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={
+            ("router-1", "svc-telegram"): ObjectGroupState(
+                name="svc-telegram",
+                entries=("keep.example",),
+                exists=True,
+            ),
+            ("router-1", "svc-youtube"): ObjectGroupState(
+                name="svc-youtube",
+                entries=("keep.example",),
+                exists=True,
+            ),
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=True,
+            ),
+            ("router-1", "svc-youtube"): RouteBindingState(
+                object_group_name="svc-youtube",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=True,
+            ),
+        },
+    )
+    orchestrator = SyncOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
+            ]
+        ),
+        run_id_factory=lambda: "run-disabled",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    assert result.artifact.status is RunStatus.SUCCESS
+    assert [router.router_id for router in result.artifact.router_results] == [
+        "router-1",
+        "router-2",
+    ]
+    assert [router.status for router in result.artifact.router_results] == [
+        RouterResultStatus.NO_CHANGES,
+        RouterResultStatus.SKIPPED,
+    ]
+    assert result.artifact.router_results[1].service_results == []
+    assert result.artifact.router_results[1].error_message is None
+    assert "router-2" not in client_factory.clients
+
+
 def test_sync_orchestrator_applies_mixed_service_static_routes_and_saves_once() -> None:
     config = _config()
     source_loader = StubSourceLoader(

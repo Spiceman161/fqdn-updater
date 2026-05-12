@@ -23,7 +23,11 @@ from fqdn_updater.application.run_planning import (
     build_skipped_service_result,
     log_service_skipped,
 )
-from fqdn_updater.application.run_support import aggregate_router_status, aggregate_run_status
+from fqdn_updater.application.run_support import (
+    aggregate_router_status,
+    aggregate_run_status,
+    build_skipped_router_result,
+)
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
 from fqdn_updater.domain.run_artifact import (
@@ -89,6 +93,16 @@ class DryRunOrchestrator:
                 plans: list[ServiceSyncPlan] = []
 
                 for router in config.routers:
+                    if not router.enabled:
+                        router_results.append(build_skipped_router_result(router_id=router.id))
+                        logger.event(
+                            "router_skipped",
+                            router_id=router.id,
+                            status="skipped",
+                            message="router disabled in config",
+                        )
+                        continue
+
                     router_mappings = snapshot.mappings_for_router(router.id)
                     if not router_mappings:
                         continue

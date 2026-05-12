@@ -606,7 +606,85 @@ def test_router_menu_uses_shorter_edit_label(tmp_path) -> None:
     controller._router_menu()
 
     assert prompts.select_calls[0]["choice_titles"][1] == "✏ Изменить параметры маршрутизатора"
+    assert prompts.select_calls[0]["choice_titles"][4] == "🗑 Удалить маршрутизатор"
     assert "Повернуть пароль RCI" not in prompts.select_calls[0]["choice_titles"]
+
+
+def test_router_menu_delete_router_removes_router_and_related_mappings(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["delete", "router-1", "back"],
+        confirm_answers=[True],
+    )
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            },
+            {
+                "id": "router-2",
+                "name": "Router 2",
+                "rci_url": "https://router-2.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_TWO_SECRET",
+                "enabled": True,
+            },
+        ],
+        mappings=[
+            {
+                "router_id": "router-1",
+                "service_key": "telegram",
+                "object_group_name": "fqdn-telegram",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+            },
+            {
+                "router_id": "router-2",
+                "service_key": "youtube",
+                "object_group_name": "fqdn-youtube",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard1",
+                "managed": True,
+            },
+        ],
+    )
+
+    controller._router_menu()
+
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    assert [router["id"] for router in payload["routers"]] == ["router-2"]
+    assert [(mapping["router_id"], mapping["service_key"]) for mapping in payload["mappings"]] == [
+        ("router-2", "youtube")
+    ]
+    assert prompts.select_calls[0]["choices"] == [
+        "add",
+        "edit",
+        "toggle",
+        "status",
+        "delete",
+        "back",
+    ]
+    assert prompts.select_calls[1]["message"] == "Выберите маршрутизатор для удаления"
+    assert prompts.confirm_calls == [
+        {
+            "message": "Удалить маршрутизатор из config.json?",
+            "default": False,
+            "instruction": None,
+            "hint_lines": panel_router_support.DELETE_ROUTER_HINT_LINES,
+        }
+    ]
+    output = console.export_text()
+    assert "удалить маршрутизатор" in output
+    assert "Удаляемые mappings" in output
+    assert "Секреты" in output
+    assert "Маршрутизатор удалён. Удалены mappings: 1." in output
 
 
 def test_router_menu_status_choice_calls_diagnostics_service_and_renders_router_details(

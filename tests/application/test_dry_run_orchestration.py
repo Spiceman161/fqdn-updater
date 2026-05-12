@@ -216,15 +216,23 @@ def test_dry_run_orchestrator_skips_disabled_and_unmanaged_mappings() -> None:
 
     result = orchestrator.run(config=config, trigger=RunTrigger.OPENCLAW)
 
-    assert [router.router_id for router in result.artifact.router_results] == ["router-1"]
+    assert [router.router_id for router in result.artifact.router_results] == [
+        "router-1",
+        "router-2",
+    ]
+    assert [router.status for router in result.artifact.router_results] == [
+        RouterResultStatus.NO_CHANGES,
+        RouterResultStatus.SKIPPED,
+    ]
     assert [
         service.service_key for service in result.artifact.router_results[0].service_results
     ] == ["telegram"]
-    assert result.artifact.router_results[0].status is RouterResultStatus.NO_CHANGES
     assert (
         result.artifact.router_results[0].service_results[0].status
         is ServiceResultStatus.NO_CHANGES
     )
+    assert result.artifact.router_results[1].service_results == []
+    assert result.artifact.router_results[1].error_message is None
 
 
 def test_dry_run_orchestrator_marks_source_failures_per_service_and_keeps_other_services() -> None:

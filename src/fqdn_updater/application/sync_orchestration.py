@@ -29,6 +29,7 @@ from fqdn_updater.application.run_support import (
     aggregate_router_status,
     aggregate_run_status,
     build_failed_service_result,
+    build_skipped_router_result,
 )
 from fqdn_updater.application.service_plan_apply import ServicePlanApplyService
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan, ServiceSyncPlanner
@@ -99,6 +100,16 @@ class SyncOrchestrator:
                 plans: list[ServiceSyncPlan] = []
 
                 for router in config.routers:
+                    if not router.enabled:
+                        router_results.append(build_skipped_router_result(router_id=router.id))
+                        logger.event(
+                            "router_skipped",
+                            router_id=router.id,
+                            status="skipped",
+                            message="router disabled in config",
+                        )
+                        continue
+
                     router_mappings = snapshot.mappings_for_router(router.id)
                     if not router_mappings:
                         continue

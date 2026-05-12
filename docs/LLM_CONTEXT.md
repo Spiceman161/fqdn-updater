@@ -34,6 +34,8 @@ Production transport только один: KeenDNS RCI по HTTPS с HTTP Diges
 - `sync` применяет только mappings с `managed=true`.
 - `dry-run` не пишет на роутер.
 - Любой apply делает read-before-write и пишет минимальный diff.
+- Выключенные routers (`enabled=false`) не читаются и не пишутся; в новых run artifacts
+  они отображаются как router status `skipped`.
 - FQDN object-group shard size — 300 entries, общий managed FQDN лимит на роутер — 1024 entries.
 - CIDR entries не пишутся в FQDN object-groups; они планируются как static routes.
 - Secrets не должны попадать в logs, artifacts или docs.

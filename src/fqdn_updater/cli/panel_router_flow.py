@@ -36,6 +36,7 @@ from fqdn_updater.cli.panel_router_support import (
     BASE_ROUTE_INTERFACE_HINT_LINES,
     DEFAULT_RCI_TIMEOUT_SECONDS,
     DEFAULT_SELECTED_SERVICES,
+    DELETE_ROUTER_HINT_LINES,
     EDIT_ROUTER_PASSWORD_HINT_LINES,
     GOOGLE_AI_OVERRIDE_HINT_LINES,
     SERVICE_SELECTION_HINT_LINES,
@@ -440,6 +441,56 @@ class PanelRouterFlow:
             self._console.print(
                 f"[green]{panel_formatting.ICON_SAVE} Параметры маршрутизатора обновлены.[/green]"
             )
+        self._pause()
+
+    def delete_router(self) -> None:
+        config = self._load_config()
+        router = self.select_router(
+            config=config,
+            message="Выберите маршрутизатор для удаления",
+            back_title="Назад",
+        )
+        if router is None:
+            return
+
+        removed_mappings = [
+            mapping for mapping in config.mappings if mapping.router_id == router.id
+        ]
+        self._render_summary(
+            title="Проверка удаления",
+            rows=[
+                ("Операция", "удалить маршрутизатор"),
+                ("Маршрутизатор", router.id),
+                ("Имя", router.name),
+                ("RCI URL", str(router.rci_url)),
+                ("Статус", "включён" if router.enabled else "выключен"),
+                ("Удаляемые mappings", str(len(removed_mappings))),
+                ("Password env", router.password_env or "нет"),
+                ("Password file", router.password_file or "нет"),
+                ("Секреты", "не изменяются"),
+            ],
+        )
+        should_delete = self._prompts.confirm(
+            message="Удалить маршрутизатор из config.json?",
+            default=False,
+            hint_lines=DELETE_ROUTER_HINT_LINES,
+        )
+        if should_delete is not True:
+            return
+
+        removed = self._management_service.remove_router(
+            path=self._config_path,
+            router_id=router.id,
+        )
+        if not removed:
+            self._console.print("[yellow]Маршрутизатор уже отсутствует в config.json.[/yellow]")
+            self._pause()
+            return
+
+        self._console.print(
+            f"[green]{panel_formatting.ICON_SAVE} Маршрутизатор удалён. "
+            f"Удалены mappings: {len(removed_mappings)}.[/green]"
+        )
         self._pause()
 
     def toggle_router_enabled(self) -> None:

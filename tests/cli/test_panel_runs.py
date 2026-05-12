@@ -281,6 +281,51 @@ def test_runs_menu_maps_container_log_path_to_host_path_in_hint(tmp_path) -> Non
     assert "/work/data/logs/run-container.log" not in output
 
 
+def test_runs_menu_renders_disabled_router_as_skipped_without_error(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["run:0", "back", None])
+    controller, console = _panel_controller(tmp_path, prompts=prompts)
+    config = _config_with_two_routers()
+    artifacts_dir = tmp_path / "data" / "artifacts"
+    run_history_service = _RecordingRunHistoryService(
+        artifacts_dir=artifacts_dir,
+        runs=(
+            RecentRun(
+                path=artifacts_dir / "run-disabled.json",
+                artifact=RunArtifact(
+                    run_id="run-disabled",
+                    trigger=RunTrigger.MANUAL,
+                    mode=RunMode.APPLY,
+                    status=RunStatus.SUCCESS,
+                    started_at=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+                    finished_at=datetime(2026, 4, 8, 13, 1, tzinfo=timezone.utc),
+                    log_path=Path("data/logs/run-disabled.log"),
+                    router_results=(
+                        RouterRunResult(
+                            router_id="router-2",
+                            status=RouterResultStatus.SKIPPED,
+                            service_results=(),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    controller._load_config = lambda: config  # type: ignore[method-assign]
+    controller._run_history_service = run_history_service  # type: ignore[attr-defined]
+
+    controller._runs_menu()
+
+    assert prompts.history_select_calls[0]["choice_titles"] == [
+        "apply     manual     ✓ success  08.04.2026 13:01:00  Backup router  изменено=0 ошибок=0",
+    ]
+    output = console.export_text()
+    assert "Backup router" in output
+    assert "○ skipped" in output
+    assert "выключен" in output
+    assert "Ошибок в записи нет." in output
+    assert "failed" not in output
+
+
 def test_runs_menu_groups_transport_router_failures_by_category(tmp_path) -> None:
     prompts = ScriptedPromptAdapter(select_answers=["run:0", "back", None])
     controller, console = _panel_controller(tmp_path, prompts=prompts)

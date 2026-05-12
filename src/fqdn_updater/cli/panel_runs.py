@@ -404,6 +404,8 @@ def _format_run_status(status: RunStatus) -> str:
 def _format_router_run_status(status) -> str:
     if status in {RouterResultStatus.UPDATED, RouterResultStatus.NO_CHANGES}:
         return f"[green]{panel_formatting.ICON_OK} {status.value}[/green]"
+    if status is RouterResultStatus.SKIPPED:
+        return f"[dim]{panel_formatting.ICON_DISABLED} {status.value}[/dim]"
     if status is RouterResultStatus.PARTIAL:
         return f"[yellow]{panel_formatting.ICON_WARNING} {status.value}[/yellow]"
     return f"[red]{panel_formatting.ICON_ERROR} {status.value}[/red]"
@@ -477,6 +479,9 @@ def _format_artifact_summary(artifact: RunArtifact) -> str:
 
 
 def _format_router_result_summary(router: RouterRunResult) -> str:
+    if router.status is RouterResultStatus.SKIPPED:
+        return "выключен"
+
     changed_services = 0
     failed_services = 0
     for service in router.service_results:

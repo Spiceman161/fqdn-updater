@@ -28,6 +28,7 @@ class RunStatus(StrEnum):
 class RouterResultStatus(StrEnum):
     UPDATED = "updated"
     NO_CHANGES = "no_changes"
+    SKIPPED = "skipped"
     FAILED = "failed"
     PARTIAL = "partial"
 

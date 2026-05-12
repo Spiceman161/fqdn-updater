@@ -100,3 +100,69 @@ def test_sync_builtin_services_removes_stale_roblox_ipv6_source(tmp_path) -> Non
         f"{_BASE_URL}/Services/roblox.lst",
         f"{_BASE_URL}/Subnets/IPv4/roblox.lst",
     ]
+
+
+def test_remove_router_removes_router_and_related_mappings(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config = AppConfig.model_validate(
+        {
+            "routers": [
+                {
+                    "id": "router-1",
+                    "name": "Router 1",
+                    "rci_url": "https://router-1.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_ONE_SECRET",
+                },
+                {
+                    "id": "router-2",
+                    "name": "Router 2",
+                    "rci_url": "https://router-2.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_TWO_SECRET",
+                },
+            ],
+            "services": [
+                {
+                    "key": "telegram",
+                    "source_urls": ["https://example.com/telegram.lst"],
+                    "format": "raw_domain_list",
+                },
+                {
+                    "key": "youtube",
+                    "source_urls": ["https://example.com/youtube.lst"],
+                    "format": "raw_domain_list",
+                },
+            ],
+            "mappings": [
+                {
+                    "router_id": "router-1",
+                    "service_key": "telegram",
+                    "object_group_name": "fqdn-telegram",
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard0",
+                },
+                {
+                    "router_id": "router-2",
+                    "service_key": "youtube",
+                    "object_group_name": "fqdn-youtube",
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard1",
+                },
+            ],
+        }
+    )
+    repository = ConfigRepository()
+    repository.write_new(path=config_path, config=config)
+
+    removed = ConfigManagementService(repository=repository).remove_router(
+        path=config_path,
+        router_id="router-1",
+    )
+
+    updated_config = repository.load(path=config_path)
+    assert removed is True
+    assert [router.id for router in updated_config.routers] == ["router-2"]
+    assert [(mapping.router_id, mapping.service_key) for mapping in updated_config.mappings] == [
+        ("router-2", "youtube")
+    ]
