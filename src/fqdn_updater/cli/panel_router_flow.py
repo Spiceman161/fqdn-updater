@@ -73,6 +73,11 @@ class PanelRouterFlow:
     def __init__(self, *, panel: PanelController) -> None:
         self._panel = panel
         self._last_interface_discovery: tuple[str, tuple[RouterInterfaceState, ...]] | None = None
+        self._last_discovery_failed = False
+
+    @property
+    def last_discovery_failed(self) -> bool:
+        return self._last_discovery_failed
 
     @property
     def _config_path(self):
@@ -286,19 +291,9 @@ class PanelRouterFlow:
                         )
             elif default_is_vpn:
                 provider_default = first_provider_interface_value(discovered_interfaces)
-                provider_target = self.prompt_interface_target(
-                    config=config,
-                    router=draft_router,
-                    label="Provider interface для direct-групп",
-                    default_value=provider_default,
-                    missing_secret_message=None,
-                    discovery_password=password,
-                    hint_lines=ADD_ROUTER_HINT_LINES,
-                    vpn_only=False,
+                mapping_plan = MappingPlan(
+                    default_target=RouteTargetDraft("interface", provider_default)
                 )
-                if provider_target is None:
-                    return False
-                mapping_plan = MappingPlan(default_target=provider_target)
             else:
                 mapping_plan = self.prompt_mapping_plan(
                     config=config,
@@ -785,6 +780,7 @@ class PanelRouterFlow:
         missing_secret_message: str | None = None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        abort_on_discovery_error: bool = False,
     ) -> MappingPlan | None:
         default_target, has_inconsistent_default, google_ai_override = derive_mapping_plan_defaults(
             editable_mappings=editable_mappings,
@@ -803,6 +799,7 @@ class PanelRouterFlow:
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
             hint_lines=BASE_ROUTE_INTERFACE_HINT_LINES,
+            abort_on_discovery_error=abort_on_discovery_error,
         )
         if default_target is None:
             return None
@@ -828,6 +825,7 @@ class PanelRouterFlow:
                     missing_secret_message=missing_secret_message,
                     discovery_password=discovery_password,
                     hint_lines=hint_lines,
+                    abort_on_discovery_error=abort_on_discovery_error,
                 )
                 if google_ai_target is None:
                     return None
@@ -844,6 +842,7 @@ class PanelRouterFlow:
         missing_secret_message: str | None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        abort_on_discovery_error: bool = False,
     ) -> RouteTargetDraft | None:
         return self.prompt_interface_target(
             config=config,
@@ -853,6 +852,7 @@ class PanelRouterFlow:
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
             hint_lines=hint_lines,
+            abort_on_discovery_error=abort_on_discovery_error,
         )
 
     def prompt_interface_target(
@@ -866,26 +866,31 @@ class PanelRouterFlow:
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
         vpn_only: bool = True,
+        abort_on_discovery_error: bool = False,
     ) -> RouteTargetDraft | None:
-        candidates = (
-            self.discover_route_targets(
+        if vpn_only:
+            candidates = self.discover_route_targets(
                 config=config,
                 router=router,
                 missing_secret_message=missing_secret_message,
                 discovery_password=discovery_password,
             )
-            if vpn_only
-            else _route_candidates_from_interfaces(
-                self.discover_interfaces(
-                    config=config,
-                    router=router,
-                    missing_secret_message=missing_secret_message,
-                    discovery_password=discovery_password,
-                )
+            render_candidates = True
+        else:
+            interfaces = self.discover_interfaces(
+                config=config,
+                router=router,
+                missing_secret_message=missing_secret_message,
+                discovery_password=discovery_password,
             )
-        )
+            candidates = _route_candidates_from_interfaces(_global_route_interfaces(interfaces))
+            render_candidates = False
+
+        if not candidates and abort_on_discovery_error and self._last_discovery_failed:
+            return None
         if candidates:
-            self._render_route_target_candidates(candidates=candidates)
+            if render_candidates:
+                self._render_route_target_candidates(candidates=candidates)
             choices = [
                 PromptChoice(
                     title=_route_candidate_title(candidate),
@@ -942,52 +947,46 @@ class PanelRouterFlow:
         missing_secret_message: str | None = None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        abort_on_discovery_error: bool = False,
     ) -> str | None:
+        prompt_hint_lines = BASE_ROUTE_INTERFACE_HINT_LINES if hint_lines is None else hint_lines
         interfaces = self.discover_interfaces(
             config=config,
             router=router,
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
         )
-        if interfaces:
-            self.render_interfaces(interfaces=interfaces)
+        if not interfaces and abort_on_discovery_error and self._last_discovery_failed:
+            return None
+        global_interfaces = _global_route_interfaces(interfaces)
+        if global_interfaces:
+            choice_widths = _interface_choice_widths(global_interfaces)
             choices = [
                 PromptChoice(
-                    title=_interface_choice_title(interface),
+                    title=_interface_choice_title(interface, widths=choice_widths),
                     value=interface.value,
                 )
-                for interface in interfaces
+                for interface in global_interfaces
             ]
-            choices.append(
-                _flow_choice(panel_formatting.ICON_EDIT, "Ввести интерфейс вручную", "manual")
-            )
             choices.append(_flow_choice(panel_formatting.ICON_BACK, "Назад", "__back__"))
             default_choice = (
                 default_value
-                if any(interface.value == default_value for interface in interfaces)
-                else interfaces[0].value
+                if any(interface.value == default_value for interface in global_interfaces)
+                else global_interfaces[0].value
             )
             selected_value = self._prompts.select(
                 message=label,
                 choices=choices,
                 default=default_choice,
-                hint_lines=hint_lines,
+                hint_lines=prompt_hint_lines,
             )
             if selected_value in {None, "__back__"}:
                 return None
-            if selected_value != "manual":
-                return selected_value
+            return selected_value
 
-        manual_value = self._prompts.text(
-            message=label,
-            default=default_value,
-            instruction="Введите имя интерфейса Keenetic.",
-            hint_lines=hint_lines,
-        )
-        if manual_value is None:
-            return None
-        normalized_value = manual_value.strip() or default_value
-        return normalized_value
+        if interfaces:
+            self._console.print("[yellow]Интерфейсы с Global=yes не обнаружены.[/yellow]")
+        return None
 
     def prompt_default_route_mode(self) -> bool | None:
         selected_mode = self._prompts.select(
@@ -1015,6 +1014,7 @@ class PanelRouterFlow:
         missing_secret_message: str | None = None,
         discovery_password: str | None = None,
     ) -> tuple[RouterInterfaceState, ...]:
+        self._last_discovery_failed = False
         if router is None:
             return ()
 
@@ -1022,6 +1022,7 @@ class PanelRouterFlow:
             try:
                 SecretEnvFile(path=self._secrets_env_path(config=config)).load_into_environment()
             except RuntimeError as exc:
+                self._last_discovery_failed = True
                 self._print_discovery_error(str(exc))
                 return ()
 
@@ -1042,6 +1043,7 @@ class PanelRouterFlow:
             ):
                 self._console.print(f"[yellow]{missing_secret_message}[/yellow]")
                 return ()
+            self._last_discovery_failed = True
             self._print_discovery_error(result.error_message)
             return ()
         if not result.interfaces:
@@ -1061,36 +1063,6 @@ class PanelRouterFlow:
         ):
             return self._last_interface_discovery[1]
         return ()
-
-    def render_interfaces(self, *, interfaces: tuple[RouterInterfaceState, ...]) -> None:
-        from rich.panel import Panel
-        from rich.table import Table
-
-        table = Table(show_header=True, header_style="bold white")
-        table.add_column("Интерфейс")
-        table.add_column("Тип")
-        table.add_column("Status")
-        table.add_column("Global")
-        table.add_column("Default GW")
-        table.add_column("Priority")
-        for interface in interfaces:
-            table.add_row(
-                interface.display_name or interface.value,
-                interface.interface_type or interface.interface_class or "-",
-                interface.status or "-",
-                _format_optional_bool(interface.global_enabled),
-                _format_optional_bool(interface.default_gateway),
-                str(interface.global_priority) if interface.global_priority is not None else "-",
-            )
-        self._console.print(
-            Panel(
-                table,
-                title=panel_formatting._icon_label(
-                    panel_formatting.ICON_SEARCH, "Keenetic interfaces"
-                ),
-                border_style="cyan",
-            )
-        )
 
     def prompt_gateway_target(
         self,
@@ -1176,6 +1148,7 @@ class PanelRouterFlow:
         missing_secret_message: str | None = None,
         discovery_password: str | None = None,
     ) -> tuple[RouteTargetCandidate, ...]:
+        self._last_discovery_failed = False
         if router is None:
             return ()
 
@@ -1183,6 +1156,7 @@ class PanelRouterFlow:
             try:
                 SecretEnvFile(path=self._secrets_env_path(config=config)).load_into_environment()
             except RuntimeError as exc:
+                self._last_discovery_failed = True
                 self._print_discovery_error(str(exc))
                 return ()
 
@@ -1196,6 +1170,7 @@ class PanelRouterFlow:
             ):
                 self._console.print(f"[yellow]{missing_secret_message}[/yellow]")
                 return ()
+            self._last_discovery_failed = True
             self._print_discovery_error(result.error_message)
             return ()
         if not result.candidates:
@@ -1249,17 +1224,37 @@ def _route_candidates_from_interfaces(
     )
 
 
-def _interface_choice_title(interface: RouterInterfaceState) -> str:
+def _global_route_interfaces(
+    interfaces: tuple[RouterInterfaceState, ...],
+) -> tuple[RouterInterfaceState, ...]:
+    return tuple(interface for interface in interfaces if interface.global_enabled is True)
+
+
+def _interface_choice_widths(interfaces: tuple[RouterInterfaceState, ...]) -> tuple[int, ...]:
+    rows = tuple(_interface_choice_columns(interface) for interface in interfaces)
+    return tuple(max(len(row[index]) for row in rows) for index in range(len(rows[0])))
+
+
+def _interface_choice_columns(interface: RouterInterfaceState) -> tuple[str, ...]:
     priority = interface.global_priority if interface.global_priority is not None else "-"
+    return (
+        interface.display_name or interface.value,
+        interface.interface_type or interface.interface_class or "-",
+        interface.status or "-",
+        f"global={_format_optional_bool(interface.global_enabled)}",
+        f"defaultgw={_format_optional_bool(interface.default_gateway)}",
+        f"priority={priority}",
+    )
+
+
+def _interface_choice_title(
+    interface: RouterInterfaceState,
+    *,
+    widths: tuple[int, ...],
+) -> str:
     return " | ".join(
-        (
-            interface.display_name or interface.value,
-            interface.interface_type or interface.interface_class or "-",
-            interface.status or "-",
-            f"global={_format_optional_bool(interface.global_enabled)}",
-            f"defaultgw={_format_optional_bool(interface.default_gateway)}",
-            f"priority={priority}",
-        )
+        value.ljust(width)
+        for value, width in zip(_interface_choice_columns(interface), widths, strict=True)
     )
 
 
@@ -1296,6 +1291,7 @@ def _interface_result_from_route_targets(result: Any) -> Any:
             interface_type="WireGuard",
             status=candidate.status,
             connected=candidate.connected,
+            global_enabled=True,
         )
         for candidate in getattr(result, "candidates", ())
     )

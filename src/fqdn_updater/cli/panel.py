@@ -21,6 +21,7 @@ from fqdn_updater.application.password_generation import (
 from fqdn_updater.application.run_history import RecentRun, RunHistoryResult
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlanner
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult, SyncOrchestrator
+from fqdn_updater.application.transport_failure import classify_transport_failure
 from fqdn_updater.cli import panel_formatting, panel_router_support, panel_schedule
 from fqdn_updater.cli.panel_dependencies import PanelDependencies, build_panel_dependencies
 from fqdn_updater.cli.panel_prompts import (
@@ -36,6 +37,7 @@ from fqdn_updater.domain.config_schema import (
 )
 from fqdn_updater.domain.keenetic import RouteTargetCandidate
 from fqdn_updater.domain.run_artifact import (
+    FailureCategory,
     RouterResultStatus,
     RunTrigger,
 )
@@ -76,6 +78,31 @@ ROUTER_MENU_HINT_LINES = (
     "или сменить статус.",
     "Списки и маршруты не меняются до подтверждения сохранения.",
 )
+DISCOVERY_TRANSPORT_CHECK_HINTS = {
+    FailureCategory.DNS_RESOLUTION_FAILED: (
+        "rci_url в config.json, KeenDNS-имя, DNS на этой машине и доступ в интернет/VPN."
+    ),
+    FailureCategory.TLS_CERT_HOSTNAME_MISMATCH: ("домен в rci_url и TLS-сертификат KeenDNS."),
+    FailureCategory.TLS_CERT_CHAIN_UNTRUSTED: (
+        "доверенные корневые сертификаты на этой машине и сертификат KeenDNS."
+    ),
+    FailureCategory.TLS_CERT_VERIFY_FAILED: (
+        "TLS-сертификат KeenDNS и системные корневые сертификаты."
+    ),
+    FailureCategory.TLS_HANDSHAKE_TIMEOUT: (
+        "сеть/VPN до Keenetic, доступность HTTPS /rci/ и firewall/NAT."
+    ),
+    FailureCategory.CONNECTION_RESET: (
+        "доступность HTTPS /rci/, firewall/NAT и что RCI включён на Keenetic."
+    ),
+    FailureCategory.TLS_UNEXPECTED_EOF: (
+        "стабильность HTTPS /rci/, firewall/NAT и TLS-настройки Keenetic."
+    ),
+    FailureCategory.TRANSPORT_FAILED: (
+        "rci_url в config.json, что Keenetic онлайн, сеть/VPN до него, HTTPS /rci/ "
+        "и RCI-пользователь/пароль."
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -344,8 +371,10 @@ class PanelController:
             router=router,
             default_value=router.default_route.interface if router.default_route else "",
             missing_secret_message=None,
+            abort_on_discovery_error=True,
         )
         if default_route_interface is None:
+            self._pause_if_route_discovery_failed()
             return
         discovered_interfaces = self._router_flow.cached_discovered_interfaces(router=router)
         default_interface_state = panel_router_support.find_interface_state(
@@ -415,27 +444,24 @@ class PanelController:
                             label="Route target для google_ai",
                             default_target=mapping_plan.default_target,
                             missing_secret_message=None,
+                            abort_on_discovery_error=True,
                         )
                         if google_ai_target is None:
+                            self._pause_if_route_discovery_failed()
                             return
                         mapping_plan = panel_router_support.MappingPlan(
                             default_target=mapping_plan.default_target,
                             google_ai_target=google_ai_target,
                         )
             elif default_is_vpn:
-                provider_target = self._router_flow.prompt_interface_target(
-                    config=config,
-                    router=router,
-                    label="Provider interface для direct-групп",
-                    default_value=panel_router_support.first_provider_interface_value(
-                        discovered_interfaces
-                    ),
-                    missing_secret_message=None,
-                    vpn_only=False,
+                provider_default = panel_router_support.first_provider_interface_value(
+                    discovered_interfaces
                 )
-                if provider_target is None:
-                    return
-                mapping_plan = panel_router_support.MappingPlan(default_target=provider_target)
+                mapping_plan = panel_router_support.MappingPlan(
+                    default_target=panel_router_support.RouteTargetDraft(
+                        "interface", provider_default
+                    )
+                )
             else:
                 mapping_plan = self._prompt_mapping_plan(
                     config=config,
@@ -443,8 +469,10 @@ class PanelController:
                     editable_mappings=editable_mappings,
                     selected_services=selected_services,
                     missing_secret_message=None,
+                    abort_on_discovery_error=True,
                 )
             if mapping_plan is None:
+                self._pause_if_route_discovery_failed()
                 return
 
         editable_mapping_payloads = self._build_router_mappings(
@@ -691,6 +719,7 @@ class PanelController:
         missing_secret_message: str | None = None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        abort_on_discovery_error: bool = False,
     ) -> panel_router_support.MappingPlan | None:
         return self._router_flow.prompt_mapping_plan(
             config=config,
@@ -700,6 +729,7 @@ class PanelController:
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
             hint_lines=hint_lines,
+            abort_on_discovery_error=abort_on_discovery_error,
         )
 
     def _prompt_route_target(
@@ -712,6 +742,7 @@ class PanelController:
         missing_secret_message: str | None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        abort_on_discovery_error: bool = False,
     ) -> panel_router_support.RouteTargetDraft | None:
         return self._router_flow.prompt_route_target(
             config=config,
@@ -721,6 +752,7 @@ class PanelController:
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
             hint_lines=hint_lines,
+            abort_on_discovery_error=abort_on_discovery_error,
         )
 
     def _prompt_interface_target(
@@ -733,6 +765,7 @@ class PanelController:
         missing_secret_message: str | None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        abort_on_discovery_error: bool = False,
     ) -> panel_router_support.RouteTargetDraft | None:
         return self._router_flow.prompt_interface_target(
             config=config,
@@ -742,6 +775,7 @@ class PanelController:
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
             hint_lines=hint_lines,
+            abort_on_discovery_error=abort_on_discovery_error,
         )
 
     def _prompt_gateway_target(
@@ -786,6 +820,10 @@ class PanelController:
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
         )
+
+    def _pause_if_route_discovery_failed(self) -> None:
+        if self._router_flow.last_discovery_failed:
+            self._pause()
 
     def _probe_router_connectivity(
         self,
@@ -953,6 +991,28 @@ class PanelController:
         )
 
     def _print_discovery_error(self, message: str) -> None:
+        failure_category = classify_transport_failure(message)
+        if failure_category is not None:
+            self._console.print(
+                Text.assemble(
+                    (
+                        f"{panel_formatting.ICON_WARNING} "
+                        "Невозможно отобразить доступные интерфейсы. ",
+                        "yellow",
+                    ),
+                    ("Маршрутизатор недоступен.", "yellow"),
+                    "\n",
+                    ("Проверьте: ", "bold yellow"),
+                    (
+                        DISCOVERY_TRANSPORT_CHECK_HINTS.get(
+                            failure_category,
+                            DISCOVERY_TRANSPORT_CHECK_HINTS[FailureCategory.TRANSPORT_FAILED],
+                        ),
+                        "yellow",
+                    ),
+                )
+            )
+            return
         self._console.print(
             Text.assemble(
                 (f"{panel_formatting.ICON_WARNING} WireGuard discovery не прошёл: ", "yellow"),

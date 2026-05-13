@@ -17,6 +17,7 @@ from fqdn_updater.cli.panel import PanelController
 from fqdn_updater.cli.panel_dependencies import PanelDependencies, build_panel_dependencies
 from fqdn_updater.cli.panel_prompts import CheckboxTableMeta, PromptChoice
 from fqdn_updater.domain.config_schema import AppConfig
+from fqdn_updater.domain.keenetic import RouterInterfaceState
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.source_loading import NormalizedServiceSource, SourceLoadReport
 
@@ -62,6 +63,24 @@ class ScriptedPromptAdapter:
         )
         if message == "Режим списков для default route":
             return "provider"
+        if message == "Базовый интерфейс маршрутизации" and not self._select_answers:
+            preferred_choice = next(
+                (
+                    choice.value
+                    for choice in choices
+                    if choice.disabled is None and choice.value == "Wireguard0"
+                ),
+                None,
+            )
+            first_choice = next(
+                (
+                    choice.value
+                    for choice in choices
+                    if choice.disabled is None and choice.value != "__back__"
+                ),
+                None,
+            )
+            return default or preferred_choice or first_choice
         return self._pop(self._select_answers, f"select:{message}")
 
     def checkbox(
@@ -224,7 +243,31 @@ class EmptyDiscoveryService:
         router,
         password_override: str | None = None,
     ) -> InterfaceDiscoveryResult:
-        return InterfaceDiscoveryResult(router_id=router.id, interfaces=())
+        return InterfaceDiscoveryResult(
+            router_id=router.id,
+            interfaces=(
+                RouterInterfaceState(
+                    value="Wireguard0",
+                    display_name="Wireguard0",
+                    interface_type="Wireguard",
+                    status="up",
+                    connected=True,
+                    global_enabled=True,
+                    default_gateway=False,
+                    global_priority=300,
+                ),
+                RouterInterfaceState(
+                    value="ISP",
+                    display_name="ISP",
+                    interface_type="Vlan",
+                    status="up",
+                    connected=True,
+                    global_enabled=True,
+                    default_gateway=True,
+                    global_priority=700,
+                ),
+            ),
+        )
 
 
 def make_panel_controller(

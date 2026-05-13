@@ -178,6 +178,43 @@ def test_discover_route_targets_truncates_raw_error_preview_for_panel(tmp_path) 
     assert len(output) < 500
 
 
+def test_discover_route_targets_shows_operator_hint_for_transport_error(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter()
+    console = Console(force_terminal=True, record=True)
+    controller = panel_module.PanelController(
+        config_path=tmp_path / "config.json",
+        console=console,
+        prompts=prompts,
+    )
+    controller._source_loading_service = ScriptedSourceLoadingService(  # type: ignore[attr-defined]
+        make_empty_source_load_report()
+    )
+    router = _router_config()
+    config = _app_config(tmp_path)
+    raw_error = (
+        "Router 'router-1' get_interfaces failed: transport failed after 5 attempts: "
+        "[Errno -2] Name or service not known; "
+        "attempt_errors=1:gaierror:[Errno -2] Name or service not known"
+    )
+    controller._route_target_discovery_service = _FakeDiscoveryService(  # type: ignore[attr-defined]
+        RouteTargetDiscoveryResult(router_id=router.id, error_message=raw_error)
+    )
+
+    candidates = controller._discover_route_targets(
+        config=config,
+        router=router,
+        discovery_password="generated-password",
+    )
+
+    assert candidates == ()
+    output = console.export_text()
+    assert "Невозможно отобразить доступные интерфейсы." in output
+    assert "Маршрутизатор недоступен." in output
+    assert "Проверьте: rci_url в config.json, KeenDNS-имя, DNS" in output
+    assert "WireGuard discovery не прошёл" not in output
+    assert "attempt_errors" not in output
+
+
 def test_build_router_mappings_preserves_existing_metadata_and_google_override(tmp_path) -> None:
     controller = _panel_controller(tmp_path)
     mappings = controller._build_router_mappings(

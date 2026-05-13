@@ -7,13 +7,12 @@ from .panel_test_support import ScriptedPromptAdapter, make_panel_controller, wr
 
 def test_run_returns_to_root_dashboard_after_successful_add_router(tmp_path, monkeypatch) -> None:
     prompts = ScriptedPromptAdapter(
-        select_answers=["routers", "add", "back", "exit"],
+        select_answers=["routers", "add", "ISP", "back", "exit"],
         checkbox_answers=[["telegram", "google_ai"]],
         text_answers=[
             "Router 1",
             "api_updater",
             "https://router-1.example/rci/",
-            "Wireguard0",
         ],
         confirm_answers=[True, False, True],
     )
@@ -39,7 +38,7 @@ def test_run_returns_to_root_dashboard_after_successful_add_router(tmp_path, mon
     assert [call["message"] for call in prompts.select_calls] == [
         "Выберите раздел панели",
         "Маршрутизаторы",
-        "Режим списков для default route",
+        "Базовый интерфейс маршрутизации",
         "Выберите раздел панели",
         "Выберите раздел панели",
     ]

@@ -8,12 +8,15 @@ import pytest
 
 import fqdn_updater.cli.panel as panel_module
 from fqdn_updater import __version__
-from fqdn_updater.application.route_target_discovery import RouteTargetDiscoveryResult
+from fqdn_updater.application.route_target_discovery import (
+    InterfaceDiscoveryResult,
+    RouteTargetDiscoveryResult,
+)
 from fqdn_updater.application.run_history import RecentRun, RunHistoryResult
 from fqdn_updater.application.sync_orchestration import SyncExecutionResult
 from fqdn_updater.cli import panel_formatting, panel_router_support, panel_schedule
 from fqdn_updater.domain.config_schema import AppConfig
-from fqdn_updater.domain.keenetic import RouteTargetCandidate
+from fqdn_updater.domain.keenetic import RouterInterfaceState, RouteTargetCandidate
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.run_artifact import (
     RouterResultStatus,
@@ -68,6 +71,34 @@ class _FakeDiscoveryService:
         self.routers.append(router)
         self.password_overrides.append(password_override)
         return self.result
+
+
+class _FakeInterfaceDiscoveryService:
+    def __init__(
+        self,
+        interfaces: tuple[RouterInterfaceState, ...],
+        route_result: RouteTargetDiscoveryResult | None = None,
+    ) -> None:
+        self.interfaces = interfaces
+        self.route_result = route_result or RouteTargetDiscoveryResult(
+            router_id="router-1", candidates=()
+        )
+
+    def discover_interfaces(
+        self,
+        *,
+        router,
+        password_override: str | None = None,
+    ) -> InterfaceDiscoveryResult:
+        return InterfaceDiscoveryResult(router_id=router.id, interfaces=self.interfaces)
+
+    def discover_wireguard_targets(
+        self,
+        *,
+        router,
+        password_override: str | None = None,
+    ) -> RouteTargetDiscoveryResult:
+        return self.route_result
 
 
 class _RecordingStatusService:
@@ -762,7 +793,6 @@ def test_add_router_passes_hint_lines_through_wizard_steps(
             "Router 1",
             "api_updater",
             "https://router-1.example/rci/",
-            "Wireguard0",
         ],
         checkbox_answers=[["telegram", "google_ai"]],
         select_answers=[],
@@ -783,14 +813,14 @@ def test_add_router_passes_hint_lines_through_wizard_steps(
         prompts.text_calls[1]["hint_lines"] == panel_router_support.ADD_ROUTER_USERNAME_HINT_LINES
     )
     assert prompts.text_calls[2]["hint_lines"] == panel_router_support.ADD_ROUTER_RCI_URL_HINT_LINES
-    assert (
-        prompts.text_calls[3]["hint_lines"] == panel_router_support.BASE_ROUTE_INTERFACE_HINT_LINES
+    assert prompts.select_calls[0]["hint_lines"] == (
+        panel_router_support.BASE_ROUTE_INTERFACE_HINT_LINES
     )
     assert (
         prompts.checkbox_calls[0]["hint_lines"] == panel_router_support.SERVICE_SELECTION_HINT_LINES
     )
-    assert prompts.text_calls[3]["message"] == "Базовый интерфейс маршрутизации"
-    assert prompts.select_calls == []
+    assert prompts.select_calls[0]["message"] == "Базовый интерфейс маршрутизации"
+    assert "Ввести интерфейс вручную" not in " ".join(prompts.select_calls[0]["choice_titles"])
     assert (
         prompts.confirm_calls[0]["hint_lines"]
         == panel_router_support.ADD_ROUTER_PASSWORD_HINT_LINES
@@ -802,6 +832,205 @@ def test_add_router_passes_hint_lines_through_wizard_steps(
     assert (
         prompts.confirm_calls[-1]["hint_lines"] == panel_router_support.ADD_ROUTER_SAVE_HINT_LINES
     )
+
+
+def test_default_route_interface_select_filters_global_interfaces_and_aligns_choices(
+    tmp_path,
+) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["Wireguard1"])
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+    config = controller._load_config()
+    controller._route_target_discovery_service = _FakeInterfaceDiscoveryService(  # type: ignore[attr-defined]
+        (
+            RouterInterfaceState(
+                value="0",
+                display_name="0",
+                interface_type="Port",
+                status="up",
+                global_enabled=None,
+            ),
+            RouterInterfaceState(
+                value="Home",
+                display_name="Home",
+                interface_type="Bridge",
+                status="up",
+                global_enabled=False,
+            ),
+            RouterInterfaceState(
+                value="ISP",
+                display_name="ISP",
+                interface_type="Vlan",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=True,
+                global_priority=700,
+            ),
+            RouterInterfaceState(
+                value="Wireguard0",
+                display_name="Wireguard0",
+                interface_type="Wireguard",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=False,
+                global_priority=350,
+            ),
+            RouterInterfaceState(
+                value="Wireguard1",
+                display_name="Wireguard1",
+                interface_type="Wireguard",
+                status="up",
+                global_enabled=True,
+                default_gateway=False,
+                global_priority=175,
+            ),
+        )
+    )
+
+    selected = controller._router_flow.prompt_default_route_interface(
+        config=config,
+        router=config.routers[0],
+        default_value="Wireguard0",
+        discovery_password="secret",
+    )
+
+    assert selected == "Wireguard1"
+    assert prompts.text_calls == []
+    select_call = prompts.select_calls[0]
+    assert select_call["message"] == "Базовый интерфейс маршрутизации"
+    assert select_call["default"] == "Wireguard0"
+    assert select_call["hint_lines"] == panel_router_support.BASE_ROUTE_INTERFACE_HINT_LINES
+    assert select_call["choice_titles"][-1] == "↩ Назад"
+    choice_titles = select_call["choice_titles"][:-1]
+    assert [[part.strip() for part in title.split("|")] for title in choice_titles] == [
+        ["ISP", "Vlan", "up", "global=yes", "defaultgw=yes", "priority=700"],
+        ["Wireguard0", "Wireguard", "up", "global=yes", "defaultgw=no", "priority=350"],
+        ["Wireguard1", "Wireguard", "up", "global=yes", "defaultgw=no", "priority=175"],
+    ]
+    pipe_positions = [
+        [index for index, char in enumerate(title) if char == "|"] for title in choice_titles
+    ]
+    assert pipe_positions == [pipe_positions[0], pipe_positions[0], pipe_positions[0]]
+    joined_titles = "\n".join(select_call["choice_titles"])
+    assert "Home" not in joined_titles
+    assert "Ввести интерфейс вручную" not in joined_titles
+    assert "Keenetic interfaces" not in console.export_text()
+
+
+def test_direct_groups_use_provider_interface_without_extra_prompt(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1", "Wireguard0", "back"],
+        checkbox_answers=[["direct_ru_outside"]],
+        confirm_answers=[True],
+    )
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+                "default_route": {"interface": "Wireguard0", "managed": True},
+            }
+        ],
+        services=[
+            {
+                "key": "direct_ru_outside",
+                "source_urls": ["https://example.com/direct_ru_outside.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "direct_custom",
+                "source_urls": ["https://example.com/direct_custom.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+        ],
+    )
+    SecretEnvFile(path=tmp_path / ".env.secrets").write_value(
+        key="ROUTER_ONE_SECRET",
+        value="existing-secret",
+    )
+    controller._route_target_discovery_service = _FakeInterfaceDiscoveryService(  # type: ignore[attr-defined]
+        (
+            RouterInterfaceState(
+                value="0",
+                display_name="0",
+                interface_type="Port",
+                status="up",
+                global_enabled=None,
+            ),
+            RouterInterfaceState(
+                value="Home",
+                display_name="Home",
+                interface_type="Bridge",
+                status="up",
+                global_enabled=False,
+            ),
+            RouterInterfaceState(
+                value="ISP",
+                display_name="ISP",
+                interface_type="Vlan",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=True,
+                global_priority=700,
+            ),
+            RouterInterfaceState(
+                value="Wireguard0",
+                display_name="Wireguard0",
+                interface_type="Wireguard",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=False,
+                global_priority=350,
+            ),
+        )
+    )
+
+    controller._lists_menu()
+
+    assert [call["message"] for call in prompts.select_calls] == [
+        "Выберите маршрутизатор для списков и маршрутов",
+        "Базовый интерфейс маршрутизации",
+        "Списки и маршруты сохранены",
+    ]
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    assert payload["mappings"] == [
+        {
+            "auto": True,
+            "exclusive": True,
+            "managed": True,
+            "object_group_name": "fqdn-direct_ru_outside",
+            "route_interface": None,
+            "route_target_type": "interface",
+            "route_target_value": "ISP",
+            "router_id": "router-1",
+            "service_key": "direct_ru_outside",
+        }
+    ]
+    assert "WireGuard discovery" not in console.export_text()
 
 
 def test_password_confirmation_hint_mentions_access_checkbox_and_save() -> None:
@@ -822,6 +1051,7 @@ def test_add_router_uses_requested_default_service_selection(
     monkeypatch,
 ) -> None:
     prompts = ScriptedPromptAdapter(
+        select_answers=["ISP"],
         text_answers=[
             "Router 1",
             "api_updater",
@@ -1400,7 +1630,18 @@ def test_edit_router_keeps_existing_password_when_user_does_not_update_it(
     secret_path.write_text("ROUTER_ONE_SECRET=old-secret\n", encoding="utf-8")
     generated_password = "KeepOldPassword123!"
     fake_service = _FakeDiscoveryService(
-        RouteTargetDiscoveryResult(router_id="router-1", candidates=())
+        RouteTargetDiscoveryResult(
+            router_id="router-1",
+            candidates=(
+                RouteTargetCandidate(
+                    value="Wireguard0",
+                    display_name="Wireguard0",
+                    status="up",
+                    detail="type=Wireguard",
+                    connected=True,
+                ),
+            ),
+        )
     )
     controller._route_target_discovery_service = fake_service  # type: ignore[attr-defined]
     monkeypatch.setattr(
@@ -1486,7 +1727,18 @@ def test_edit_router_checks_connectivity_with_draft_router_before_save(
     )
     generated_password = "Dd4$efghijklmnopqrst"
     fake_service = _FakeDiscoveryService(
-        RouteTargetDiscoveryResult(router_id="router-1", candidates=())
+        RouteTargetDiscoveryResult(
+            router_id="router-1",
+            candidates=(
+                RouteTargetCandidate(
+                    value="Wireguard0",
+                    display_name="Wireguard0",
+                    status="up",
+                    detail="type=Wireguard",
+                    connected=True,
+                ),
+            ),
+        )
     )
     controller._route_target_discovery_service = fake_service  # type: ignore[attr-defined]
     monkeypatch.setattr(
@@ -1537,8 +1789,21 @@ def test_edit_router_reports_connectivity_error_but_still_allows_save(
     secret_path = tmp_path / ".env.secrets"
     secret_path.write_text("ROUTER_ONE_SECRET=old-secret\n", encoding="utf-8")
     generated_password = "Ee5%fghijklmnopqrstu"
-    controller._route_target_discovery_service = _FakeDiscoveryService(  # type: ignore[attr-defined]
-        RouteTargetDiscoveryResult(router_id="router-1", error_message="temporary failure")
+    controller._route_target_discovery_service = _FakeInterfaceDiscoveryService(  # type: ignore[attr-defined]
+        (
+            RouterInterfaceState(
+                value="Wireguard0",
+                display_name="Wireguard0",
+                interface_type="Wireguard",
+                status="up",
+                global_enabled=True,
+                default_gateway=False,
+                global_priority=300,
+            ),
+        ),
+        route_result=RouteTargetDiscoveryResult(
+            router_id="router-1", error_message="temporary failure"
+        ),
     )
     monkeypatch.setattr(
         panel_module.RciPasswordGenerator, "generate", lambda self: generated_password
@@ -1843,6 +2108,51 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
             "service_key": "youtube",
         },
     ]
+
+
+def test_lists_menu_pauses_and_returns_after_discovery_transport_error(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(select_answers=["router-1"])
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": False,
+            }
+        ],
+    )
+    SecretEnvFile(path=tmp_path / ".env.secrets").write_value(
+        key="ROUTER_ONE_SECRET",
+        value="existing-secret",
+    )
+    original_payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    raw_error = (
+        "Router 'router-1' get_interfaces failed: transport failed after 5 attempts: "
+        "[Errno -2] Name or service not known; "
+        "attempt_errors=1:gaierror:[Errno -2] Name or service not known"
+    )
+    controller._route_target_discovery_service = _FakeDiscoveryService(  # type: ignore[attr-defined]
+        RouteTargetDiscoveryResult(router_id="router-1", error_message=raw_error)
+    )
+
+    controller._lists_menu()
+
+    assert prompts.pause_messages == ["Нажмите любую клавишу для продолжения..."]
+    assert [call["message"] for call in prompts.select_calls] == [
+        "Выберите маршрутизатор для списков и маршрутов"
+    ]
+    assert prompts.text_calls == []
+    assert prompts.checkbox_calls == []
+    output = console.export_text()
+    assert "Невозможно отобразить доступные интерфейсы." in output
+    assert "Маршрутизатор недоступен." in output
+    assert "attempt_errors" not in output
+    assert json.loads(controller._config_path.read_text(encoding="utf-8")) == original_payload
 
 
 def test_lists_menu_can_run_sync_for_selected_router_after_save(tmp_path) -> None:
