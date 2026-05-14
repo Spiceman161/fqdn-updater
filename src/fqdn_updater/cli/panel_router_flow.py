@@ -35,9 +35,12 @@ from fqdn_updater.cli.panel_router_support import (
     ADD_ROUTER_USERNAME_HINT_LINES,
     BASE_ROUTE_INTERFACE_HINT_LINES,
     DEFAULT_RCI_TIMEOUT_SECONDS,
+    DEFAULT_ROUTE_INTERFACE_LABEL,
     DEFAULT_SELECTED_DIRECT_SERVICES,
     DEFAULT_SELECTED_SERVICES,
     DELETE_ROUTER_HINT_LINES,
+    DIRECT_ROUTE_SELECTION_HINT_LINES,
+    DIRECT_ROUTE_SELECTION_KEYS,
     DIRECT_SERVICE_KEYS,
     EDIT_ROUTER_PASSWORD_HINT_LINES,
     GOOGLE_AI_OVERRIDE_HINT_LINES,
@@ -242,7 +245,13 @@ class PanelRouterFlow:
         if default_is_vpn and not direct_services_available:
             use_default_interface_for_mappings = True
             default_is_vpn = False
-        service_filter = DIRECT_SERVICE_KEYS if default_is_vpn else None
+        service_filter = (
+            DIRECT_ROUTE_SELECTION_KEYS
+            if default_is_vpn
+            else frozenset(
+                service.key for service in config.services if service.key not in DIRECT_SERVICE_KEYS
+            )
+        )
         default_selected_services = (
             set(DEFAULT_SELECTED_DIRECT_SERVICES)
             if default_is_vpn
@@ -252,7 +261,11 @@ class PanelRouterFlow:
             config=config,
             selected=default_selected_services,
             allowed_service_keys=service_filter,
-            hint_lines=ADD_ROUTER_HINT_LINES,
+            hint_lines=(
+                DIRECT_ROUTE_SELECTION_HINT_LINES
+                if default_is_vpn
+                else SERVICE_SELECTION_HINT_LINES
+            ),
         )
         if selected_services is None:
             return False
@@ -725,7 +738,7 @@ class PanelRouterFlow:
             instruction=(
                 "Стрелки выбирают, Пробел отмечает, Enter сохраняет набор, Esc возвращает назад."
             ),
-            hint_lines=SERVICE_SELECTION_HINT_LINES,
+            hint_lines=SERVICE_SELECTION_HINT_LINES if hint_lines is None else hint_lines,
             table_meta=CheckboxTableMeta(
                 header=_service_selection_header(),
                 summary=lambda selected_values: _service_selection_totals_line(
@@ -794,7 +807,7 @@ class PanelRouterFlow:
         default_target = self.prompt_route_target(
             config=config,
             router=router,
-            label="Базовый интерфейс маршрутизации",
+            label=DEFAULT_ROUTE_INTERFACE_LABEL,
             default_target=default_target,
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
@@ -943,7 +956,7 @@ class PanelRouterFlow:
         config: AppConfig,
         router: RouterConfig,
         default_value: str,
-        label: str = "Базовый интерфейс маршрутизации",
+        label: str = DEFAULT_ROUTE_INTERFACE_LABEL,
         missing_secret_message: str | None = None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
@@ -1239,9 +1252,8 @@ def _interface_choice_columns(interface: RouterInterfaceState) -> tuple[str, ...
     priority = interface.global_priority if interface.global_priority is not None else "-"
     return (
         interface.display_name or interface.value,
-        interface.interface_type or interface.interface_class or "-",
+        _interface_type_label(interface),
         interface.status or "-",
-        f"global={_format_optional_bool(interface.global_enabled)}",
         f"defaultgw={_format_optional_bool(interface.default_gateway)}",
         f"priority={priority}",
     )
@@ -1273,6 +1285,11 @@ def _interface_detail(interface: RouterInterfaceState) -> str | None:
         if part is not None
     )
     return ", ".join(parts) if parts else None
+
+
+def _interface_type_label(interface: RouterInterfaceState) -> str:
+    raw_type = interface.interface_type or interface.interface_class or "-"
+    return "WAN" if raw_type.lower() == "vlan" else raw_type
 
 
 def _format_optional_bool(value: bool | None) -> str:

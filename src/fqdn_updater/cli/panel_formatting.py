@@ -82,7 +82,7 @@ SERVICE_SELECTION_GROUPS = {
 }
 SERVICE_DISPLAY_LABELS = {
     "direct_ru_outside": "direct RU outside",
-    "direct_custom": "direct custom",
+    "direct_custom": "direct noVPN",
     "block": "block (full)",
     "block_p2p_streaming": "   p2p/media",
     "block_vpn_proxy_privacy": "   vpn/privacy",
@@ -109,6 +109,7 @@ SERVICE_DISPLAY_LABELS = {
     "hodca_social_lifestyle": "   social/lifestyle",
     "hodca_finance_shopping": "   finance/shop",
     "hodca_other": "   other",
+    "google_ai": "google-ai",
     "meta": "meta (whatsapp)",
 }
 

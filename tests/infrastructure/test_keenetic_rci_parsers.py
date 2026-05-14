@@ -41,6 +41,7 @@ def test_parse_router_interfaces_reads_global_defaultgw_and_priority_shapes() ->
         {
             "Provider0": {
                 "id": "Provider0",
+                "description": "Ростелеком",
                 "type": "ethernet",
                 "state": "up",
                 "connected": "yes",
@@ -58,7 +59,7 @@ def test_parse_router_interfaces_reads_global_defaultgw_and_priority_shapes() ->
     assert interfaces == (
         RouterInterfaceState(
             value="Provider0",
-            display_name="Provider0",
+            display_name="Ростелеком",
             interface_type="ethernet",
             status="up",
             connected=True,

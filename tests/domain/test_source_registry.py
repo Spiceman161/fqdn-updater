@@ -63,7 +63,7 @@ def test_builtin_service_registry_contains_expected_v1_services() -> None:
         "raw_domain_list"
     ]
     assert [str(source.url) for source in services_by_key["direct_custom"].resolved_sources] == [
-        "https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/source-lists/direct-custom.lst"
+        "https://raw.githubusercontent.com/Spiceman161/fqdn-updater/refs/heads/main/source-lists/direct-no-vpn.lst"
     ]
     for category_key in ("anime", "block", "geoblock", "hodca", "news", "porn"):
         assert [str(source.url) for source in services_by_key[category_key].resolved_sources] == [

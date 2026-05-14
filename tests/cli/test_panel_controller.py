@@ -819,7 +819,7 @@ def test_add_router_passes_hint_lines_through_wizard_steps(
     assert (
         prompts.checkbox_calls[0]["hint_lines"] == panel_router_support.SERVICE_SELECTION_HINT_LINES
     )
-    assert prompts.select_calls[0]["message"] == "Базовый интерфейс маршрутизации"
+    assert prompts.select_calls[0]["message"] == "Интерфейс маршрутизации по умолчанию"
     assert "Ввести интерфейс вручную" not in " ".join(prompts.select_calls[0]["choice_titles"])
     assert (
         prompts.confirm_calls[0]["hint_lines"]
@@ -871,7 +871,7 @@ def test_default_route_interface_select_filters_global_interfaces_and_aligns_cho
             ),
             RouterInterfaceState(
                 value="ISP",
-                display_name="ISP",
+                display_name="Ростелеком",
                 interface_type="Vlan",
                 status="up",
                 connected=True,
@@ -881,7 +881,7 @@ def test_default_route_interface_select_filters_global_interfaces_and_aligns_cho
             ),
             RouterInterfaceState(
                 value="Wireguard0",
-                display_name="Wireguard0",
+                display_name="AWG1_Vadim_gorodovikovsk",
                 interface_type="Wireguard",
                 status="up",
                 connected=True,
@@ -891,7 +891,7 @@ def test_default_route_interface_select_filters_global_interfaces_and_aligns_cho
             ),
             RouterInterfaceState(
                 value="Wireguard1",
-                display_name="Wireguard1",
+                display_name="AWG2_backup",
                 interface_type="Wireguard",
                 status="up",
                 global_enabled=True,
@@ -911,15 +911,15 @@ def test_default_route_interface_select_filters_global_interfaces_and_aligns_cho
     assert selected == "Wireguard1"
     assert prompts.text_calls == []
     select_call = prompts.select_calls[0]
-    assert select_call["message"] == "Базовый интерфейс маршрутизации"
+    assert select_call["message"] == "Интерфейс маршрутизации по умолчанию"
     assert select_call["default"] == "Wireguard0"
     assert select_call["hint_lines"] == panel_router_support.BASE_ROUTE_INTERFACE_HINT_LINES
     assert select_call["choice_titles"][-1] == "↩ Назад"
     choice_titles = select_call["choice_titles"][:-1]
     assert [[part.strip() for part in title.split("|")] for title in choice_titles] == [
-        ["ISP", "Vlan", "up", "global=yes", "defaultgw=yes", "priority=700"],
-        ["Wireguard0", "Wireguard", "up", "global=yes", "defaultgw=no", "priority=350"],
-        ["Wireguard1", "Wireguard", "up", "global=yes", "defaultgw=no", "priority=175"],
+        ["Ростелеком", "WAN", "up", "defaultgw=yes", "priority=700"],
+        ["AWG1_Vadim_gorodovikovsk", "Wireguard", "up", "defaultgw=no", "priority=350"],
+        ["AWG2_backup", "Wireguard", "up", "defaultgw=no", "priority=175"],
     ]
     pipe_positions = [
         [index for index, char in enumerate(title) if char == "|"] for title in choice_titles
@@ -1013,7 +1013,7 @@ def test_direct_groups_use_provider_interface_without_extra_prompt(tmp_path) -> 
 
     assert [call["message"] for call in prompts.select_calls] == [
         "Выберите маршрутизатор для списков и маршрутов",
-        "Базовый интерфейс маршрутизации",
+        "Интерфейс маршрутизации по умолчанию",
         "Списки и маршруты сохранены",
     ]
     payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
@@ -1157,13 +1157,9 @@ def test_add_router_service_selection_uses_source_counts_and_fixed_hint_lines(
     checkbox_call = prompts.checkbox_calls[0]
     assert checkbox_call["hint_lines"] == panel_router_support.SERVICE_SELECTION_HINT_LINES
     assert checkbox_call["hint_lines"] == (
-        (
-            "Для каждого выбранного сервиса будет создан свой список в разделе "
-            "«Маршрутизация» Keenetic."
-        ),
-        "Лимит доменов роутеров Keenetic составляет 1024 записи. "
-        "Вам необходимо выбрать не более этого количества записей.",
-        "Для IPv4+IPv6 действует отдельный лимит: около 4000 subnet-записей суммарно на роутер.",
+        "Для каждого выбранного сервиса будет создан свой список в разделе «Маршрутизация» "
+        "Keenetic. При выборе youtube и google-ai вы сможете указать для них отдельный "
+        "маршрут.",
     )
     assert checkbox_call["table_header"] == panel_formatting._service_selection_header()
     assert checkbox_call["table_summary"] == (f"{'Итого выбрано':<22} | {3:>7} | {3:>7} | {2:>7}")
@@ -1175,6 +1171,71 @@ def test_add_router_service_selection_uses_source_counts_and_fixed_hint_lines(
     assert checkbox_call["choices"][0]["title"].endswith("|       1 |       1 |       1")
     assert checkbox_call["choices"][1]["title"].endswith("|       0 |       2 |       0")
     assert checkbox_call["choices"][2]["title"].endswith("|       2 |       0 |       1")
+
+
+def test_direct_route_service_selection_exposes_google_ai_and_youtube(
+    tmp_path,
+) -> None:
+    prompts = ScriptedPromptAdapter(checkbox_answers=[[]])
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        services=[
+            {
+                "key": "direct_ru_outside",
+                "source_urls": ["https://example.com/direct_ru_outside.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "direct_custom",
+                "source_urls": ["https://example.com/direct-no-vpn.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "telegram",
+                "source_urls": ["https://example.com/telegram.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "google_ai",
+                "source_urls": ["https://example.com/google-ai.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "youtube",
+                "source_urls": ["https://example.com/youtube.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+        ],
+    )
+
+    selected = controller._prompt_service_selection(
+        config=controller._load_config(),
+        selected=set(),
+        allowed_service_keys=panel_router_support.DIRECT_ROUTE_SELECTION_KEYS,
+        hint_lines=panel_router_support.DIRECT_ROUTE_SELECTION_HINT_LINES,
+    )
+
+    assert selected == set()
+    checkbox_call = prompts.checkbox_calls[0]
+    assert checkbox_call["hint_lines"] == panel_router_support.DIRECT_ROUTE_SELECTION_HINT_LINES
+    assert [choice["value"] for choice in checkbox_call["choices"]] == [
+        "direct_ru_outside",
+        "direct_custom",
+        "google_ai",
+        "youtube",
+    ]
+    assert [choice["title"].split("|")[0].strip() for choice in checkbox_call["choices"]] == [
+        "direct RU outside",
+        "direct noVPN",
+        "google-ai",
+        "youtube",
+    ]
 
 
 def test_service_selection_groups_composite_services_and_collapses_full_selection(
@@ -2058,7 +2119,7 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
 
     assert prompts.select_calls[0]["message"] == "Выберите маршрутизатор для списков и маршрутов"
     assert prompts.select_calls[0]["choice_titles"][-1] == "Главное меню"
-    assert prompts.select_calls[1]["message"] == "Базовый интерфейс маршрутизации"
+    assert prompts.select_calls[1]["message"] == "Интерфейс маршрутизации по умолчанию"
     assert prompts.select_calls[1]["choice_titles"][-1] == "↩ Назад"
     payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
     mappings = sorted(payload["mappings"], key=lambda item: item["service_key"])

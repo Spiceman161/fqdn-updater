@@ -935,7 +935,7 @@ _SERVICE_KEYS: tuple[str, ...] = (
 
 _SERVICE_DESCRIPTIONS: dict[str, str] = {
     "direct_ru_outside": "Russian direct-route domains from itdoginfo/allow-domains outside list.",
-    "direct_custom": "Project custom direct-route domains.",
+    "direct_custom": "Direct no-VPN domains from the repository.",
     "anime": "Anime category domains from itdoginfo/allow-domains.",
     "block": "Blocked category domains from itdoginfo/allow-domains.",
     "block_p2p_streaming": "P2P, streaming mirrors, and piracy-related domains from block.",

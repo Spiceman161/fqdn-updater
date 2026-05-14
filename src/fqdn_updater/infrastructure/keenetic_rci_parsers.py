@@ -280,11 +280,12 @@ def _parse_router_interface(raw_interface: dict[str, Any]) -> RouterInterfaceSta
 
     interface_type = _first_non_blank_string(raw_interface, ("type",))
     interface_class = _first_non_blank_string(raw_interface, ("class",))
+    description = _first_non_blank_string(raw_interface, ("description",))
     connected = _parse_optional_bool(raw_interface.get("connected"))
     state = _first_non_blank_string(raw_interface, ("state", "link", "status"))
     return RouterInterfaceState(
         value=value,
-        display_name=value,
+        display_name=description or value,
         interface_type=interface_type,
         interface_class=interface_class,
         status=state,

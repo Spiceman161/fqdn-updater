@@ -31,7 +31,7 @@ def _service_definition(key: str) -> ServiceDefinitionConfig:
         return ServiceDefinitionConfig(
             key=key,
             source_urls=[
-                "https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/source-lists/direct-custom.lst"
+                "https://raw.githubusercontent.com/Spiceman161/fqdn-updater/refs/heads/main/source-lists/direct-no-vpn.lst"
             ],
             format="raw_domain_list",
             description=_SERVICE_DESCRIPTIONS[key],

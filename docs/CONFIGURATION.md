@@ -52,7 +52,7 @@
 
 ## Services
 
-Service описывает один логический список. Встроенный registry использует raw-URL из `itdoginfo/allow-domains`; сами upstream lists не вендорятся в репозиторий. Исключение — локальный шаблон `source-lists/direct-custom.lst`, который публикуется как raw-list для `direct_custom`.
+Service описывает один логический список. Встроенный registry использует raw-URL из `itdoginfo/allow-domains`; сами upstream lists не вендорятся в репозиторий. Исключение — локальный шаблон `source-lists/direct-no-vpn.lst`, который публикуется как raw-list для `direct_custom` (`direct noVPN` в UI).
 
 Новый формат:
 
@@ -101,7 +101,7 @@ Legacy формат всё ещё валиден:
 Встроенные direct-сервисы для сценария “default route через VPN, отдельные группы напрямую”:
 
 - `direct_ru_outside` — `https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/outside-raw.lst`;
-- `direct_custom` — `https://raw.githubusercontent.com/Spiceman161/fqdn-updater/main/source-lists/direct-custom.lst`.
+- `direct_custom` — `https://raw.githubusercontent.com/Spiceman161/fqdn-updater/refs/heads/main/source-lists/direct-no-vpn.lst`.
 
 ## Mappings
 

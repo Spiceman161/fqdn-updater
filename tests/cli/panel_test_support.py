@@ -63,7 +63,7 @@ class ScriptedPromptAdapter:
         )
         if message == "Режим списков для default route":
             return "provider"
-        if message == "Базовый интерфейс маршрутизации" and not self._select_answers:
+        if message == "Интерфейс маршрутизации по умолчанию" and not self._select_answers:
             preferred_choice = next(
                 (
                     choice.value
@@ -135,7 +135,7 @@ class ScriptedPromptAdapter:
                 "hint_lines": hint_lines,
             }
         )
-        if message == "Базовый интерфейс маршрутизации" and not self._text_answers:
+        if message == "Интерфейс маршрутизации по умолчанию" and not self._text_answers:
             return default or "Wireguard0"
         return self._pop(self._text_answers, f"text:{message}")
 
@@ -248,7 +248,7 @@ class EmptyDiscoveryService:
             interfaces=(
                 RouterInterfaceState(
                     value="Wireguard0",
-                    display_name="Wireguard0",
+                    display_name="AWG1_Vadim_gorodovikovsk",
                     interface_type="Wireguard",
                     status="up",
                     connected=True,
@@ -258,7 +258,7 @@ class EmptyDiscoveryService:
                 ),
                 RouterInterfaceState(
                     value="ISP",
-                    display_name="ISP",
+                    display_name="Ростелеком",
                     interface_type="Vlan",
                     status="up",
                     connected=True,

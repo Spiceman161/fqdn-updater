@@ -41,14 +41,19 @@ DEFAULT_SELECTED_SERVICES = frozenset(
     }
 )
 DIRECT_SERVICE_KEYS = frozenset({"direct_ru_outside", "direct_custom"})
+DIRECT_ROUTE_SELECTION_KEYS = DIRECT_SERVICE_KEYS | frozenset({"google_ai", "youtube"})
 DEFAULT_SELECTED_DIRECT_SERVICES = DIRECT_SERVICE_KEYS
 DEFAULT_INTERFACE_NAME = "Wireguard0"
+DEFAULT_ROUTE_INTERFACE_LABEL = "Интерфейс маршрутизации по умолчанию"
 DEFAULT_RCI_TIMEOUT_SECONDS = 30
 SERVICE_SELECTION_HINT_LINES = (
-    "Для каждого выбранного сервиса будет создан свой список в разделе «Маршрутизация» Keenetic.",
-    "Лимит доменов роутеров Keenetic составляет 1024 записи. "
-    "Вам необходимо выбрать не более этого количества записей.",
-    "Для IPv4+IPv6 действует отдельный лимит: около 4000 subnet-записей суммарно на роутер.",
+    "Для каждого выбранного сервиса будет создан свой список в разделе «Маршрутизация» Keenetic. "
+    "При выборе youtube и google-ai вы сможете указать для них отдельный маршрут.",
+)
+DIRECT_ROUTE_SELECTION_HINT_LINES = (
+    "Для каждого выбранного сервиса будет создан свой список в разделе «Маршрутизация» Keenetic. "
+    "В этом режиме direct RU outside и direct noVPN будут идти напрямую через ISP, а "
+    "для youtube и google-ai можно указать отдельный маршрут.",
 )
 ADD_ROUTER_HINT_LINES = ("Введите имя нового маршрутизатора.",)
 ADD_ROUTER_RCI_URL_HINT_LINES = (
@@ -81,9 +86,9 @@ ADD_ROUTER_SAVE_HINT_LINES = (
     "Проверьте введенные данные и подтвердите сохранение маршрутизатора.",
 )
 BASE_ROUTE_INTERFACE_HINT_LINES = (
-    "Выберите глобальный интерфейс Keenetic, через который будут строиться базовые "
-    "маршруты списков.",
-    "Показываются только интерфейсы с Global=yes: провайдерские WAN и VPN-туннели.",
+    "Выберите базовый интерфейс маршрутизации для политики доступа по умолчанию.",
+    "Через данный интерфейс будет идти весь трафик, кроме прямо",
+    "указанного в fqdn-списках. Рекомендуется указать VPN тоннель.",
 )
 GOOGLE_AI_OVERRIDE_HINT_LINES = (
     "Для корректной работы AI сервисов от Google можно указать другой отдельный интерфейс.",

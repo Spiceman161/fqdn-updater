@@ -399,9 +399,17 @@ class PanelController:
         if default_is_vpn and not direct_services_available:
             use_default_interface_for_mappings = True
             default_is_vpn = False
-        allowed_service_keys = panel_router_support.DIRECT_SERVICE_KEYS if default_is_vpn else None
+        allowed_service_keys = (
+            panel_router_support.DIRECT_ROUTE_SELECTION_KEYS
+            if default_is_vpn
+            else frozenset(
+                service.key
+                for service in config.services
+                if service.key not in panel_router_support.DIRECT_SERVICE_KEYS
+            )
+        )
         effective_previous_selection = (
-            previously_selected & panel_router_support.DIRECT_SERVICE_KEYS
+            previously_selected & panel_router_support.DIRECT_ROUTE_SELECTION_KEYS
             if default_is_vpn
             else previously_selected - panel_router_support.DIRECT_SERVICE_KEYS
         )
@@ -415,6 +423,11 @@ class PanelController:
             config=config,
             selected=effective_previous_selection,
             allowed_service_keys=allowed_service_keys,
+            hint_lines=(
+                panel_router_support.DIRECT_ROUTE_SELECTION_HINT_LINES
+                if default_is_vpn
+                else panel_router_support.SERVICE_SELECTION_HINT_LINES
+            ),
         )
         if selected_services is None:
             return

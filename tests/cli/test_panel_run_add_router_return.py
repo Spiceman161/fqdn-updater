@@ -38,7 +38,7 @@ def test_run_returns_to_root_dashboard_after_successful_add_router(tmp_path, mon
     assert [call["message"] for call in prompts.select_calls] == [
         "Выберите раздел панели",
         "Маршрутизаторы",
-        "Базовый интерфейс маршрутизации",
+        "Интерфейс маршрутизации по умолчанию",
         "Выберите раздел панели",
         "Выберите раздел панели",
     ]
