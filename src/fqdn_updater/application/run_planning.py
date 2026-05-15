@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 
 from fqdn_updater.application.keenetic_client import KeeneticClient, KeeneticClientFactory
 from fqdn_updater.application.run_support import (
@@ -108,7 +108,7 @@ class RouterPlanningSession(BaseModel):
 
     router: RouterConfig
     mappings: tuple[RouterServiceMappingConfig, ...] = Field(default_factory=tuple)
-    client: object | None = None
+    client: SkipValidation[KeeneticClient] | None = None
     startup_failure: FailureDetail | None = None
 
     @property
@@ -295,25 +295,28 @@ class RunPlanningService:
         if session.client is None:
             raise RuntimeError("router planning session is not ready")
 
-        failure_message = snapshot.source_failures_by_service.get(mapping.service_key)
-        if failure_message is not None:
-            return self._service_failure_outcome(
-                logger=logger,
-                router=session.router,
-                mapping=mapping,
-                step=RunStep.SOURCE_LOAD,
-                message=failure_message,
-            )
+        if mapping.enabled:
+            failure_message = snapshot.source_failures_by_service.get(mapping.service_key)
+            if failure_message is not None:
+                return self._service_failure_outcome(
+                    logger=logger,
+                    router=session.router,
+                    mapping=mapping,
+                    step=RunStep.SOURCE_LOAD,
+                    message=failure_message,
+                )
 
-        desired_entries = snapshot.desired_entries_by_service.get(mapping.service_key)
-        if desired_entries is None:
-            return self._service_failure_outcome(
-                logger=logger,
-                router=session.router,
-                mapping=mapping,
-                step=RunStep.SOURCE_LOAD,
-                message=f"Missing loaded entries for service '{mapping.service_key}'",
-            )
+            desired_entries = snapshot.desired_entries_by_service.get(mapping.service_key)
+            if desired_entries is None:
+                return self._service_failure_outcome(
+                    logger=logger,
+                    router=session.router,
+                    mapping=mapping,
+                    step=RunStep.SOURCE_LOAD,
+                    message=f"Missing loaded entries for service '{mapping.service_key}'",
+                )
+        else:
+            desired_entries = ()
 
         actual_states: dict[str, ObjectGroupState] = {}
         for object_group_name in managed_shard_names(mapping.object_group_name):

@@ -171,16 +171,16 @@ def parse_route_binding_state(
     )
     if not route_entries:
         return RouteBindingState(object_group_name=object_group_name, exists=False)
-    if len(route_entries) != 1:
-        raise runtime_error(
-            f"get_route_binding({object_group_name})",
-            f"expected at most one route binding, got {len(route_entries)}",
+    route_binding_states = tuple(
+        _build_route_binding_state(
+            raw_entry=raw_entry,
+            object_group_name=object_group_name,
+            runtime_error=runtime_error,
         )
-
-    return _build_route_binding_state(
-        raw_entry=route_entries[0],
-        object_group_name=object_group_name,
-        runtime_error=runtime_error,
+        for raw_entry in route_entries
+    )
+    return route_binding_states[0].model_copy(
+        update={"duplicate_bindings": route_binding_states[1:]}
     )
 
 
@@ -304,6 +304,11 @@ def _parse_interface_global_enabled(raw_interface: dict[str, Any]) -> bool | Non
     ip_payload = raw_interface.get("ip")
     if isinstance(ip_payload, dict):
         parsed = _parse_optional_bool(ip_payload.get("global"))
+        if parsed is not None:
+            return parsed
+    global_payload = raw_interface.get("global")
+    if isinstance(global_payload, dict):
+        parsed = _parse_optional_bool(global_payload.get("enabled"))
         if parsed is not None:
             return parsed
     return None

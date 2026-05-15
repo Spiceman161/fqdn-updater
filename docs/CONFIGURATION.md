@@ -47,8 +47,8 @@
 - `auth_method` сейчас только `digest`.
 - Enabled router должен иметь ровно один secret source: `password_env` или `password_file`.
 - `allowed_source_ips` — audit/операторская подсказка для whitelist публикации; доступ на Keenetic настраивается отдельно.
-- `default_route` опционален. Если `managed=true`, `dry-run` читает `show interface` и показывает diff, а `sync` перед mappings выставляет выбранному интерфейсу `ip global 65534`. Конфиги без `default_route` работают как раньше и не меняют default route.
-- При конфликте `65534` updater понижает только другие интерфейсы с таким же priority до `65533`, `65532` и далее; `no ip global` не используется.
+- `default_route` опционален. Если `managed=true`, `dry-run` читает `show interface` и показывает diff, а `sync` перед mappings делает выбранный интерфейс единственным с наивысшим `ip global` priority. Конфиги без `default_route` работают как раньше и не меняют default route.
+- Если выбранный интерфейс уже единственный с максимальным priority, write не нужен. `65534` используется только когда требуется изменение; при конфликте updater понижает только другие интерфейсы с таким же priority до `65533`, `65532` и далее. `no ip global` не используется.
 
 ## Services
 
@@ -117,7 +117,8 @@ Mapping связывает router, service и managed route target:
   "route_interface": null,
   "exclusive": true,
   "auto": true,
-  "managed": true
+  "managed": true,
+  "enabled": true
 }
 ```
 
@@ -128,6 +129,8 @@ Mapping связывает router, service и managed route target:
 - для CIDR entries создаёт managed IPv4/IPv6 static routes с comment prefix `fqdn-updater:<service>`;
 - если у роутера настроен managed `default_route`, планирует и применяет priority diff `ip global` даже когда mappings пустые;
 - меняет только mappings с `managed=true`;
+- при `enabled=false` для managed mapping удаляет соответствующие managed object-groups,
+  DNS route bindings и static routes с comment prefix `fqdn-updater:<service>`;
 - не трогает unrelated object-groups, DNS routes и static routes.
 
 Route target:

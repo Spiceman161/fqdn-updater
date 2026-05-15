@@ -455,6 +455,149 @@ def test_sync_orchestrator_applies_mixed_service_static_routes_and_saves_once() 
     assert service_result.removed_count == 1
 
 
+def test_sync_orchestrator_removes_disabled_mapping_without_source_state() -> None:
+    config = AppConfig.model_validate(
+        {
+            "routers": [
+                {
+                    "id": "router-1",
+                    "name": "Router 1",
+                    "rci_url": "https://router-1.example/rci/",
+                    "username": "api-user",
+                    "password_env": "ROUTER_ONE_PASSWORD",
+                    "enabled": True,
+                },
+            ],
+            "services": [
+                {
+                    "key": "telegram",
+                    "source_urls": ["https://example.com/telegram.lst"],
+                    "format": "raw_domain_list",
+                    "enabled": True,
+                },
+                {
+                    "key": "youtube",
+                    "source_urls": ["https://example.com/youtube.lst"],
+                    "format": "mixed",
+                    "enabled": True,
+                },
+            ],
+            "mappings": [
+                {
+                    "router_id": "router-1",
+                    "service_key": "telegram",
+                    "object_group_name": "svc-telegram",
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard0",
+                    "managed": True,
+                    "enabled": True,
+                },
+                {
+                    "router_id": "router-1",
+                    "service_key": "youtube",
+                    "object_group_name": "svc-youtube",
+                    "route_target_type": "interface",
+                    "route_target_value": "Wireguard0",
+                    "managed": True,
+                    "enabled": False,
+                },
+            ],
+        }
+    )
+    source_loader = StubSourceLoader(
+        SourceLoadReport(
+            loaded=(NormalizedServiceSource(service_key="telegram", entries=("keep.example",)),),
+            failed=(
+                ServiceSourceFailure(
+                    service_key="youtube",
+                    source_url="https://example.com/youtube.lst",
+                    message="timeout",
+                ),
+            ),
+        )
+    )
+    client_factory = RecordingClientFactory(
+        states={
+            ("router-1", "svc-telegram"): ObjectGroupState(
+                name="svc-telegram",
+                entries=("keep.example",),
+                exists=True,
+            ),
+            ("router-1", "svc-youtube"): ObjectGroupState(
+                name="svc-youtube",
+                entries=("youtube.example",),
+                exists=True,
+            ),
+        },
+        route_bindings={
+            ("router-1", "svc-telegram"): RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=True,
+            ),
+            ("router-1", "svc-youtube"): RouteBindingState(
+                object_group_name="svc-youtube",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=True,
+            ),
+        },
+        static_routes={
+            "router-1": (
+                StaticRouteState(
+                    network="10.10.0.0/24",
+                    route_target_type="interface",
+                    route_target_value="Wireguard0",
+                    comment="fqdn-updater:youtube",
+                ),
+                StaticRouteState(
+                    network="10.20.0.0/24",
+                    route_target_type="interface",
+                    route_target_value="Wireguard0",
+                    comment="fqdn-updater:other",
+                ),
+            )
+        },
+    )
+    orchestrator = SyncOrchestrator(
+        source_loader=source_loader,
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=client_factory,
+        planner=ServiceSyncPlanner(),
+        artifact_writer=RecordingArtifactWriter(),
+        now_provider=SequentialNowProvider(
+            [
+                datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
+            ]
+        ),
+        run_id_factory=lambda: "run-disabled-mapping",
+    )
+
+    result = orchestrator.run(config=config, trigger=RunTrigger.MANUAL)
+
+    client = client_factory.clients["router-1"]
+    assert client.write_calls == [
+        "remove_entries:svc-youtube:youtube.example",
+        "remove_route:svc-youtube",
+        "remove_static_route:10.10.0.0/24",
+        "remove_object_group:svc-youtube",
+        "save_config",
+    ]
+    service_results = result.artifact.router_results[0].service_results
+    assert [service.service_key for service in service_results] == ["telegram", "youtube"]
+    assert [service.status for service in service_results] == [
+        ServiceResultStatus.NO_CHANGES,
+        ServiceResultStatus.UPDATED,
+    ]
+    assert service_results[1].removed_count == 2
+
+
 def test_sync_orchestrator_stops_current_router_after_write_failure_and_skips_remaining() -> None:
     config = _config_with_two_services_one_router()
     source_loader = StubSourceLoader(
@@ -757,6 +900,7 @@ def test_sync_orchestrator_marks_updated_services_failed_when_save_config_fails(
     assert client_factory.clients["router-1"].write_calls == [
         "remove_entries:svc-telegram:old.example",
         "add_entries:svc-telegram:new.example",
+        "remove_route:svc-telegram",
         "ensure_route:svc-telegram",
         "save_config",
     ]
@@ -818,6 +962,7 @@ def test_sync_orchestrator_applies_route_only_changes_and_saves() -> None:
 
     client = client_factory.clients["router-1"]
     assert client.write_calls == [
+        "remove_route:svc-telegram",
         "ensure_route:svc-telegram",
         "save_config",
     ]

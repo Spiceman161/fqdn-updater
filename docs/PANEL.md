@@ -74,6 +74,11 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 
 Interface discovery читает интерфейсы с выбранного роутера через RCI. Сначала выбирается managed default route, затем набор списков: direct-группы для VPN default или обычный каталог для provider default. Для `google_ai` можно задать отдельный override, если AI-сервисы Google должны идти через другой интерфейс или gateway.
 
+Если снять отметку с ранее выбранного managed списка, панель оставит его mapping в
+`config.json` с `enabled=false`. Следующий `sync` прочитает текущее состояние
+Keenetic и удалит только связанные с этим mapping managed object-groups, DNS
+route bindings и static routes с prefix `fqdn-updater:<service>`.
+
 ## Журнал и проверки
 
 Раздел `📜 Журнал` показывает последние runs, статус, количество изменений и ошибок. В деталях видны artifact path, log path, router/service results и failure details.

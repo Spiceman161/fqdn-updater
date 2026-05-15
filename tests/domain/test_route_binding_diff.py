@@ -66,3 +66,35 @@ def test_build_route_binding_diff_reports_changes_for_flag_updates() -> None:
     )
 
     assert diff.has_changes is True
+
+
+def test_build_route_binding_diff_reports_changes_for_duplicate_bindings() -> None:
+    diff = build_route_binding_diff(
+        actual_state=RouteBindingState(
+            object_group_name="svc-telegram",
+            exists=True,
+            route_target_type="interface",
+            route_target_value="Wireguard0",
+            auto=True,
+            exclusive=True,
+            duplicate_bindings=(
+                RouteBindingState(
+                    object_group_name="svc-telegram",
+                    exists=True,
+                    route_target_type="interface",
+                    route_target_value="Provider0",
+                    auto=True,
+                    exclusive=True,
+                ),
+            ),
+        ),
+        desired_binding=RouteBindingSpec(
+            object_group_name="svc-telegram",
+            route_target_type="interface",
+            route_target_value="Wireguard0",
+            auto=True,
+            exclusive=True,
+        ),
+    )
+
+    assert diff.has_changes is True

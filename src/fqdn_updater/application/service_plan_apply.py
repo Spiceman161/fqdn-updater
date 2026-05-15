@@ -7,6 +7,7 @@ from fqdn_updater.application.keenetic_client import KeeneticClient
 from fqdn_updater.application.run_planning import RunLogger, build_classified_failure_detail
 from fqdn_updater.application.service_sync_planning import ServiceSyncPlan
 from fqdn_updater.domain.config_schema import RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.keenetic import RouteBindingSpec, RouteBindingState
 from fqdn_updater.domain.run_artifact import FailureDetail, RunStep
 
 
@@ -57,16 +58,52 @@ class ServicePlanApplyService:
                 )
 
         if route_diff.has_changes:
-            try:
-                if plan.remove_route:
-                    client.remove_route(route_diff.current_binding)
-                elif plan.desired_route_binding is not None:
+            current_binding = route_diff.current_binding
+            current_matches_desired = (
+                plan.desired_route_binding is not None
+                and _route_binding_matches_desired(
+                    current=current_binding,
+                    desired=plan.desired_route_binding,
+                )
+            )
+            bindings_to_remove = []
+            if current_binding.exists and (
+                plan.remove_route
+                or plan.desired_route_binding is None
+                or not current_matches_desired
+            ):
+                bindings_to_remove.append(current_binding)
+            bindings_to_remove.extend(current_binding.duplicate_bindings)
+
+            for binding in bindings_to_remove:
+                try:
+                    client.remove_route(binding)
+                except Exception as exc:
+                    return self._write_failure(
+                        step=RunStep.REMOVE_ROUTE,
+                        mapping=mapping,
+                        exc=exc,
+                    )
+
+            if (
+                not plan.remove_route
+                and plan.desired_route_binding is not None
+                and not current_matches_desired
+            ):
+                try:
                     client.ensure_route(plan.desired_route_binding)
-            except Exception as exc:
+                except Exception as exc:
+                    return self._write_failure(
+                        step=RunStep.ENSURE_ROUTE,
+                        mapping=mapping,
+                        exc=exc,
+                    )
+
+            if plan.remove_route and not bindings_to_remove:
                 return self._write_failure(
-                    step=RunStep.REMOVE_ROUTE if plan.remove_route else RunStep.ENSURE_ROUTE,
+                    step=RunStep.REMOVE_ROUTE,
                     mapping=mapping,
-                    exc=exc,
+                    exc=RuntimeError("route binding is missing"),
                 )
 
         if plan.static_route_diff is not None:
@@ -121,3 +158,18 @@ class ServicePlanApplyService:
             message=f"Write stage failed for service '{mapping.service_key}': {exc}",
             occurred_at=self._failure_time_provider() if self._failure_time_provider else None,
         )
+
+
+def _route_binding_matches_desired(
+    *,
+    current: RouteBindingState,
+    desired: RouteBindingSpec,
+) -> bool:
+    return (
+        current.exists
+        and current.route_target_type == desired.route_target_type
+        and current.route_target_value == desired.route_target_value
+        and current.route_interface == desired.route_interface
+        and current.auto == desired.auto
+        and current.exclusive == desired.exclusive
+    )

@@ -129,6 +129,10 @@ class RouteBindingState(BaseModel):
     route_interface: str | None = None
     auto: bool = False
     exclusive: bool = False
+    duplicate_bindings: tuple[RouteBindingState, ...] = Field(
+        default_factory=tuple,
+        exclude_if=lambda value: not value,
+    )
 
     @field_validator("object_group_name", mode="before")
     @classmethod
@@ -145,6 +149,8 @@ class RouteBindingState(BaseModel):
     @model_validator(mode="after")
     def _validate_state_shape(self) -> RouteBindingState:
         if not self.exists:
+            if self.duplicate_bindings:
+                raise ValueError("duplicate_bindings must be empty when exists is false")
             if self.route_target_type is not None:
                 raise ValueError("route_target_type must be unset when exists is false")
             if self.route_target_value is not None:

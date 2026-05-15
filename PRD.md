@@ -91,7 +91,7 @@ Out of scope:
 - CIDR entries пишутся в managed IPv4/IPv6 static routes с comment prefix `fqdn-updater:<service>`.
 - Для RCI большие command batches должны чанковаться.
 - После успешных write-изменений вызывается `system configuration save`.
-- Default route write выставляет выбранному интерфейсу `ip global 65534` и понижает только другие интерфейсы с конфликтующим `65534`; `no ip global` не используется.
+- Default route write делает выбранный интерфейс единственным с наивысшим `ip global` priority. Если он уже единственный с максимальным priority, write не нужен; `65534` используется только когда требуется изменение. `no ip global` не используется.
 - Списки выше 300 FQDN entries шардируются в deterministic managed groups; общий FQDN plan выше 1024 entries на роутер отклоняется до любой записи.
 
 ### Dry run
@@ -143,7 +143,7 @@ Out of scope:
 - `Router`: `id`, `name`, `rci_url`, `username`, `auth_method`, `password_env`, `password_file`, `enabled`, `tags`, `timeout_seconds`, `allowed_source_ips`.
 - `ServiceDefinition`: `key`, `sources` или `source_urls` + `format`, `enabled`, `description`.
 - `ServiceSource`: `url`, `format`, `include_domain_suffixes`, `exclude_domain_suffixes`.
-- `RouterServiceMapping`: `router_id`, `service_key`, `object_group_name`, `route_target_type`, `route_target_value`, `route_interface`, `exclusive`, `auto`, `managed`.
+- `RouterServiceMapping`: `router_id`, `service_key`, `object_group_name`, `route_target_type`, `route_target_value`, `route_interface`, `exclusive`, `auto`, `managed`, `enabled`.
 - `Runtime`: `artifacts_dir`, `logs_dir`, `state_dir`, `secrets_env_file`, `log_format`, `schedule`.
 - `RunArtifact`: `run_id`, timestamps, `trigger`, `mode`, `status`, router/service results.
 

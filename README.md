@@ -19,6 +19,7 @@
 - Только сгенерированные стойкие пароли для RCI API.
 - Любой apply сначала читает текущее состояние роутера, строит deterministic diff и только затем пишет изменения.
 - Инструмент меняет только managed object-group, DNS route bindings, static routes и router-level `default_route`, описанные в `config.json`.
+- Если снять список в панели, его managed mapping остаётся как `enabled=false`, и следующий `sync` удалит только связанные с ним наши группы и маршруты на Keenetic.
 - `status`, `dry-run`, журнал и read-only проверки панели не выполняют удалённых write-операций.
 - В текущем scope нет web UI, daemon-процесса, уведомлений, SSH production transport и поддержки не-Keenetic устройств.
 
@@ -27,7 +28,7 @@
 На чистой Ubuntu 22.04 и новее используйте versioned release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.4/install.sh | sudo bash -s -- --version v1.0.4
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.0/install.sh | sudo bash -s -- --version v1.1.0
 ```
 
 Если installer запущен без `--version`, он установит latest GitHub Release. Если latest release недоступен или ответ GitHub некорректен, установка завершится с ошибкой до скачивания кода проекта.
@@ -49,13 +50,13 @@ fqdn-updater update
 Для фиксации на конкретном release tag:
 
 ```bash
-fqdn-updater update --version v1.0.4
+fqdn-updater update --version v1.1.0
 ```
 
 Если локальный installer отсутствует или недоступен для чтения, wrapper завершится с ошибкой и покажет команду ручной переустановки для Ubuntu 22.04+:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.4/install.sh | sudo bash -s -- --version v1.0.4
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.0/install.sh | sudo bash -s -- --version v1.1.0
 ```
 
 ## Первый запуск

@@ -214,6 +214,7 @@ class RouterServiceMappingConfig(BaseModel):
     exclusive: bool = True
     auto: bool = True
     managed: bool = True
+    enabled: bool = True
 
     @field_validator(
         "router_id",
