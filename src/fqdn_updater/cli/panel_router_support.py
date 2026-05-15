@@ -45,15 +45,22 @@ DIRECT_ROUTE_SELECTION_KEYS = DIRECT_SERVICE_KEYS | frozenset({"google_ai", "you
 DEFAULT_SELECTED_DIRECT_SERVICES = DIRECT_SERVICE_KEYS
 DEFAULT_INTERFACE_NAME = "Wireguard0"
 DEFAULT_ROUTE_INTERFACE_LABEL = "Интерфейс маршрутизации по умолчанию"
+FQDN_LIST_INTERFACE_LABEL = "Интерфейс для маршрутизации fqdn-списков"
 DEFAULT_RCI_TIMEOUT_SECONDS = 30
+FQDN_LIST_INTERFACE_HINT_LINES = (
+    "Выбирите интерфейс через который будет осуществляться маршрутизация трафика для выбранных "
+    "fqdn-списков",
+)
 SERVICE_SELECTION_HINT_LINES = (
     "Для каждого выбранного сервиса будет создан свой список в разделе «Маршрутизация» Keenetic. "
     "При выборе youtube и google-ai вы сможете указать для них отдельный маршрут.",
+    "Лимит Keenetic: общее количество доменов - 1024 записи, записей subnets - 4000.",
 )
 DIRECT_ROUTE_SELECTION_HINT_LINES = (
     "Для каждого выбранного сервиса будет создан свой список в разделе «Маршрутизация» Keenetic. "
     "В этом режиме direct RU outside и direct noVPN будут идти напрямую через ISP, а "
     "для youtube и google-ai можно указать отдельный маршрут.",
+    "Лимит Keenetic: общее количество доменов - 1024 записи, записей subnets - 4000.",
 )
 ADD_ROUTER_HINT_LINES = ("Введите имя нового маршрутизатора.",)
 ADD_ROUTER_RCI_URL_HINT_LINES = (
@@ -93,6 +100,7 @@ BASE_ROUTE_INTERFACE_HINT_LINES = (
 GOOGLE_AI_OVERRIDE_HINT_LINES = (
     "Для корректной работы AI сервисов от Google можно указать другой отдельный интерфейс.",
 )
+YOUTUBE_OVERRIDE_HINT_LINES = ("Для YouTube можно указать другой отдельный интерфейс.",)
 
 
 @dataclass(frozen=True)
@@ -113,10 +121,13 @@ class RouteTargetDraft:
 class MappingPlan:
     default_target: RouteTargetDraft
     google_ai_target: RouteTargetDraft | None = None
+    youtube_target: RouteTargetDraft | None = None
 
     def target_for_service(self, service_key: str) -> RouteTargetDraft:
         if service_key == "google_ai" and self.google_ai_target is not None:
             return self.google_ai_target
+        if service_key == "youtube" and self.youtube_target is not None:
+            return self.youtube_target
         return self.default_target
 
 
@@ -141,11 +152,11 @@ def partition_router_mappings(
 def derive_mapping_plan_defaults(
     *,
     editable_mappings: list[RouterServiceMappingConfig],
-) -> tuple[RouteTargetDraft, bool, RouteTargetDraft | None]:
+) -> tuple[RouteTargetDraft, bool, RouteTargetDraft | None, RouteTargetDraft | None]:
     default_targets = [
         _mapping_route_target(mapping)
         for mapping in sorted(editable_mappings, key=lambda item: item.service_key)
-        if mapping.service_key != "google_ai"
+        if mapping.service_key not in {"google_ai", "youtube"}
     ]
     unique_default_targets = {
         (
@@ -160,14 +171,18 @@ def derive_mapping_plan_defaults(
     if default_targets:
         default_target = default_targets[0]
     else:
-        google_ai_mapping = next(
-            (mapping for mapping in editable_mappings if mapping.service_key == "google_ai"),
+        service_specific_mapping = next(
+            (
+                mapping
+                for mapping in editable_mappings
+                if mapping.service_key in {"google_ai", "youtube"}
+            ),
             None,
         )
-        if google_ai_mapping is None:
+        if service_specific_mapping is None:
             default_target = RouteTargetDraft("interface", DEFAULT_INTERFACE_NAME, None)
         else:
-            default_target = _mapping_route_target(google_ai_mapping)
+            default_target = _mapping_route_target(service_specific_mapping)
 
     google_ai_override = None
     google_ai_mapping = next(
@@ -179,7 +194,17 @@ def derive_mapping_plan_defaults(
         if candidate_target != default_target:
             google_ai_override = candidate_target
 
-    return default_target, has_inconsistent_default, google_ai_override
+    youtube_override = None
+    youtube_mapping = next(
+        (mapping for mapping in editable_mappings if mapping.service_key == "youtube"),
+        None,
+    )
+    if youtube_mapping is not None:
+        candidate_target = _mapping_route_target(youtube_mapping)
+        if candidate_target != default_target:
+            youtube_override = candidate_target
+
+    return default_target, has_inconsistent_default, google_ai_override, youtube_override
 
 
 def default_interface_target_value(default_target: RouteTargetDraft) -> str:

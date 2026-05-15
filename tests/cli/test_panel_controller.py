@@ -83,6 +83,8 @@ class _FakeInterfaceDiscoveryService:
         self.route_result = route_result or RouteTargetDiscoveryResult(
             router_id="router-1", candidates=()
         )
+        self.interface_calls: list[str] = []
+        self.wireguard_calls: list[str] = []
 
     def discover_interfaces(
         self,
@@ -90,6 +92,7 @@ class _FakeInterfaceDiscoveryService:
         router,
         password_override: str | None = None,
     ) -> InterfaceDiscoveryResult:
+        self.interface_calls.append(router.id)
         return InterfaceDiscoveryResult(router_id=router.id, interfaces=self.interfaces)
 
     def discover_wireguard_targets(
@@ -98,6 +101,7 @@ class _FakeInterfaceDiscoveryService:
         router,
         password_override: str | None = None,
     ) -> RouteTargetDiscoveryResult:
+        self.wireguard_calls.append(router.id)
         return self.route_result
 
 
@@ -1033,6 +1037,234 @@ def test_direct_groups_use_provider_interface_without_extra_prompt(tmp_path) -> 
     assert "WireGuard discovery" not in console.export_text()
 
 
+def test_provider_default_route_prompts_fqdn_list_interface_from_global_interfaces(
+    tmp_path,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1", "ISP", "Wireguard0", "OpenVPN0", "Wireguard1", "back"],
+        checkbox_answers=[["telegram", "google_ai", "youtube"]],
+        confirm_answers=[True, True, True],
+    )
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+                "default_route": {"interface": "ISP", "managed": True},
+            }
+        ],
+        services=[
+            {
+                "key": "telegram",
+                "source_urls": ["https://example.com/telegram.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "google_ai",
+                "source_urls": ["https://example.com/google-ai.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "youtube",
+                "source_urls": ["https://example.com/youtube.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+        ],
+    )
+    SecretEnvFile(path=tmp_path / ".env.secrets").write_value(
+        key="ROUTER_ONE_SECRET",
+        value="existing-secret",
+    )
+    fake_discovery = _FakeInterfaceDiscoveryService(
+        (
+            RouterInterfaceState(
+                value="Home",
+                display_name="Home",
+                interface_type="Bridge",
+                status="up",
+                global_enabled=False,
+            ),
+            RouterInterfaceState(
+                value="ISP",
+                display_name="ISP",
+                interface_type="Vlan",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=True,
+                global_priority=700,
+            ),
+            RouterInterfaceState(
+                value="Wireguard0",
+                display_name="Wireguard0",
+                interface_type="Wireguard",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=False,
+                global_priority=350,
+            ),
+            RouterInterfaceState(
+                value="OpenVPN0",
+                display_name="OpenVPN0",
+                interface_type="OpenVPN",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=False,
+                global_priority=250,
+            ),
+            RouterInterfaceState(
+                value="Wireguard1",
+                display_name="Wireguard1",
+                interface_type="Wireguard",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=False,
+                global_priority=200,
+            ),
+        )
+    )
+    controller._route_target_discovery_service = fake_discovery  # type: ignore[attr-defined]
+
+    controller._lists_menu()
+
+    fqdn_interface_call = prompts.select_calls[2]
+    assert fqdn_interface_call["message"] == panel_router_support.FQDN_LIST_INTERFACE_LABEL
+    assert fqdn_interface_call["hint_lines"] == panel_router_support.FQDN_LIST_INTERFACE_HINT_LINES
+    assert fqdn_interface_call["choices"] == ["Wireguard0", "OpenVPN0", "Wireguard1", "__back__"]
+    google_ai_interface_call = prompts.select_calls[3]
+    assert google_ai_interface_call["message"] == "Route target для google_ai"
+    assert google_ai_interface_call["choices"] == [
+        "Wireguard0",
+        "OpenVPN0",
+        "Wireguard1",
+        "__back__",
+    ]
+    youtube_interface_call = prompts.select_calls[4]
+    assert youtube_interface_call["message"] == "Route target для youtube"
+    assert youtube_interface_call["choices"] == [
+        "Wireguard0",
+        "OpenVPN0",
+        "Wireguard1",
+        "__back__",
+    ]
+    joined_titles = "\n".join(
+        title
+        for call in (fqdn_interface_call, google_ai_interface_call, youtube_interface_call)
+        for title in call["choice_titles"]
+    )
+    assert "ISP" not in joined_titles
+    assert "Home" not in joined_titles
+    assert "Ввести интерфейс вручную" not in joined_titles
+    assert [call["message"] for call in prompts.confirm_calls[:2]] == [
+        "Использовать отдельный маршрут для google_ai?",
+        "Использовать отдельный маршрут для youtube?",
+    ]
+    assert fake_discovery.wireguard_calls == []
+    assert "WireGuard discovery" not in console.export_text()
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    mappings_by_service = {mapping["service_key"]: mapping for mapping in payload["mappings"]}
+    assert mappings_by_service["telegram"]["route_target_value"] == "Wireguard0"
+    assert mappings_by_service["google_ai"]["route_target_value"] == "OpenVPN0"
+    assert mappings_by_service["youtube"]["route_target_value"] == "Wireguard1"
+
+
+def test_provider_default_route_skips_unselected_google_ai_and_youtube_steps(
+    tmp_path,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1", "ISP", "Wireguard0", "back"],
+        checkbox_answers=[["telegram"]],
+        confirm_answers=[True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+                "default_route": {"interface": "ISP", "managed": True},
+            }
+        ],
+        services=[
+            {
+                "key": "telegram",
+                "source_urls": ["https://example.com/telegram.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "google_ai",
+                "source_urls": ["https://example.com/google-ai.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "youtube",
+                "source_urls": ["https://example.com/youtube.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+        ],
+    )
+    SecretEnvFile(path=tmp_path / ".env.secrets").write_value(
+        key="ROUTER_ONE_SECRET",
+        value="existing-secret",
+    )
+    controller._route_target_discovery_service = _FakeInterfaceDiscoveryService(  # type: ignore[attr-defined]
+        (
+            RouterInterfaceState(
+                value="ISP",
+                display_name="ISP",
+                interface_type="Vlan",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=True,
+                global_priority=700,
+            ),
+            RouterInterfaceState(
+                value="Wireguard0",
+                display_name="Wireguard0",
+                interface_type="Wireguard",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=False,
+                global_priority=350,
+            ),
+        )
+    )
+
+    controller._lists_menu()
+
+    assert [call["message"] for call in prompts.select_calls] == [
+        "Выберите маршрутизатор для списков и маршрутов",
+        "Интерфейс маршрутизации по умолчанию",
+        panel_router_support.FQDN_LIST_INTERFACE_LABEL,
+        "Списки и маршруты сохранены",
+    ]
+    assert [call["message"] for call in prompts.confirm_calls] == [
+        "Сохранить списки и маршруты для маршрутизатора?"
+    ]
+
+
 def test_password_confirmation_hint_mentions_access_checkbox_and_save() -> None:
     assert (
         "Поставьте галочку в столбце «Доступ» напротив нового пользователя и сохраните подключение."
@@ -1160,6 +1392,7 @@ def test_add_router_service_selection_uses_source_counts_and_fixed_hint_lines(
         "Для каждого выбранного сервиса будет создан свой список в разделе «Маршрутизация» "
         "Keenetic. При выборе youtube и google-ai вы сможете указать для них отдельный "
         "маршрут.",
+        "Лимит Keenetic: общее количество доменов - 1024 записи, записей subnets - 4000.",
     )
     assert checkbox_call["table_header"] == panel_formatting._service_selection_header()
     assert checkbox_call["table_summary"] == (f"{'Итого выбрано':<22} | {3:>7} | {3:>7} | {2:>7}")

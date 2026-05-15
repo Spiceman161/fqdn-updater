@@ -465,6 +465,7 @@ class PanelController:
                         mapping_plan = panel_router_support.MappingPlan(
                             default_target=mapping_plan.default_target,
                             google_ai_target=google_ai_target,
+                            youtube_target=mapping_plan.youtube_target,
                         )
             elif default_is_vpn:
                 provider_default = panel_router_support.first_provider_interface_value(
@@ -482,6 +483,11 @@ class PanelController:
                     editable_mappings=editable_mappings,
                     selected_services=selected_services,
                     missing_secret_message=None,
+                    label=panel_router_support.FQDN_LIST_INTERFACE_LABEL,
+                    hint_lines=panel_router_support.FQDN_LIST_INTERFACE_HINT_LINES,
+                    vpn_only=False,
+                    allow_manual=False,
+                    excluded_interface_values=frozenset({default_route_interface}),
                     abort_on_discovery_error=True,
                 )
             if mapping_plan is None:
@@ -524,6 +530,14 @@ class PanelController:
                     (
                         mapping_plan.google_ai_target.summary()
                         if mapping_plan is not None and mapping_plan.google_ai_target is not None
+                        else "нет"
+                    ),
+                ),
+                (
+                    "youtube override",
+                    (
+                        mapping_plan.youtube_target.summary()
+                        if mapping_plan is not None and mapping_plan.youtube_target is not None
                         else "нет"
                     ),
                 ),
@@ -731,7 +745,11 @@ class PanelController:
         selected_services: set[str],
         missing_secret_message: str | None = None,
         discovery_password: str | None = None,
+        label: str = panel_router_support.DEFAULT_ROUTE_INTERFACE_LABEL,
         hint_lines: tuple[str, ...] | None = None,
+        vpn_only: bool = True,
+        allow_manual: bool = True,
+        excluded_interface_values: frozenset[str] = frozenset(),
         abort_on_discovery_error: bool = False,
     ) -> panel_router_support.MappingPlan | None:
         return self._router_flow.prompt_mapping_plan(
@@ -741,7 +759,11 @@ class PanelController:
             selected_services=selected_services,
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
+            label=label,
             hint_lines=hint_lines,
+            vpn_only=vpn_only,
+            allow_manual=allow_manual,
+            excluded_interface_values=excluded_interface_values,
             abort_on_discovery_error=abort_on_discovery_error,
         )
 
@@ -755,6 +777,9 @@ class PanelController:
         missing_secret_message: str | None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        vpn_only: bool = True,
+        allow_manual: bool = True,
+        excluded_interface_values: frozenset[str] = frozenset(),
         abort_on_discovery_error: bool = False,
     ) -> panel_router_support.RouteTargetDraft | None:
         return self._router_flow.prompt_route_target(
@@ -765,6 +790,9 @@ class PanelController:
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
             hint_lines=hint_lines,
+            vpn_only=vpn_only,
+            allow_manual=allow_manual,
+            excluded_interface_values=excluded_interface_values,
             abort_on_discovery_error=abort_on_discovery_error,
         )
 
@@ -778,6 +806,9 @@ class PanelController:
         missing_secret_message: str | None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        vpn_only: bool = True,
+        allow_manual: bool = True,
+        excluded_interface_values: frozenset[str] = frozenset(),
         abort_on_discovery_error: bool = False,
     ) -> panel_router_support.RouteTargetDraft | None:
         return self._router_flow.prompt_interface_target(
@@ -788,6 +819,9 @@ class PanelController:
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
             hint_lines=hint_lines,
+            vpn_only=vpn_only,
+            allow_manual=allow_manual,
+            excluded_interface_values=excluded_interface_values,
             abort_on_discovery_error=abort_on_discovery_error,
         )
 

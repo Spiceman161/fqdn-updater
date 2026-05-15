@@ -43,8 +43,11 @@ from fqdn_updater.cli.panel_router_support import (
     DIRECT_ROUTE_SELECTION_KEYS,
     DIRECT_SERVICE_KEYS,
     EDIT_ROUTER_PASSWORD_HINT_LINES,
+    FQDN_LIST_INTERFACE_HINT_LINES,
+    FQDN_LIST_INTERFACE_LABEL,
     GOOGLE_AI_OVERRIDE_HINT_LINES,
     SERVICE_SELECTION_HINT_LINES,
+    YOUTUBE_OVERRIDE_HINT_LINES,
     MappingPlan,
     RouteTargetDraft,
     default_interface_target_value,
@@ -301,6 +304,7 @@ class PanelRouterFlow:
                         mapping_plan = MappingPlan(
                             default_target=mapping_plan.default_target,
                             google_ai_target=google_ai_target,
+                            youtube_target=mapping_plan.youtube_target,
                         )
             elif default_is_vpn:
                 provider_default = first_provider_interface_value(discovered_interfaces)
@@ -314,7 +318,11 @@ class PanelRouterFlow:
                     editable_mappings=[],
                     selected_services=selected_services,
                     discovery_password=password,
-                    hint_lines=ADD_ROUTER_HINT_LINES,
+                    label=FQDN_LIST_INTERFACE_LABEL,
+                    hint_lines=FQDN_LIST_INTERFACE_HINT_LINES,
+                    vpn_only=False,
+                    allow_manual=False,
+                    excluded_interface_values=frozenset({default_route_interface}),
                 )
             if mapping_plan is None:
                 return False
@@ -347,6 +355,14 @@ class PanelRouterFlow:
                     (
                         mapping_plan.google_ai_target.summary()
                         if mapping_plan is not None and mapping_plan.google_ai_target is not None
+                        else "нет"
+                    ),
+                ),
+                (
+                    "youtube override",
+                    (
+                        mapping_plan.youtube_target.summary()
+                        if mapping_plan is not None and mapping_plan.youtube_target is not None
                         else "нет"
                     ),
                 ),
@@ -792,26 +808,36 @@ class PanelRouterFlow:
         selected_services: set[str],
         missing_secret_message: str | None = None,
         discovery_password: str | None = None,
+        label: str = DEFAULT_ROUTE_INTERFACE_LABEL,
         hint_lines: tuple[str, ...] | None = None,
+        vpn_only: bool = True,
+        allow_manual: bool = True,
+        excluded_interface_values: frozenset[str] = frozenset(),
         abort_on_discovery_error: bool = False,
     ) -> MappingPlan | None:
-        default_target, has_inconsistent_default, google_ai_override = derive_mapping_plan_defaults(
-            editable_mappings=editable_mappings,
-        )
+        (
+            default_target,
+            has_inconsistent_default,
+            google_ai_override,
+            youtube_override,
+        ) = derive_mapping_plan_defaults(editable_mappings=editable_mappings)
         if has_inconsistent_default:
             self._console.print(
-                "[yellow]У текущих non-google_ai mappings разные route targets. "
+                "[yellow]У текущих базовых mappings разные route targets. "
                 "После сохранения они будут нормализованы к одному базовому target.[/yellow]"
             )
 
         default_target = self.prompt_route_target(
             config=config,
             router=router,
-            label=DEFAULT_ROUTE_INTERFACE_LABEL,
+            label=label,
             default_target=default_target,
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
-            hint_lines=BASE_ROUTE_INTERFACE_HINT_LINES,
+            hint_lines=BASE_ROUTE_INTERFACE_HINT_LINES if hint_lines is None else hint_lines,
+            vpn_only=vpn_only,
+            allow_manual=allow_manual,
+            excluded_interface_values=excluded_interface_values,
             abort_on_discovery_error=abort_on_discovery_error,
         )
         if default_target is None:
@@ -838,12 +864,48 @@ class PanelRouterFlow:
                     missing_secret_message=missing_secret_message,
                     discovery_password=discovery_password,
                     hint_lines=hint_lines,
+                    vpn_only=vpn_only,
+                    allow_manual=allow_manual,
+                    excluded_interface_values=excluded_interface_values,
                     abort_on_discovery_error=abort_on_discovery_error,
                 )
                 if google_ai_target is None:
                     return None
 
-        return MappingPlan(default_target=default_target, google_ai_target=google_ai_target)
+        youtube_target = None
+        has_non_youtube_services = any(
+            service_key != "youtube" for service_key in selected_services
+        )
+        if "youtube" in selected_services and has_non_youtube_services:
+            use_override = self._prompts.confirm(
+                message="Использовать отдельный маршрут для youtube?",
+                default=youtube_override is not None,
+                hint_lines=YOUTUBE_OVERRIDE_HINT_LINES,
+            )
+            if use_override is None:
+                return None
+            if use_override:
+                youtube_target = self.prompt_route_target(
+                    config=config,
+                    router=router,
+                    label="Route target для youtube",
+                    default_target=youtube_override or default_target,
+                    missing_secret_message=missing_secret_message,
+                    discovery_password=discovery_password,
+                    hint_lines=hint_lines,
+                    vpn_only=vpn_only,
+                    allow_manual=allow_manual,
+                    excluded_interface_values=excluded_interface_values,
+                    abort_on_discovery_error=abort_on_discovery_error,
+                )
+                if youtube_target is None:
+                    return None
+
+        return MappingPlan(
+            default_target=default_target,
+            google_ai_target=google_ai_target,
+            youtube_target=youtube_target,
+        )
 
     def prompt_route_target(
         self,
@@ -855,6 +917,9 @@ class PanelRouterFlow:
         missing_secret_message: str | None,
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
+        vpn_only: bool = True,
+        allow_manual: bool = True,
+        excluded_interface_values: frozenset[str] = frozenset(),
         abort_on_discovery_error: bool = False,
     ) -> RouteTargetDraft | None:
         return self.prompt_interface_target(
@@ -865,6 +930,9 @@ class PanelRouterFlow:
             missing_secret_message=missing_secret_message,
             discovery_password=discovery_password,
             hint_lines=hint_lines,
+            vpn_only=vpn_only,
+            allow_manual=allow_manual,
+            excluded_interface_values=excluded_interface_values,
             abort_on_discovery_error=abort_on_discovery_error,
         )
 
@@ -879,6 +947,8 @@ class PanelRouterFlow:
         discovery_password: str | None = None,
         hint_lines: tuple[str, ...] | None = None,
         vpn_only: bool = True,
+        allow_manual: bool = True,
+        excluded_interface_values: frozenset[str] = frozenset(),
         abort_on_discovery_error: bool = False,
     ) -> RouteTargetDraft | None:
         if vpn_only:
@@ -898,6 +968,12 @@ class PanelRouterFlow:
             )
             candidates = _route_candidates_from_interfaces(_global_route_interfaces(interfaces))
             render_candidates = False
+        if excluded_interface_values:
+            candidates = tuple(
+                candidate
+                for candidate in candidates
+                if candidate.value not in excluded_interface_values
+            )
 
         if not candidates and abort_on_discovery_error and self._last_discovery_failed:
             return None
@@ -911,15 +987,17 @@ class PanelRouterFlow:
                 )
                 for candidate in candidates
             ]
-            choices.append(
-                _flow_choice(panel_formatting.ICON_EDIT, "Ввести интерфейс вручную", "manual")
-            )
+            if allow_manual:
+                choices.append(
+                    _flow_choice(panel_formatting.ICON_EDIT, "Ввести интерфейс вручную", "manual")
+                )
             choices.append(_flow_choice(panel_formatting.ICON_BACK, "Назад", "__back__"))
-            default_choice = (
-                default_value
-                if any(candidate.value == default_value for candidate in candidates)
-                else "manual"
-            )
+            if any(candidate.value == default_value for candidate in candidates):
+                default_choice = default_value
+            elif allow_manual:
+                default_choice = "manual"
+            else:
+                default_choice = candidates[0].value
             selected_value = self._prompts.select(
                 message=label,
                 choices=choices,
@@ -934,6 +1012,9 @@ class PanelRouterFlow:
                     route_target_value=selected_value,
                     route_interface=None,
                 )
+
+        if not allow_manual:
+            return None
 
         manual_value = self._prompts.text(
             message=label,
