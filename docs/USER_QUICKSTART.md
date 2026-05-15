@@ -5,7 +5,7 @@ Happy path для первого рабочего запуска FQDN-updater н
 ## 1. Установите проект
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.0.4/install.sh | sudo bash -s -- --version v1.0.4
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.0/install.sh | sudo bash -s -- --version v1.1.0
 ```
 
 Проект будет установлен в `/opt/fqdn-updater`. Installer сохранит существующие `config.json`, `.env*`, `data/`, `secrets/` и `.venv`, если они уже есть. GitHub Release должен содержать `fqdn-updater-<tag>.tar.gz` и `fqdn-updater-<tag>.tar.gz.sha256`; installer проверяет SHA256 перед распаковкой.
@@ -62,6 +62,10 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 Выберите сервисные списки, которые нужно вести на этом роутере. Для каждого выбранного сервиса FQDN-updater создаёт managed mapping.
 
 Domain entries попадут в FQDN object-groups и DNS-proxy route bindings. CIDR entries попадут в managed static routes с comment prefix `fqdn-updater:<service>`.
+
+Если позже снять отметку с сервиса в панели, mapping останется в `config.json`
+как `enabled=false`, а следующий `sync` удалит только его managed object-groups,
+route bindings и static routes.
 
 Панель показывает счётчики доменов, IPv4 и IPv6, а также FQDN-лимиты Keenetic:
 

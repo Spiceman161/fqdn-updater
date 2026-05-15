@@ -15,6 +15,7 @@ def build_route_binding_diff(
         or actual_state.route_interface != desired_binding.route_interface
         or actual_state.auto != desired_binding.auto
         or actual_state.exclusive != desired_binding.exclusive
+        or bool(actual_state.duplicate_bindings)
     )
 
     return RouteBindingDiff(

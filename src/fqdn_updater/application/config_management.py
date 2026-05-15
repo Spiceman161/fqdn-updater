@@ -219,6 +219,7 @@ class ConfigManagementService:
             "exclusive": exclusive,
             "auto": auto,
             "managed": True,
+            "enabled": True,
         }
 
         mappings = payload["mappings"]

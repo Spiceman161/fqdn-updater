@@ -32,8 +32,9 @@ Production transport только один: KeenDNS RCI по HTTPS с HTTP Diges
 - Service может использовать новый формат `sources` или legacy `source_urls` + `format`, но не оба сразу.
 - Source formats: `raw_domain_list`, `raw_cidr_list`, `mixed`.
 - Domain suffix filters работают только для domain sources.
-- `sync` применяет только mappings с `managed=true`.
-- `routers[].default_route` опционален; при `managed=true` sync читает `show interface`, ставит выбранному интерфейсу priority `65534` и понижает только другие интерфейсы с конфликтующим `65534`.
+- `sync` применяет только mappings с `managed=true`; `enabled=false` у managed mapping
+  означает cleanup ранее созданных object-groups, route bindings и static routes этого service.
+- `routers[].default_route` опционален; при `managed=true` sync читает `show interface` и делает выбранный интерфейс единственным с наивысшим priority. Если выбранный интерфейс уже единственный с максимальным priority, write не нужен; `65534` используется только когда требуется изменение. `no ip global` не используется.
 - `dry-run` не пишет на роутер.
 - Любой apply делает read-before-write и пишет минимальный diff.
 - Выключенные routers (`enabled=false`) не читаются и не пишутся; в новых run artifacts

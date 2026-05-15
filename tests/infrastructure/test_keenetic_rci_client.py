@@ -645,7 +645,7 @@ def test_get_dns_proxy_status_raises_runtime_error_for_invalid_shape(router_conf
         client.get_dns_proxy_status()
 
 
-def test_get_route_binding_raises_runtime_error_for_multiple_matches(router_config) -> None:
+def test_get_route_binding_preserves_duplicate_matches_for_cleanup(router_config) -> None:
     payload = [
         {
             "show": {
@@ -670,11 +670,11 @@ def test_get_route_binding_raises_runtime_error_for_multiple_matches(router_conf
     ]
     client, _ = _make_client(router_config, payload)
 
-    with pytest.raises(
-        RuntimeError,
-        match=r"get_route_binding\(svc-telegram\) failed: expected at most one route binding",
-    ):
-        client.get_route_binding("svc-telegram")
+    state = client.get_route_binding("svc-telegram")
+
+    assert state.route_target_value == "Wireguard0"
+    assert len(state.duplicate_bindings) == 1
+    assert state.duplicate_bindings[0].route_target_value == "Other0"
 
 
 def test_ensure_object_group_posts_single_create_command(router_config) -> None:

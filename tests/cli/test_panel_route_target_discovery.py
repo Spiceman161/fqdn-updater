@@ -263,6 +263,7 @@ def test_build_router_mappings_preserves_existing_metadata_and_google_override(t
             "exclusive": True,
             "auto": True,
             "managed": True,
+            "enabled": True,
         },
         {
             "router_id": "router-1",
@@ -274,6 +275,7 @@ def test_build_router_mappings_preserves_existing_metadata_and_google_override(t
             "exclusive": False,
             "auto": False,
             "managed": True,
+            "enabled": True,
         },
     ]
 
@@ -336,6 +338,7 @@ def test_add_new_router_uses_draft_router_for_route_target_discovery(tmp_path, m
     assert payload["mappings"] == [
         {
             "auto": True,
+            "enabled": True,
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-telegram",

@@ -97,7 +97,7 @@ fqdn-updater mapping list --config config.json
 fqdn-updater mapping list --config config.json --output json
 ```
 
-`mapping set` создаёт или заменяет mapping для пары `router_id` + `service_key` и всегда сохраняет его как `managed=true`.
+`mapping set` создаёт или заменяет mapping для пары `router_id` + `service_key` и всегда сохраняет его как `managed=true`, `enabled=true`.
 
 ## Schedule
 

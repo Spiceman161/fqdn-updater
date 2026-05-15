@@ -126,9 +126,11 @@ class ServiceSyncPlanner:
                     actual_route_binding=actual_route_binding,
                     ensure_route=bool(shard_desired_entries),
                     static_route_diff=static_route_diff if index == 0 else None,
-                    remove_object_group=index > 0
-                    and not shard_desired_entries
-                    and actual_state.exists,
+                    remove_object_group=(
+                        (not mapping.enabled or index > 0)
+                        and not shard_desired_entries
+                        and actual_state.exists
+                    ),
                 )
             )
 
@@ -165,7 +167,7 @@ class ServiceSyncPlanner:
                 desired_routes=static_route_specs,
                 actual_routes=actual_static_routes,
             ),
-            remove_object_group=False,
+            remove_object_group=not mapping.enabled and actual_state.exists,
         )
 
     def _validate_mapping(self, mapping: RouterServiceMappingConfig) -> None:

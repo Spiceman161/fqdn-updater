@@ -29,6 +29,7 @@ def test_apply_plan_preserves_write_order_for_route_and_static_changes() -> None
     assert client.write_calls == [
         "remove_entries:svc-telegram:old.example",
         "add_entries:svc-telegram:new.example",
+        "remove_route:svc-telegram:Other0",
         "ensure_route:svc-telegram",
         "remove_static_route:10.0.1.0/24",
         "ensure_static_route:10.0.0.0/24",
@@ -80,6 +81,52 @@ def test_apply_plan_ensures_missing_object_group_before_adding_entries() -> None
     ]
 
 
+def test_apply_plan_removes_duplicate_route_bindings_without_recreating_matching_route() -> None:
+    plan = _planner().plan_mapping(
+        mapping=_mapping(),
+        desired_entries=("keep.example",),
+        actual_states=_actual_states(
+            ObjectGroupState(
+                name="svc-telegram",
+                entries=("keep.example",),
+                exists=True,
+            )
+        ),
+        actual_route_bindings=_route_bindings(
+            RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="interface",
+                route_target_value="Wireguard0",
+                auto=True,
+                exclusive=True,
+                duplicate_bindings=(
+                    RouteBindingState(
+                        object_group_name="svc-telegram",
+                        exists=True,
+                        route_target_type="interface",
+                        route_target_value="Provider0",
+                        auto=True,
+                        exclusive=True,
+                    ),
+                ),
+            )
+        ),
+    )[0]
+    client = RecordingClient()
+
+    failure = ServicePlanApplyService().apply_plan(
+        logger=RecordingLogger(),
+        client=client,
+        router=_router(),
+        mapping=_mapping(),
+        plan=plan,
+    )
+
+    assert failure is None
+    assert client.write_calls == ["remove_route:svc-telegram:Provider0"]
+
+
 def test_apply_plan_stops_on_first_write_failure() -> None:
     occurred_at = datetime(2026, 4, 10, 9, 30, tzinfo=timezone.utc)
     client = RecordingClient(write_errors={("remove_entries", "svc-telegram"): "delete failed"})
@@ -127,7 +174,9 @@ class RecordingClient:
         self._raise_write_error("ensure_route", binding.object_group_name)
 
     def remove_route(self, binding) -> None:
-        self.write_calls.append(f"remove_route:{binding.object_group_name}")
+        self.write_calls.append(
+            f"remove_route:{binding.object_group_name}:{binding.route_target_value}"
+        )
         self._raise_write_error("remove_route", binding.object_group_name)
 
     def ensure_static_route(self, route: StaticRouteSpec) -> None:

@@ -133,6 +133,7 @@ The planner builds desired domain entries from normalized sources and config map
 - reject plans above total Keenetic FQDN limits before write;
 - shard service lists above one-group limit into deterministic managed group names;
 - remove stale managed shard routes when a list shrinks;
+- remove all object-groups and route bindings for managed mappings marked `enabled=false`;
 - never mutate groups not represented by managed mappings.
 
 ## 9. Route bindings and static routes

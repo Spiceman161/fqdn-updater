@@ -57,6 +57,7 @@ from fqdn_updater.cli.panel_router_support import (
     find_interface_state,
     first_provider_interface_value,
     is_missing_password_env_error,
+    partition_router_mappings,
 )
 from fqdn_updater.domain.config_schema import (
     AppConfig,
@@ -279,37 +280,27 @@ class PanelRouterFlow:
                 mapping_plan = MappingPlan(
                     default_target=RouteTargetDraft("interface", default_route_interface)
                 )
-                if "google_ai" in selected_services and any(
-                    service_key != "google_ai" for service_key in selected_services
-                ):
-                    use_override = self._prompts.confirm(
-                        message="Использовать отдельный маршрут для google_ai?",
-                        default=False,
-                        hint_lines=GOOGLE_AI_OVERRIDE_HINT_LINES,
-                    )
-                    if use_override is None:
-                        return False
-                    if use_override:
-                        google_ai_target = self.prompt_route_target(
-                            config=config,
-                            router=draft_router,
-                            label="Route target для google_ai",
-                            default_target=mapping_plan.default_target,
-                            missing_secret_message=None,
-                            discovery_password=password,
-                            hint_lines=ADD_ROUTER_HINT_LINES,
-                        )
-                        if google_ai_target is None:
-                            return False
-                        mapping_plan = MappingPlan(
-                            default_target=mapping_plan.default_target,
-                            google_ai_target=google_ai_target,
-                            youtube_target=mapping_plan.youtube_target,
-                        )
+                mapping_plan = self.prompt_mapping_overrides(
+                    config=config,
+                    router=draft_router,
+                    mapping_plan=mapping_plan,
+                    selected_services=selected_services,
+                    discovery_password=password,
+                    hint_lines=ADD_ROUTER_HINT_LINES,
+                )
             elif default_is_vpn:
                 provider_default = first_provider_interface_value(discovered_interfaces)
                 mapping_plan = MappingPlan(
                     default_target=RouteTargetDraft("interface", provider_default)
+                )
+                mapping_plan = self.prompt_mapping_overrides(
+                    config=config,
+                    router=draft_router,
+                    mapping_plan=mapping_plan,
+                    selected_services=selected_services,
+                    discovery_password=password,
+                    hint_lines=ADD_ROUTER_HINT_LINES,
+                    override_default_target=RouteTargetDraft("interface", default_route_interface),
                 )
             else:
                 mapping_plan = self.prompt_mapping_plan(
@@ -679,6 +670,220 @@ class PanelRouterFlow:
         )
         self._pause()
 
+    def lists_menu(self) -> None:
+        config = self._load_config()
+        router = self.select_router(
+            config=config,
+            message="Выберите маршрутизатор для списков и маршрутов",
+            back_title="Главное меню",
+        )
+        if router is None:
+            return
+
+        editable_mappings, preserved_mappings = partition_router_mappings(
+            config=config,
+            router_id=router.id,
+        )
+        previously_selected = {
+            mapping.service_key for mapping in editable_mappings if mapping.enabled
+        }
+        default_route_interface = self.prompt_default_route_interface(
+            config=config,
+            router=router,
+            default_value=router.default_route.interface if router.default_route else "",
+            missing_secret_message=None,
+            abort_on_discovery_error=True,
+        )
+        if default_route_interface is None:
+            self._pause_if_route_discovery_failed()
+            return
+        discovered_interfaces = self.cached_discovered_interfaces(router=router)
+        default_interface_state = find_interface_state(
+            interfaces=discovered_interfaces,
+            value=default_route_interface,
+        )
+        direct_services_available = _has_enabled_direct_services(config)
+        use_default_interface_for_mappings = False
+        default_is_vpn = default_interface_state.is_vpn_like if default_interface_state else None
+        if default_is_vpn is None and not direct_services_available:
+            default_is_vpn = False
+            use_default_interface_for_mappings = True
+        elif default_is_vpn is None:
+            default_is_vpn = self.prompt_default_route_mode()
+        if default_is_vpn is None:
+            return
+        if default_is_vpn and not direct_services_available:
+            use_default_interface_for_mappings = True
+            default_is_vpn = False
+        allowed_service_keys = (
+            DIRECT_ROUTE_SELECTION_KEYS
+            if default_is_vpn
+            else frozenset(
+                service.key for service in config.services if service.key not in DIRECT_SERVICE_KEYS
+            )
+        )
+        effective_previous_selection = (
+            previously_selected & DIRECT_ROUTE_SELECTION_KEYS
+            if default_is_vpn
+            else previously_selected - DIRECT_SERVICE_KEYS
+        )
+        if not effective_previous_selection:
+            effective_previous_selection = (
+                set(DEFAULT_SELECTED_DIRECT_SERVICES) if default_is_vpn else previously_selected
+            )
+        selected_services = self.prompt_service_selection(
+            config=config,
+            selected=effective_previous_selection,
+            allowed_service_keys=allowed_service_keys,
+            hint_lines=DIRECT_ROUTE_SELECTION_HINT_LINES
+            if default_is_vpn
+            else SERVICE_SELECTION_HINT_LINES,
+        )
+        if selected_services is None:
+            return
+
+        mapping_plan = None
+        if selected_services:
+            if use_default_interface_for_mappings:
+                mapping_plan = MappingPlan(
+                    default_target=RouteTargetDraft("interface", default_route_interface)
+                )
+                mapping_plan = self.prompt_mapping_overrides(
+                    config=config,
+                    router=router,
+                    mapping_plan=mapping_plan,
+                    selected_services=selected_services,
+                    missing_secret_message=None,
+                    abort_on_discovery_error=True,
+                )
+            elif default_is_vpn:
+                provider_default = first_provider_interface_value(discovered_interfaces)
+                mapping_plan = MappingPlan(
+                    default_target=RouteTargetDraft("interface", provider_default)
+                )
+                mapping_plan = self.prompt_mapping_overrides(
+                    config=config,
+                    router=router,
+                    mapping_plan=mapping_plan,
+                    selected_services=selected_services,
+                    missing_secret_message=None,
+                    abort_on_discovery_error=True,
+                    override_default_target=RouteTargetDraft("interface", default_route_interface),
+                )
+            else:
+                mapping_plan = self.prompt_mapping_plan(
+                    config=config,
+                    router=router,
+                    editable_mappings=editable_mappings,
+                    selected_services=selected_services,
+                    missing_secret_message=None,
+                    label=FQDN_LIST_INTERFACE_LABEL,
+                    hint_lines=FQDN_LIST_INTERFACE_HINT_LINES,
+                    vpn_only=False,
+                    allow_manual=False,
+                    excluded_interface_values=frozenset({default_route_interface}),
+                    abort_on_discovery_error=True,
+                )
+            if mapping_plan is None:
+                self._pause_if_route_discovery_failed()
+                return
+
+        editable_mapping_payloads = self.build_router_mappings(
+            router_id=router.id,
+            selected_services=selected_services,
+            existing_mappings={mapping.service_key: mapping for mapping in editable_mappings},
+            mapping_plan=mapping_plan,
+        )
+        cleanup_mapping_payloads = [
+            {
+                **mapping.model_dump(mode="json"),
+                "enabled": False,
+            }
+            for mapping in sorted(editable_mappings, key=lambda item: item.service_key)
+            if mapping.service_key not in selected_services
+        ]
+        full_mapping_payloads = [
+            *(mapping.model_dump(mode="json") for mapping in preserved_mappings),
+            *editable_mapping_payloads,
+            *cleanup_mapping_payloads,
+        ]
+
+        added_services = sorted(selected_services - previously_selected)
+        removed_services = sorted(previously_selected - selected_services)
+        kept_services = sorted(previously_selected & selected_services)
+        self._render_summary(
+            title="Проверка сохранения",
+            rows=[
+                ("Операция", "обновить списки и маршруты"),
+                ("Маршрутизатор", router.id),
+                ("Default route", f"interface:{default_route_interface}"),
+                ("Добавить", _format_service_list(added_services) or "нет"),
+                ("Удалить", _format_service_list(removed_services) or "нет"),
+                ("Оставить", _format_service_list(kept_services) or "нет"),
+                (
+                    "Сервисы после сохранения",
+                    _format_service_list(sorted(selected_services)) or "нет",
+                ),
+                (
+                    "Базовый target",
+                    mapping_plan.default_target.summary() if mapping_plan is not None else "нет",
+                ),
+                (
+                    "google_ai override",
+                    (
+                        mapping_plan.google_ai_target.summary()
+                        if mapping_plan is not None and mapping_plan.google_ai_target is not None
+                        else "нет"
+                    ),
+                ),
+                (
+                    "youtube override",
+                    (
+                        mapping_plan.youtube_target.summary()
+                        if mapping_plan is not None and mapping_plan.youtube_target is not None
+                        else "нет"
+                    ),
+                ),
+                ("Сохранённые mappings", str(len(preserved_mappings))),
+            ],
+        )
+        should_save = self._prompts.confirm(
+            message="Сохранить списки и маршруты для маршрутизатора?",
+            default=True,
+        )
+        if not should_save:
+            return
+
+        self._management_service.replace_router_default_route_and_mappings(
+            path=self._config_path,
+            router_id=router.id,
+            default_route={"interface": default_route_interface, "managed": True},
+            mappings=full_mapping_payloads,
+        )
+        self._console.print("[green]Списки и маршруты сохранены.[/green]")
+        choice = self._prompts.select(
+            message="Списки и маршруты сохранены",
+            choices=[
+                _flow_choice(
+                    panel_formatting.ICON_RUN,
+                    "Запустить обновление на этом маршрутизаторе",
+                    "sync-router",
+                ),
+                _flow_choice(panel_formatting.ICON_BACK, "Главное меню", "back"),
+            ],
+            default="sync-router",
+            hint_lines=(
+                "Команда применит managed mappings только выбранного маршрутизатора.",
+                "Перед записью будет прочитано текущее состояние Keenetic.",
+            ),
+        )
+        if choice == "sync-router":
+            self._panel._run_sync_for_router(router_id=router.id)
+
+    def _pause_if_route_discovery_failed(self) -> None:
+        if self.last_discovery_failed:
+            self._pause()
+
     def select_router(
         self,
         *,
@@ -903,6 +1108,88 @@ class PanelRouterFlow:
 
         return MappingPlan(
             default_target=default_target,
+            google_ai_target=google_ai_target,
+            youtube_target=youtube_target,
+        )
+
+    def prompt_mapping_overrides(
+        self,
+        *,
+        config: AppConfig,
+        router: RouterConfig,
+        mapping_plan: MappingPlan,
+        selected_services: set[str],
+        missing_secret_message: str | None = None,
+        discovery_password: str | None = None,
+        hint_lines: tuple[str, ...] | None = None,
+        vpn_only: bool = True,
+        allow_manual: bool = True,
+        excluded_interface_values: frozenset[str] = frozenset(),
+        abort_on_discovery_error: bool = False,
+        override_default_target: RouteTargetDraft | None = None,
+    ) -> MappingPlan | None:
+        fallback_target = override_default_target or mapping_plan.default_target
+
+        google_ai_target = None
+        has_non_google_services = any(
+            service_key != "google_ai" for service_key in selected_services
+        )
+        if "google_ai" in selected_services and has_non_google_services:
+            use_override = self._prompts.confirm(
+                message="Использовать отдельный маршрут для google_ai?",
+                default=mapping_plan.google_ai_target is not None,
+                hint_lines=GOOGLE_AI_OVERRIDE_HINT_LINES,
+            )
+            if use_override is None:
+                return None
+            if use_override:
+                google_ai_target = self.prompt_route_target(
+                    config=config,
+                    router=router,
+                    label="Route target для google_ai",
+                    default_target=mapping_plan.google_ai_target or fallback_target,
+                    missing_secret_message=missing_secret_message,
+                    discovery_password=discovery_password,
+                    hint_lines=hint_lines,
+                    vpn_only=vpn_only,
+                    allow_manual=allow_manual,
+                    excluded_interface_values=excluded_interface_values,
+                    abort_on_discovery_error=abort_on_discovery_error,
+                )
+                if google_ai_target is None:
+                    return None
+
+        youtube_target = None
+        has_non_youtube_services = any(
+            service_key != "youtube" for service_key in selected_services
+        )
+        if "youtube" in selected_services and has_non_youtube_services:
+            use_override = self._prompts.confirm(
+                message="Использовать отдельный маршрут для youtube?",
+                default=mapping_plan.youtube_target is not None,
+                hint_lines=YOUTUBE_OVERRIDE_HINT_LINES,
+            )
+            if use_override is None:
+                return None
+            if use_override:
+                youtube_target = self.prompt_route_target(
+                    config=config,
+                    router=router,
+                    label="Route target для youtube",
+                    default_target=mapping_plan.youtube_target or fallback_target,
+                    missing_secret_message=missing_secret_message,
+                    discovery_password=discovery_password,
+                    hint_lines=hint_lines,
+                    vpn_only=vpn_only,
+                    allow_manual=allow_manual,
+                    excluded_interface_values=excluded_interface_values,
+                    abort_on_discovery_error=abort_on_discovery_error,
+                )
+                if youtube_target is None:
+                    return None
+
+        return MappingPlan(
+            default_target=mapping_plan.default_target,
             google_ai_target=google_ai_target,
             youtube_target=youtube_target,
         )
@@ -1230,6 +1517,7 @@ class PanelRouterFlow:
                     ),
                     "auto": existing_mapping.auto if existing_mapping is not None else True,
                     "managed": existing_mapping.managed if existing_mapping is not None else True,
+                    "enabled": True,
                 }
             )
         return mappings
@@ -1321,7 +1609,12 @@ def _route_candidates_from_interfaces(
 def _global_route_interfaces(
     interfaces: tuple[RouterInterfaceState, ...],
 ) -> tuple[RouterInterfaceState, ...]:
-    return tuple(interface for interface in interfaces if interface.global_enabled is True)
+    return tuple(
+        interface
+        for interface in interfaces
+        if interface.global_enabled is True
+        or (interface.global_enabled is not False and interface.global_priority is not None)
+    )
 
 
 def _interface_choice_widths(interfaces: tuple[RouterInterfaceState, ...]) -> tuple[int, ...]:

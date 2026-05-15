@@ -301,6 +301,67 @@ def test_service_sync_planner_cleans_empty_stale_shard_group() -> None:
     assert plans[1].has_changes is True
 
 
+def test_service_sync_planner_removes_disabled_mapping_base_group() -> None:
+    planner = ServiceSyncPlanner()
+
+    plans = planner.plan_mapping(
+        mapping=_mapping().model_copy(update={"enabled": False}),
+        desired_entries=(),
+        actual_states={
+            "svc-telegram": ObjectGroupState(
+                name="svc-telegram",
+                entries=("old.example",),
+                exists=True,
+            ),
+            "svc-telegram-2": ObjectGroupState(
+                name="svc-telegram-2",
+                entries=(),
+                exists=False,
+            ),
+            "svc-telegram-3": ObjectGroupState(
+                name="svc-telegram-3",
+                entries=(),
+                exists=False,
+            ),
+            "svc-telegram-4": ObjectGroupState(
+                name="svc-telegram-4",
+                entries=(),
+                exists=False,
+            ),
+        },
+        actual_route_bindings={
+            "svc-telegram": RouteBindingState(
+                object_group_name="svc-telegram",
+                exists=True,
+                route_target_type="gateway",
+                route_target_value="10.0.0.1",
+                route_interface="Wireguard0",
+                auto=False,
+                exclusive=True,
+            ),
+            "svc-telegram-2": RouteBindingState(
+                object_group_name="svc-telegram-2",
+                exists=False,
+            ),
+            "svc-telegram-3": RouteBindingState(
+                object_group_name="svc-telegram-3",
+                exists=False,
+            ),
+            "svc-telegram-4": RouteBindingState(
+                object_group_name="svc-telegram-4",
+                exists=False,
+            ),
+        },
+    )
+
+    assert [plan.object_group_name for plan in plans] == ["svc-telegram"]
+    assert plans[0].object_group_diff.to_remove == ("old.example",)
+    assert plans[0].desired_route_binding is None
+    assert plans[0].remove_route is True
+    assert plans[0].remove_object_group is True
+    assert plans[0].has_changes is True
+
+
 def test_service_sync_planner_marks_route_only_changes() -> None:
     planner = ServiceSyncPlanner()
 

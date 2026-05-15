@@ -1024,6 +1024,7 @@ def test_direct_groups_use_provider_interface_without_extra_prompt(tmp_path) -> 
     assert payload["mappings"] == [
         {
             "auto": True,
+            "enabled": True,
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-direct_ru_outside",
@@ -1263,6 +1264,127 @@ def test_provider_default_route_skips_unselected_google_ai_and_youtube_steps(
     assert [call["message"] for call in prompts.confirm_calls] == [
         "Сохранить списки и маршруты для маршрутизатора?"
     ]
+
+
+def test_lists_menu_non_isp_default_route_prompts_google_ai_and_youtube_overrides(
+    tmp_path,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1", "Wireguard0", "Wireguard1", "Wireguard2", "back"],
+        checkbox_answers=[["direct_ru_outside", "google_ai", "youtube"]],
+        confirm_answers=[True, True, True],
+    )
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+        services=[
+            {
+                "key": "direct_ru_outside",
+                "source_urls": ["https://example.com/direct_ru_outside.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "google_ai",
+                "source_urls": ["https://example.com/google-ai.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "youtube",
+                "source_urls": ["https://example.com/youtube.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+        ],
+    )
+    SecretEnvFile(path=tmp_path / ".env.secrets").write_value(
+        key="ROUTER_ONE_SECRET",
+        value="existing-secret",
+    )
+    controller._route_target_discovery_service = _FakeInterfaceDiscoveryService(  # type: ignore[attr-defined]
+        (
+            RouterInterfaceState(
+                value="Wireguard0",
+                display_name="Wireguard0",
+                interface_type="Wireguard",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=False,
+                global_priority=300,
+            ),
+            RouterInterfaceState(
+                value="ISP",
+                display_name="ISP",
+                interface_type="Vlan",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=True,
+                global_priority=700,
+            ),
+        ),
+        route_result=RouteTargetDiscoveryResult(
+            router_id="router-1",
+            candidates=(
+                RouteTargetCandidate(
+                    value="Wireguard1",
+                    display_name="Wireguard1",
+                    status="up",
+                    detail="type=Wireguard",
+                    connected=True,
+                ),
+                RouteTargetCandidate(
+                    value="Wireguard2",
+                    display_name="Wireguard2",
+                    status="up",
+                    detail="type=Wireguard",
+                    connected=True,
+                ),
+            ),
+        ),
+    )
+
+    controller._lists_menu()
+
+    assert [call["message"] for call in prompts.confirm_calls] == [
+        "Использовать отдельный маршрут для google_ai?",
+        "Использовать отдельный маршрут для youtube?",
+        "Сохранить списки и маршруты для маршрутизатора?",
+    ]
+    assert [call["message"] for call in prompts.select_calls] == [
+        "Выберите маршрутизатор для списков и маршрутов",
+        "Интерфейс маршрутизации по умолчанию",
+        "Route target для google_ai",
+        "Route target для youtube",
+        "Списки и маршруты сохранены",
+    ]
+    assert prompts.checkbox_calls[0]["hint_lines"] == (
+        panel_router_support.DIRECT_ROUTE_SELECTION_HINT_LINES
+    )
+
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    mappings_by_service = {mapping["service_key"]: mapping for mapping in payload["mappings"]}
+    assert mappings_by_service["direct_ru_outside"]["route_target_value"] == "ISP"
+    assert mappings_by_service["google_ai"]["route_target_value"] == "Wireguard1"
+    assert mappings_by_service["youtube"]["route_target_value"] == "Wireguard2"
+
+    output = console.export_text()
+    assert "google_ai override" in output
+    assert "interface:Wireguard1" in output
+    assert "youtube override" in output
+    assert "interface:Wireguard2" in output
 
 
 def test_password_confirmation_hint_mentions_access_checkbox_and_save() -> None:
@@ -1743,6 +1865,7 @@ def test_add_router_creates_config_secret_and_default_mappings(tmp_path, monkeyp
     assert payload["mappings"] == [
         {
             "auto": True,
+            "enabled": True,
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-google_ai",
@@ -1754,6 +1877,7 @@ def test_add_router_creates_config_secret_and_default_mappings(tmp_path, monkeyp
         },
         {
             "auto": True,
+            "enabled": True,
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-telegram",
@@ -1769,6 +1893,121 @@ def test_add_router_creates_config_secret_and_default_mappings(tmp_path, monkeyp
         "FQDN_UPDATER_ROUTER_ROUTER_1_PASSWORD": generated_password,
     }
     assert generated_password not in controller._config_path.read_text(encoding="utf-8")
+
+
+def test_add_router_non_isp_default_route_prompts_google_ai_and_youtube_overrides(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompts = ScriptedPromptAdapter(
+        text_answers=[
+            "Router 1",
+            "api_updater",
+            "https://router-1.example/rci/",
+        ],
+        select_answers=["Wireguard0", "Wireguard1", "Wireguard2"],
+        checkbox_answers=[["direct_ru_outside", "google_ai", "youtube"]],
+        confirm_answers=[True, True, True, True],
+    )
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        services=[
+            {
+                "key": "direct_ru_outside",
+                "source_urls": ["https://example.com/direct_ru_outside.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "google_ai",
+                "source_urls": ["https://example.com/google-ai.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "youtube",
+                "source_urls": ["https://example.com/youtube.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        panel_module.RciPasswordGenerator, "generate", lambda self: "Aa1!bcdefghijklmnopq"
+    )
+    controller._route_target_discovery_service = _FakeInterfaceDiscoveryService(  # type: ignore[attr-defined]
+        (
+            RouterInterfaceState(
+                value="Wireguard0",
+                display_name="Wireguard0",
+                interface_type="Wireguard",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=False,
+                global_priority=300,
+            ),
+            RouterInterfaceState(
+                value="ISP",
+                display_name="ISP",
+                interface_type="Vlan",
+                status="up",
+                connected=True,
+                global_enabled=True,
+                default_gateway=True,
+                global_priority=700,
+            ),
+        ),
+        route_result=RouteTargetDiscoveryResult(
+            router_id="router-1",
+            candidates=(
+                RouteTargetCandidate(
+                    value="Wireguard1",
+                    display_name="Wireguard1",
+                    status="up",
+                    detail="type=Wireguard",
+                    connected=True,
+                ),
+                RouteTargetCandidate(
+                    value="Wireguard2",
+                    display_name="Wireguard2",
+                    status="up",
+                    detail="type=Wireguard",
+                    connected=True,
+                ),
+            ),
+        ),
+    )
+
+    controller._add_router()
+
+    assert [call["message"] for call in prompts.confirm_calls] == [
+        "Пароль уже введён для нового пользователя Keenetic?",
+        "Использовать отдельный маршрут для google_ai?",
+        "Использовать отдельный маршрут для youtube?",
+        "Сохранить новый маршрутизатор?",
+    ]
+    assert [call["message"] for call in prompts.select_calls] == [
+        "Интерфейс маршрутизации по умолчанию",
+        "Route target для google_ai",
+        "Route target для youtube",
+    ]
+    assert prompts.checkbox_calls[0]["hint_lines"] == (
+        panel_router_support.DIRECT_ROUTE_SELECTION_HINT_LINES
+    )
+
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    mappings_by_service = {mapping["service_key"]: mapping for mapping in payload["mappings"]}
+    assert mappings_by_service["direct_ru_outside"]["route_target_value"] == "ISP"
+    assert mappings_by_service["google_ai"]["route_target_value"] == "Wireguard1"
+    assert mappings_by_service["youtube"]["route_target_value"] == "Wireguard2"
+
+    output = console.export_text()
+    assert "google_ai override" in output
+    assert "interface:Wireguard1" in output
+    assert "youtube override" in output
+    assert "interface:Wireguard2" in output
 
 
 def test_add_router_shows_generated_password_before_save_summary(tmp_path, monkeypatch) -> None:
@@ -1874,6 +2113,7 @@ def test_edit_router_updates_password_and_preserves_existing_mappings(
     assert payload["mappings"] == [
         {
             "auto": True,
+            "enabled": True,
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-telegram",
@@ -2261,7 +2501,7 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
         select_answers=["router-1", "Wireguard7", "back"],
         checkbox_answers=[["telegram", "google_ai", "youtube"]],
         text_answers=[],
-        confirm_answers=[False, True],
+        confirm_answers=[False, False, True],
     )
     controller, _console = make_panel_controller(tmp_path, prompts=prompts)
     write_config(
@@ -2359,6 +2599,7 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
     assert mappings == [
         {
             "auto": True,
+            "enabled": True,
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-discord",
@@ -2370,6 +2611,7 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
         },
         {
             "auto": True,
+            "enabled": True,
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-google_ai",
@@ -2381,6 +2623,7 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
         },
         {
             "auto": True,
+            "enabled": True,
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-telegram",
@@ -2392,6 +2635,7 @@ def test_lists_menu_updates_services_and_route_targets_preserving_disabled_mappi
         },
         {
             "auto": True,
+            "enabled": True,
             "exclusive": True,
             "managed": True,
             "object_group_name": "fqdn-youtube",
@@ -2543,6 +2787,90 @@ def test_lists_menu_can_run_sync_for_selected_router_after_save(tmp_path) -> Non
     assert "Sync: run_id=run-sync status=success artifact=data/artifacts/run-sync.json" in output
     assert "router-1" in output
     assert "изменено=1 ошибок=0" in output
+
+
+def test_lists_menu_marks_unselected_managed_mappings_disabled_for_cleanup(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1", "Wireguard7", "back"],
+        checkbox_answers=[["telegram"]],
+        confirm_answers=[True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            },
+        ],
+        services=[
+            {
+                "key": "telegram",
+                "source_urls": ["https://example.com/telegram.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "youtube",
+                "source_urls": ["https://example.com/youtube.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+        ],
+        mappings=[
+            {
+                "router_id": "router-1",
+                "service_key": "telegram",
+                "object_group_name": "fqdn-telegram",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+                "enabled": True,
+            },
+            {
+                "router_id": "router-1",
+                "service_key": "youtube",
+                "object_group_name": "fqdn-youtube",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+                "enabled": True,
+            },
+        ],
+    )
+    SecretEnvFile(path=tmp_path / ".env.secrets").write_value(
+        key="ROUTER_ONE_SECRET",
+        value="existing-secret",
+    )
+    controller._route_target_discovery_service = _FakeDiscoveryService(  # type: ignore[attr-defined]
+        RouteTargetDiscoveryResult(
+            router_id="router-1",
+            candidates=(
+                RouteTargetCandidate(
+                    value="Wireguard7",
+                    display_name="Wireguard7",
+                    status="up",
+                    detail="type=Wireguard",
+                    connected=True,
+                ),
+            ),
+        )
+    )
+
+    controller._lists_menu()
+
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    mappings_by_service = {mapping["service_key"]: mapping for mapping in payload["mappings"]}
+    assert mappings_by_service["telegram"]["enabled"] is True
+    assert mappings_by_service["telegram"]["route_target_value"] == "Wireguard7"
+    assert mappings_by_service["youtube"]["enabled"] is False
+    assert mappings_by_service["youtube"]["object_group_name"] == "fqdn-youtube"
+    assert mappings_by_service["youtube"]["managed"] is True
 
 
 def test_edit_router_switches_password_file_to_env_and_clears_password_file(

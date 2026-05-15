@@ -72,10 +72,46 @@ def test_parse_router_interfaces_reads_global_defaultgw_and_priority_shapes() ->
             display_name="Wireguard0",
             interface_type="WireGuard",
             status="connected",
+            global_enabled=True,
             global_priority=100,
         ),
     )
     assert interfaces[1].is_vpn_like is True
+
+
+def test_parse_router_interfaces_reads_priority_only_payload_as_route_capable() -> None:
+    interfaces = parse_router_interfaces(
+        {
+            "Wireguard0": {
+                "id": "Wireguard0",
+                "type": "WireGuard",
+                "state": "connected",
+                "priority": 120,
+            },
+            "Provider0": {
+                "id": "Provider0",
+                "type": "ethernet",
+                "global": {"enabled": False, "priority": 65534},
+            },
+        }
+    )
+
+    assert interfaces == (
+        RouterInterfaceState(
+            value="Provider0",
+            display_name="Provider0",
+            interface_type="ethernet",
+            global_enabled=False,
+            global_priority=65534,
+        ),
+        RouterInterfaceState(
+            value="Wireguard0",
+            display_name="Wireguard0",
+            interface_type="WireGuard",
+            status="connected",
+            global_priority=120,
+        ),
+    )
 
 
 def test_parse_object_group_state_preserves_cli_style_behavior() -> None:

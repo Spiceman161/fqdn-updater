@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import fqdn_updater.cli.panel as panel_module
+from fqdn_updater.cli import panel_router_support
 
 from .panel_test_support import ScriptedPromptAdapter, make_panel_controller, write_config
 
 
 def test_run_returns_to_root_dashboard_after_successful_add_router(tmp_path, monkeypatch) -> None:
     prompts = ScriptedPromptAdapter(
-        select_answers=["routers", "add", "ISP", "back", "exit"],
+        select_answers=["routers", "add", "ISP", "Wireguard0", "back", "exit"],
         checkbox_answers=[["telegram", "google_ai"]],
         text_answers=[
             "Router 1",
@@ -39,6 +40,7 @@ def test_run_returns_to_root_dashboard_after_successful_add_router(tmp_path, mon
         "Выберите раздел панели",
         "Маршрутизаторы",
         "Интерфейс маршрутизации по умолчанию",
+        panel_router_support.FQDN_LIST_INTERFACE_LABEL,
         "Выберите раздел панели",
         "Выберите раздел панели",
     ]

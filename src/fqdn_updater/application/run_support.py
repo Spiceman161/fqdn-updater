@@ -65,6 +65,8 @@ def validate_router_desired_fqdn_total(
 ) -> None:
     total_entry_count = 0
     for mapping in mappings:
+        if not mapping.enabled:
+            continue
         if mapping.service_key in source_failures_by_service:
             continue
         desired_entries = desired_entries_by_service.get(mapping.service_key)
