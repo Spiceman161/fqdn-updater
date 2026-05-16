@@ -748,8 +748,20 @@ class PanelController:
             self._pause()
             return
 
+        self._prune_synced_disabled_mappings(result=result)
         self._render_sync_result(result=result)
         self._pause()
+
+    def _prune_synced_disabled_mappings(self, *, result: SyncExecutionResult) -> None:
+        try:
+            self._management_service.prune_synced_disabled_mappings(
+                path=self._config_path,
+                artifact=result.artifact,
+            )
+        except RuntimeError as exc:
+            self._console.print(
+                f"[yellow]Cleanup mappings не удалены из config.json:[/yellow] {exc}"
+            )
 
     def _render_status_result(self, *, result: StatusDiagnosticsResult) -> None:
         self._runs_flow.render_status_result(result=result)

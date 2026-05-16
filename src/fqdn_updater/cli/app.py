@@ -542,6 +542,8 @@ def sync_command(
     except RuntimeError as exc:
         _runtime_error_handler(exc, code=20)
 
+    _prune_synced_disabled_mappings(config_path=config, result=result)
+
     if output is OutputMode.JSON:
         typer.echo(_render_sync_json(result=result))
     else:
@@ -604,6 +606,25 @@ def _render_sync_human(result: SyncExecutionResult) -> str:
         result=result,
         include_diff_details=False,
     )
+
+
+def _prune_synced_disabled_mappings(
+    *,
+    config_path: Path,
+    result: SyncExecutionResult,
+) -> None:
+    if not config_path.exists():
+        return
+    try:
+        _config_management_service().prune_synced_disabled_mappings(
+            path=config_path,
+            artifact=result.artifact,
+        )
+    except RuntimeError as exc:
+        typer.echo(
+            f"Предупреждение: cleanup mappings не удалены из config.json: {exc}",
+            err=True,
+        )
 
 
 def _render_operation_human(

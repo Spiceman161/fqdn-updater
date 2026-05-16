@@ -148,7 +148,11 @@ class _RecordingRunHistoryService:
         )
 
 
-def _sync_result(*, router_id: str = "router-1") -> SyncExecutionResult:
+def _sync_result(
+    *,
+    router_id: str = "router-1",
+    service_results: list[ServiceRunResult] | None = None,
+) -> SyncExecutionResult:
     timestamp = datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc)
     artifact = RunArtifact(
         run_id="run-sync",
@@ -162,7 +166,8 @@ def _sync_result(*, router_id: str = "router-1") -> SyncExecutionResult:
             RouterRunResult(
                 router_id=router_id,
                 status=RouterResultStatus.UPDATED,
-                service_results=[
+                service_results=service_results
+                or [
                     ServiceRunResult(
                         service_key="telegram",
                         object_group_name="fqdn-telegram",
@@ -2787,6 +2792,103 @@ def test_lists_menu_can_run_sync_for_selected_router_after_save(tmp_path) -> Non
     assert "Sync: run_id=run-sync status=success artifact=data/artifacts/run-sync.json" in output
     assert "router-1" in output
     assert "изменено=1 ошибок=0" in output
+
+
+def test_lists_menu_sync_prunes_disabled_cleanup_mapping_after_save(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter(
+        select_answers=["router-1", "Wireguard7", "sync-router"],
+        checkbox_answers=[["telegram"]],
+        confirm_answers=[True],
+    )
+    controller, _console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+        services=[
+            {
+                "key": "telegram",
+                "source_urls": ["https://example.com/telegram.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+            {
+                "key": "youtube",
+                "source_urls": ["https://example.com/youtube.lst"],
+                "format": "raw_domain_list",
+                "enabled": True,
+            },
+        ],
+        mappings=[
+            {
+                "router_id": "router-1",
+                "service_key": "telegram",
+                "object_group_name": "fqdn-telegram",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+                "enabled": True,
+            },
+            {
+                "router_id": "router-1",
+                "service_key": "youtube",
+                "object_group_name": "fqdn-youtube",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+                "enabled": True,
+            },
+        ],
+    )
+    SecretEnvFile(path=tmp_path / ".env.secrets").write_value(
+        key="ROUTER_ONE_SECRET",
+        value="existing-secret",
+    )
+    controller._route_target_discovery_service = _FakeDiscoveryService(  # type: ignore[attr-defined]
+        RouteTargetDiscoveryResult(
+            router_id="router-1",
+            candidates=(
+                RouteTargetCandidate(
+                    value="Wireguard7",
+                    display_name="Wireguard7",
+                    status="up",
+                    detail="type=Wireguard",
+                    connected=True,
+                ),
+            ),
+        )
+    )
+    controller._sync_orchestrator = _RecordingSyncOrchestrator(  # type: ignore[attr-defined]
+        result=_sync_result(
+            service_results=[
+                ServiceRunResult(
+                    service_key="telegram",
+                    object_group_name="fqdn-telegram",
+                    status=ServiceResultStatus.NO_CHANGES,
+                ),
+                ServiceRunResult(
+                    service_key="youtube",
+                    object_group_name="fqdn-youtube",
+                    status=ServiceResultStatus.UPDATED,
+                    removed_count=1,
+                ),
+            ]
+        )
+    )
+    controller._load_runtime_secret_env_file = lambda *, config: None  # type: ignore[method-assign]
+
+    controller._lists_menu()
+
+    payload = json.loads(controller._config_path.read_text(encoding="utf-8"))
+    assert [mapping["service_key"] for mapping in payload["mappings"]] == ["telegram"]
 
 
 def test_lists_menu_marks_unselected_managed_mappings_disabled_for_cleanup(tmp_path) -> None:

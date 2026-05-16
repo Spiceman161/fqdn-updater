@@ -19,7 +19,7 @@ FQDN-updater includes a convenient TUI panel for management and setup.
 - Generated strong passwords for the RCI API only.
 - Every apply reads current router state first, builds a deterministic diff, and only then writes changes.
 - The tool changes only managed object-groups, DNS route bindings, static routes, and router-level `default_route` declared in `config.json`.
-- When a list is unchecked in the panel, its managed mapping is kept as `enabled=false`; the next `sync` removes only that mapping's managed groups and routes on Keenetic.
+- When a list is unchecked in the panel, its managed mapping is kept temporarily as `enabled=false`; the next `sync` removes that mapping's managed groups and routes on Keenetic, then prunes the mapping from `config.json` after successful cleanup.
 - `status`, `dry-run`, run history, and read-only panel checks do not perform remote writes.
 - Current scope excludes web UI, daemon mode, notifications, production SSH transport, and non-Keenetic devices.
 
@@ -28,7 +28,7 @@ FQDN-updater includes a convenient TUI panel for management and setup.
 On a clean Ubuntu 22.04 or later host, use a versioned release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.0/install.sh | sudo bash -s -- --version v1.1.0
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.1/install.sh | sudo bash -s -- --version v1.1.1
 ```
 
 If the installer is run without `--version`, it installs the latest GitHub Release. If the latest release is unavailable or GitHub returns malformed metadata, installation fails before downloading project code.
@@ -41,7 +41,7 @@ The installer deploys the project to `/opt/fqdn-updater`, preserves existing `co
 
 ```bash
 fqdn-updater update
-fqdn-updater update --version v1.1.0
+fqdn-updater update --version v1.1.1
 ```
 
 The update command runs the installed local installer from `/opt/fqdn-updater/install.sh` through a temporary copy, installs the latest GitHub Release, verifies the release tarball against the mandatory `.sha256` asset, rebuilds the Docker image, and keeps operator-owned runtime files in place. It does not fall back to `main`: if the latest release cannot be resolved or checksum verification fails, update stops before extraction and deployment.
@@ -49,7 +49,7 @@ The update command runs the installed local installer from `/opt/fqdn-updater/in
 If the local installer is missing or unreadable, the wrapper fails and prints the manual reinstall command for Ubuntu 22.04 or later:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.0/install.sh | sudo bash -s -- --version v1.1.0
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.1/install.sh | sudo bash -s -- --version v1.1.1
 ```
 
 ## First Run

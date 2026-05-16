@@ -77,7 +77,8 @@ Interface discovery читает интерфейсы с выбранного р
 Если снять отметку с ранее выбранного managed списка, панель оставит его mapping в
 `config.json` с `enabled=false`. Следующий `sync` прочитает текущее состояние
 Keenetic и удалит только связанные с этим mapping managed object-groups, DNS
-route bindings и static routes с prefix `fqdn-updater:<service>`.
+route bindings и static routes с prefix `fqdn-updater:<service>`. После успешной
+cleanup mapping удаляется из `config.json`.
 
 ## Журнал и проверки
 

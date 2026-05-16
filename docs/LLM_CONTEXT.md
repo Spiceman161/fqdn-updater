@@ -34,6 +34,7 @@ Production transport только один: KeenDNS RCI по HTTPS с HTTP Diges
 - Domain suffix filters работают только для domain sources.
 - `sync` применяет только mappings с `managed=true`; `enabled=false` у managed mapping
   означает cleanup ранее созданных object-groups, route bindings и static routes этого service.
+  После успешного apply/no-change cleanup такой mapping удаляется из `config.json`.
 - `routers[].default_route` опционален; при `managed=true` sync читает `show interface` и делает выбранный интерфейс единственным с наивысшим priority. Если выбранный интерфейс уже единственный с максимальным priority, write не нужен; `65534` используется только когда требуется изменение. `no ip global` не используется.
 - `dry-run` не пишет на роутер.
 - Любой apply делает read-before-write и пишет минимальный diff.

@@ -131,6 +131,7 @@ Mapping связывает router, service и managed route target:
 - меняет только mappings с `managed=true`;
 - при `enabled=false` для managed mapping удаляет соответствующие managed object-groups,
   DNS route bindings и static routes с comment prefix `fqdn-updater:<service>`;
+  после успешной cleanup удаляет этот mapping из `config.json`;
 - не трогает unrelated object-groups, DNS routes и static routes.
 
 Route target:

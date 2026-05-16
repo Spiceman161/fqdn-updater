@@ -1605,6 +1605,77 @@ def test_sync_returns_zero_for_no_changes(monkeypatch) -> None:
     assert "skipped_services=0" in result.stdout
 
 
+def test_sync_prunes_disabled_cleanup_mappings_after_success(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    _write_management_config(
+        config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://router-1.example/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+        mappings=[
+            {
+                "router_id": "router-1",
+                "service_key": "telegram",
+                "object_group_name": "svc-telegram",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+                "enabled": True,
+            },
+            {
+                "router_id": "router-1",
+                "service_key": "youtube",
+                "object_group_name": "svc-youtube",
+                "route_target_type": "interface",
+                "route_target_value": "Wireguard0",
+                "managed": True,
+                "enabled": False,
+            },
+        ],
+    )
+    config = AppConfig.model_validate(json.loads(config_path.read_text(encoding="utf-8")))
+    result_payload = _sync_result(
+        status=RunStatus.SUCCESS,
+        artifact_path=Path("data/artifacts/run-cleanup.json"),
+        plans=(
+            _plan(
+                to_add=(),
+                to_remove=("old.example",),
+                unchanged=(),
+                has_changes=True,
+            ),
+        ),
+        service_results=(
+            ServiceRunResult(
+                service_key="telegram",
+                object_group_name="svc-telegram",
+                status=ServiceResultStatus.NO_CHANGES,
+            ),
+            ServiceRunResult(
+                service_key="youtube",
+                object_group_name="svc-youtube",
+                status=ServiceResultStatus.UPDATED,
+                removed_count=1,
+            ),
+        ),
+        router_status=RouterResultStatus.UPDATED,
+    )
+    _install_sync_stubs(monkeypatch, config=config, result=result_payload)
+
+    result = runner.invoke(app, ["sync", "--config", str(config_path)])
+
+    assert result.exit_code == 10
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert [mapping["service_key"] for mapping in payload["mappings"]] == ["telegram"]
+
+
 def test_sync_passes_explicit_openclaw_trigger(monkeypatch) -> None:
     config = _config()
     expected_result = _sync_result(

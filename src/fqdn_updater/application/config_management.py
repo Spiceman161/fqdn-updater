@@ -6,6 +6,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from fqdn_updater.domain.config_schema import AppConfig, RouterConfig, RouterServiceMappingConfig
+from fqdn_updater.domain.run_artifact import RunArtifact, ServiceResultStatus
 from fqdn_updater.domain.schedule import RuntimeScheduleConfig
 from fqdn_updater.domain.source_registry import builtin_service_definitions
 from fqdn_updater.infrastructure.config_repository import ConfigRepository
@@ -41,6 +42,12 @@ def normalize_rci_url_input(value: str) -> str:
 class BuiltinServiceSyncResult:
     config: AppConfig
     added_service_keys: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DisabledMappingPruneResult:
+    config: AppConfig
+    removed_mappings: tuple[RouterServiceMappingConfig, ...]
 
 
 class ConfigManagementService:
@@ -405,6 +412,41 @@ class ConfigManagementService:
         self._repository.overwrite(path=path, config=updated_config)
         return True
 
+    def prune_synced_disabled_mappings(
+        self,
+        *,
+        path: Path,
+        artifact: RunArtifact,
+    ) -> DisabledMappingPruneResult:
+        config = self._repository.load(path=path)
+        cleanup_pairs = _successful_cleanup_pairs(artifact=artifact)
+        if not cleanup_pairs:
+            return DisabledMappingPruneResult(config=config, removed_mappings=())
+
+        removed_mappings = tuple(
+            mapping
+            for mapping in config.mappings
+            if mapping.managed
+            and not mapping.enabled
+            and (mapping.router_id, mapping.service_key) in cleanup_pairs
+        )
+        if not removed_mappings:
+            return DisabledMappingPruneResult(config=config, removed_mappings=())
+
+        removed_pairs = {(mapping.router_id, mapping.service_key) for mapping in removed_mappings}
+        payload = config.model_dump(mode="json")
+        payload["mappings"] = [
+            mapping
+            for mapping in payload["mappings"]
+            if (mapping["router_id"], mapping["service_key"]) not in removed_pairs
+        ]
+        updated_config = self._repository.validate_payload(path=path, payload=payload)
+        self._repository.overwrite(path=path, config=updated_config)
+        return DisabledMappingPruneResult(
+            config=updated_config,
+            removed_mappings=removed_mappings,
+        )
+
     def _find_router_index(
         self,
         *,
@@ -427,3 +469,16 @@ class ConfigManagementService:
             if mapping["router_id"] == router_id and mapping["service_key"] == service_key:
                 return index
         return None
+
+
+def _successful_cleanup_pairs(*, artifact: RunArtifact) -> set[tuple[str, str]]:
+    successful_statuses = {
+        ServiceResultStatus.NO_CHANGES,
+        ServiceResultStatus.UPDATED,
+    }
+    return {
+        (router_result.router_id, service_result.service_key)
+        for router_result in artifact.router_results
+        for service_result in router_result.service_results
+        if service_result.status in successful_statuses
+    }
