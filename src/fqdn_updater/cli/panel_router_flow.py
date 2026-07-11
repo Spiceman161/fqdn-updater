@@ -417,6 +417,13 @@ class PanelRouterFlow:
         self._console.print(
             "[yellow]TLS/SAN RCI-проверка не прошла:[/yellow] " + diagnostic.compact_summary()
         )
+        if not diagnostic.has_san_mismatch:
+            self._console.print(
+                "[yellow]ACME-ремонт не предлагается: недоступен один или несколько "
+                "TLS endpoint, но SAN mismatch не обнаружен.[/yellow]"
+            )
+            self._pause()
+            return False
         if not hostname.startswith("rci."):
             self._console.print(
                 "[yellow]Автоматический ACME-ремонт доступен только для rci.* endpoint.[/yellow]"
@@ -484,7 +491,7 @@ class PanelRouterFlow:
             diagnostic.router_id
             for diagnostic in result.router_results
             if diagnostic.tls_san is not None
-            and not diagnostic.tls_san.is_healthy
+            and diagnostic.tls_san.has_san_mismatch
             and diagnostic.tls_san.hostname.startswith("rci.")
         }
         if not repairable_ids:

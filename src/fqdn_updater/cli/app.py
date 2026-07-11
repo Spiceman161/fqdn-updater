@@ -759,7 +759,8 @@ def _render_status_human(result: StatusDiagnosticsResult) -> str:
             lines.append(
                 "  tls_san: "
                 f"hostname={tls_san.hostname} complete={str(tls_san.is_complete).lower()} "
-                f"san_matches={str(tls_san.san_matches_hostname).lower()}"
+                f"san_matches={str(tls_san.san_matches_hostname).lower()} "
+                f"condition={tls_san.condition.value}"
             )
             for endpoint in tls_san.endpoints:
                 lines.append(

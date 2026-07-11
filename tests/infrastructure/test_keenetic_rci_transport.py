@@ -9,7 +9,11 @@ import pytest
 
 from fqdn_updater import __version__
 from fqdn_updater.domain.config_schema import RouterConfig
-from fqdn_updater.domain.tls_diagnostics import TlsEndpointDiagnostic
+from fqdn_updater.domain.tls_diagnostics import (
+    TlsEndpointDiagnostic,
+    TlsSanCondition,
+    TlsSanDiagnostic,
+)
 from fqdn_updater.infrastructure.keenetic_rci_transport import (
     KeeneticRciAcmeRepairTransport,
     KeeneticRciTransport,
@@ -372,6 +376,46 @@ def test_tls_san_diagnostic_respects_shorter_router_timeout(monkeypatch, profile
     transport.get_tls_san_diagnostic()
 
     assert observed_timeouts == [15]
+
+
+def test_tls_san_condition_distinguishes_endpoint_failure_from_san_mismatch() -> None:
+    endpoint_failure = TlsSanDiagnostic(
+        hostname="rci.example.test",
+        port=443,
+        endpoints=(
+            TlsEndpointDiagnostic(
+                address="203.0.113.10",
+                family="ipv4",
+                port=443,
+                subject_alt_names=("*.example.test",),
+                san_matches_hostname=True,
+            ),
+            TlsEndpointDiagnostic(
+                address="203.0.113.11",
+                family="ipv4",
+                port=443,
+                error="timed out",
+            ),
+        ),
+    )
+    san_mismatch = TlsSanDiagnostic(
+        hostname="rci.example.test",
+        port=443,
+        endpoints=(
+            TlsEndpointDiagnostic(
+                address="203.0.113.10",
+                family="ipv4",
+                port=443,
+                subject_alt_names=("wrong.example.test",),
+                san_matches_hostname=False,
+            ),
+        ),
+    )
+
+    assert endpoint_failure.condition is TlsSanCondition.ENDPOINT_UNAVAILABLE
+    assert endpoint_failure.has_san_mismatch is False
+    assert san_mismatch.condition is TlsSanCondition.SAN_MISMATCH
+    assert san_mismatch.has_san_mismatch is True
 
 
 def test_san_matching_supports_exact_and_single_label_wildcards_only() -> None:

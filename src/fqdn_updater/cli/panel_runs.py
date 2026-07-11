@@ -34,10 +34,10 @@ def _format_tls_san(router) -> str:
     diagnostic = router.tls_san
     if diagnostic is None:
         return "[dim]не проверялось[/dim]"
-    if diagnostic.is_healthy:
+    if diagnostic.condition.value == "healthy":
         return "[green]SAN OK[/green]"
-    if not diagnostic.is_complete:
-        return "[yellow]TLS неполная[/yellow]"
+    if diagnostic.condition.value == "endpoint_unavailable":
+        return "[yellow]TLS endpoint недоступен[/yellow]"
     return "[yellow]SAN mismatch[/yellow]"
 
 

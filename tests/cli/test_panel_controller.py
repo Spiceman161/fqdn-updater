@@ -35,6 +35,7 @@ from fqdn_updater.domain.status_diagnostics import (
     RouterStatusDiagnostic,
     StatusDiagnosticsResult,
 )
+from fqdn_updater.domain.tls_diagnostics import TlsEndpointDiagnostic, TlsSanDiagnostic
 from fqdn_updater.infrastructure.secret_env_file import (
     SecretEnvFile,
     password_env_key_for_router_id,
@@ -792,6 +793,101 @@ def test_router_menu_status_choice_calls_diagnostics_service_and_renders_router_
     assert ("x" * 400) not in plain_output
     assert "dns proxy disabled" in styled_output
     assert "\x1b[" in styled_output
+
+
+def test_status_does_not_offer_acme_repair_for_unavailable_tls_endpoint(tmp_path) -> None:
+    prompts = ScriptedPromptAdapter()
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://rci.example.test/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+    result = StatusDiagnosticsResult(
+        overall_status=OverallDiagnosticStatus.DEGRADED,
+        checked_router_count=1,
+        router_results=(
+            RouterStatusDiagnostic(
+                router_id="router-1",
+                status=RouterDiagnosticStatus.DEGRADED,
+                dns_proxy_enabled=True,
+                tls_san=TlsSanDiagnostic(
+                    hostname="rci.example.test",
+                    port=443,
+                    endpoints=(
+                        TlsEndpointDiagnostic(
+                            address="203.0.113.10",
+                            family="ipv4",
+                            port=443,
+                            error="timed out",
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    controller._render_status_result(result=result)
+    controller._router_flow.offer_acme_repair_from_status(
+        config=controller._load_config(), result=result
+    )
+
+    assert prompts.confirm_calls == []
+    assert "TLS endpoint недоступен" in console.export_text(clear=False)
+
+
+def test_add_router_does_not_offer_acme_repair_for_unavailable_tls_endpoint(tmp_path) -> None:
+    class _UnavailableTlsClient:
+        def get_tls_san_diagnostic(self) -> TlsSanDiagnostic:
+            return TlsSanDiagnostic(
+                hostname="rci.example.test",
+                port=443,
+                endpoints=(
+                    TlsEndpointDiagnostic(
+                        address="203.0.113.10",
+                        family="ipv4",
+                        port=443,
+                        error="timed out",
+                    ),
+                ),
+            )
+
+    class _UnavailableTlsClientFactory:
+        def create(self, router, password):  # noqa: ANN001, ANN201 - test double protocol.
+            return _UnavailableTlsClient()
+
+    prompts = ScriptedPromptAdapter()
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://rci.example.test/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+    controller._client_factory = _UnavailableTlsClientFactory()  # type: ignore[assignment]
+
+    ready = controller._router_flow.ensure_tls_san_ready(
+        router=controller._load_config().routers[0], password="secret"
+    )
+
+    assert ready is False
+    assert prompts.confirm_calls == []
+    assert "ACME-ремонт не предлагается" in console.export_text(clear=False)
 
 
 def test_add_router_passes_hint_lines_through_wizard_steps(

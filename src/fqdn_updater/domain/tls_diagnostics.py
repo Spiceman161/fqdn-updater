@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fqdn_updater.domain._enum import StrEnum
+
+
+class TlsSanCondition(StrEnum):
+    HEALTHY = "healthy"
+    ENDPOINT_UNAVAILABLE = "endpoint_unavailable"
+    SAN_MISMATCH = "san_mismatch"
+
 
 class TlsEndpointDiagnostic(BaseModel):
     """Result of one direct TLS handshake made with the configured SNI name."""
@@ -48,6 +56,21 @@ class TlsSanDiagnostic(BaseModel):
     def is_healthy(self) -> bool:
         return self.is_complete and self.san_matches_hostname
 
+    @property
+    def has_san_mismatch(self) -> bool:
+        return any(
+            endpoint.error is None and endpoint.san_matches_hostname is False
+            for endpoint in self.endpoints
+        )
+
+    @property
+    def condition(self) -> TlsSanCondition:
+        if self.is_healthy:
+            return TlsSanCondition.HEALTHY
+        if self.has_san_mismatch:
+            return TlsSanCondition.SAN_MISMATCH
+        return TlsSanCondition.ENDPOINT_UNAVAILABLE
+
     def compact_summary(self) -> str:
         """Return a log-safe one-line summary; it never contains credentials."""
         endpoint_summary = (
@@ -62,6 +85,7 @@ class TlsSanDiagnostic(BaseModel):
         return (
             f"tls_san hostname={self.hostname} complete={self.is_complete} "
             f"san_matches={self.san_matches_hostname} "
+            f"condition={self.condition.value} "
             f"resolution_error={self.resolution_error or '-'} "
             f"endpoints={endpoint_summary}"
         )
