@@ -5,6 +5,8 @@ import pytest
 from fqdn_updater.domain.keenetic import RouteBindingSpec, RouteBindingState
 from fqdn_updater.domain.static_route_diff import StaticRouteSpec, StaticRouteState
 from fqdn_updater.infrastructure.keenetic_rci_commands import (
+    build_acme_get_certificate_command,
+    build_acme_list_certificates_command,
     build_add_entry_command,
     build_ensure_object_group_command,
     build_ensure_route_command,
@@ -100,6 +102,13 @@ def test_static_route_commands_match_rci_payloads() -> None:
 
 def test_save_config_command_matches_rci_payload() -> None:
     assert build_save_config_command() == {"parse": "system configuration save"}
+
+
+def test_acme_commands_use_exact_rci_cli_syntax() -> None:
+    assert build_acme_get_certificate_command("rci.example.keenetic.pro") == {
+        "parse": "ip http ssl acme get rci.example.keenetic.pro"
+    }
+    assert build_acme_list_certificates_command() == {"parse": "ip http ssl acme list"}
 
 
 def test_interface_global_priority_command_matches_cli_payload() -> None:

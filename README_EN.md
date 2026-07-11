@@ -21,6 +21,7 @@ FQDN-updater includes a convenient TUI panel for management and setup.
 - The tool changes only managed object-groups, DNS route bindings, static routes, and router-level `default_route` declared in `config.json`.
 - When a list is unchecked in the panel, its managed mapping is kept temporarily as `enabled=false`; the next `sync` removes that mapping's managed groups and routes on Keenetic, then prunes the mapping from `config.json` after successful cleanup.
 - `status`, `dry-run`, run history, and read-only panel checks do not perform remote writes.
+- `status` independently checks TLS/SAN with SNI for every resolved `rci_url` address; a SAN mismatch is `degraded` and exits with code `20`.
 - Current scope excludes web UI, daemon mode, notifications, production SSH transport, and non-Keenetic devices.
 
 ## Installation
@@ -28,7 +29,7 @@ FQDN-updater includes a convenient TUI panel for management and setup.
 On a clean Ubuntu 22.04 or later host, use a versioned release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.1/install.sh | sudo bash -s -- --version v1.1.1
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.2.1/install.sh | sudo bash -s -- --version v1.2.1
 ```
 
 If the installer is run without `--version`, it installs the latest GitHub Release. If the latest release is unavailable or GitHub returns malformed metadata, installation fails before downloading project code.
@@ -41,7 +42,7 @@ The installer deploys the project to `/opt/fqdn-updater`, preserves existing `co
 
 ```bash
 fqdn-updater update
-fqdn-updater update --version v1.1.1
+fqdn-updater update --version v1.2.1
 ```
 
 The update command runs the installed local installer from `/opt/fqdn-updater/install.sh` through a temporary copy, installs the latest GitHub Release, verifies the release tarball against the mandatory `.sha256` asset, rebuilds the Docker image, and keeps operator-owned runtime files in place. It does not fall back to `main`: if the latest release cannot be resolved or checksum verification fails, update stops before extraction and deployment.
@@ -49,7 +50,7 @@ The update command runs the installed local installer from `/opt/fqdn-updater/in
 If the local installer is missing or unreadable, the wrapper fails and prints the manual reinstall command for Ubuntu 22.04 or later:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.1/install.sh | sudo bash -s -- --version v1.1.1
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.2.1/install.sh | sudo bash -s -- --version v1.2.1
 ```
 
 ## First Run
@@ -97,6 +98,8 @@ journalctl -u fqdn-updater.service -n 100 --no-pager
 ```
 
 ## KeenDNS RCI
+
+For an `rci.*` endpoint whose certificate does not yet cover its SAN, the panel offers an explicitly confirmed ACME repair. It is limited to `ip http ssl acme get <exact-hostname>`, `ip http ssl acme list`, and `system configuration save`; `sync`, `dry-run`, and CLI `status` never bypass TLS verification.
 
 In the Keenetic web UI, publish the `rci.<domain>` web application with protocol `HTTP` and port `79`. In `config.json`, store the external endpoint as `https://rci.<domain>/rci/`.
 

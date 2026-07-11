@@ -30,6 +30,17 @@ if TYPE_CHECKING:
     from fqdn_updater.cli.panel import PanelController
 
 
+def _format_tls_san(router) -> str:
+    diagnostic = router.tls_san
+    if diagnostic is None:
+        return "[dim]не проверялось[/dim]"
+    if diagnostic.is_healthy:
+        return "[green]SAN OK[/green]"
+    if not diagnostic.is_complete:
+        return "[yellow]TLS неполная[/yellow]"
+    return "[yellow]SAN mismatch[/yellow]"
+
+
 class PanelRunsFlow:
     """Run history and execution result screens for the interactive panel."""
 
@@ -335,16 +346,18 @@ class PanelRunsFlow:
         table.add_column("Маршрутизатор")
         table.add_column("Статус")
         table.add_column("DNS proxy")
+        table.add_column("TLS/SAN")
         table.add_column("Деталь")
         for router in result.router_results:
             table.add_row(
                 router.router_id,
                 _format_diagnostic_status(router.status.value),
                 _format_dns_proxy(router.dns_proxy_enabled),
+                _format_tls_san(router),
                 _format_router_diagnostic_error(router.error_message),
             )
         if not result.router_results:
-            table.add_row("[dim]нет[/dim]", "-", "-", "-")
+            table.add_row("[dim]нет[/dim]", "-", "-", "-", "-")
         title = (
             f"{panel_formatting.ICON_SEARCH} Status diagnostics: "
             f"overall={result.overall_status.value} "

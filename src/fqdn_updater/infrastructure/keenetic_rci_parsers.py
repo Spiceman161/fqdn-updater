@@ -5,6 +5,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from fqdn_updater.domain.acme import AcmeCertificateStatus
 from fqdn_updater.domain.keenetic import (
     DnsProxyStatus,
     ObjectGroupState,
@@ -18,6 +19,67 @@ from fqdn_updater.domain.static_route_diff import (
 )
 
 RuntimeErrorFactory = Callable[[str, str], RuntimeError]
+
+
+def parse_acme_certificates(
+    response_payload: Any,
+    *,
+    operation: str,
+    runtime_error: RuntimeErrorFactory,
+) -> tuple[AcmeCertificateStatus, ...]:
+    """Parse the documented RCI ``certificate[]`` payload and its batch wrapper."""
+    payload = (
+        response_payload[0]
+        if isinstance(response_payload, list) and len(response_payload) == 1
+        else response_payload
+    )
+    if not isinstance(payload, dict):
+        raise runtime_error(
+            operation, f"certificate payload must be an object, got {type(payload).__name__}"
+        )
+    certificates = _find_certificate_payload(payload)
+    if certificates is None:
+        raise runtime_error(operation, "response is missing certificate")
+    raw_certificates = certificates if isinstance(certificates, list) else [certificates]
+    parsed: list[AcmeCertificateStatus] = []
+    for raw_certificate in raw_certificates:
+        if not isinstance(raw_certificate, dict):
+            raise runtime_error(operation, "certificate entry must be an object")
+        domain = _first_non_blank_string(raw_certificate, ("domain", "name"))
+        if domain is None:
+            raise runtime_error(operation, "certificate entry is missing domain")
+        expired_value = raw_certificate.get("is-expired")
+        if not isinstance(expired_value, bool):
+            raise runtime_error(operation, f"certificate '{domain}' has invalid is-expired")
+        parsed.append(
+            AcmeCertificateStatus(
+                domain=domain,
+                is_expired=expired_value,
+                issued_at=_first_non_blank_string(
+                    raw_certificate, ("issued-at", "issue-date", "issued", "not-before")
+                ),
+                expires_at=_first_non_blank_string(
+                    raw_certificate, ("expires-at", "expiration-date", "expires", "not-after")
+                ),
+                renewal_enabled=_first_optional_bool(raw_certificate, ("renewal-enabled", "renew")),
+                renewal_in_progress=_first_optional_bool(
+                    raw_certificate, ("renewal-in-progress", "renewing", "is-renewing")
+                ),
+            )
+        )
+    return tuple(parsed)
+
+
+def _find_certificate_payload(payload: dict[str, Any]) -> Any | None:
+    """Accept direct ``certificate`` and normal nested RCI command responses."""
+    if "certificate" in payload:
+        return payload["certificate"]
+    for value in payload.values():
+        if isinstance(value, dict):
+            nested = _find_certificate_payload(value)
+            if nested is not None:
+                return nested
+    return None
 
 
 def unwrap_response_path(
@@ -386,6 +448,13 @@ def _first_non_blank_string(
         normalized_value = str(value).strip()
         if normalized_value:
             return normalized_value
+    return None
+
+
+def _first_optional_bool(payload: dict[str, Any], keys: tuple[str, ...]) -> bool | None:
+    for key in keys:
+        if key in payload:
+            return _parse_optional_bool(payload[key])
     return None
 
 

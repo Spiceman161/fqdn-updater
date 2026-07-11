@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
@@ -65,6 +66,7 @@ from fqdn_updater.domain.config_schema import (
     RouterServiceMappingConfig,
 )
 from fqdn_updater.domain.keenetic import RouterInterfaceState, RouteTargetCandidate
+from fqdn_updater.domain.status_diagnostics import StatusDiagnosticsResult
 from fqdn_updater.infrastructure.secret_env_file import (
     SecretEnvFile,
     password_env_key_for_router_id,
@@ -113,6 +115,10 @@ class PanelRouterFlow:
     @property
     def _route_target_discovery_service(self):
         return self._panel._route_target_discovery_service
+
+    @property
+    def _client_factory(self):
+        return self._panel._client_factory
 
     @property
     def _service_count_cache_repository(self):
@@ -220,6 +226,9 @@ class PanelRouterFlow:
                 f"{_format_validation_error(exc)}"
             )
             self._pause()
+            return False
+
+        if not self.ensure_tls_san_ready(router=draft_router, password=password):
             return False
 
         default_route_interface = self.prompt_default_route_interface(
@@ -397,6 +406,104 @@ class PanelRouterFlow:
         )
         self._pause()
         return True
+
+    def ensure_tls_san_ready(self, *, router: RouterConfig, password: str) -> bool:
+        """Gate discovery on a valid external SAN, offering the confirmed repair flow."""
+        client = self._client_factory.create(router=router, password=password)
+        diagnostic = client.get_tls_san_diagnostic()
+        if diagnostic is None or diagnostic.is_healthy:
+            return True
+        hostname = urlparse(str(router.rci_url)).hostname or ""
+        self._console.print(
+            "[yellow]TLS/SAN RCI-проверка не прошла:[/yellow] " + diagnostic.compact_summary()
+        )
+        if not hostname.startswith("rci."):
+            self._console.print(
+                "[yellow]Автоматический ACME-ремонт доступен только для rci.* endpoint.[/yellow]"
+            )
+            self._pause()
+            return False
+        repair = self._prompts.confirm(
+            message=f"Запросить ACME-сертификат для {hostname}?",
+            default=False,
+            hint_lines=(
+                "Будут отправлены только ip http ssl acme get, system configuration save "
+                "через одноразовое неподтверждённое HTTPS-соединение.",
+            ),
+        )
+        if repair is not True:
+            return False
+        repair_factory = getattr(self._client_factory, "create_acme_repair_client", None)
+        if repair_factory is None:
+            self._console.print("[red]ACME-ремонт недоступен для текущего RCI client.[/red]")
+            self._pause()
+            return False
+        repair_client = repair_factory(router=router, password=password, hostname=hostname)
+        repair_client.request_certificate()
+        repair_client.save_config()
+        self._console.print(
+            "[yellow]Запрос ACME отправлен и конфигурация сохранена. "
+            "Выпуск не ожидается автоматически.[/yellow]"
+        )
+        while True:
+            choice = self._prompts.select(
+                message="ACME-ремонт",
+                choices=[
+                    PromptChoice("Проверить выдачу", "check"),
+                    PromptChoice("Продолжить добавление позже", "continue"),
+                    PromptChoice("Назад", "back"),
+                ],
+                default="check",
+            )
+            if choice == "check":
+                certificates = repair_client.list_certificates()
+                certificate_ready = any(
+                    certificate.domain.lower() == hostname.lower() and not certificate.is_expired
+                    for certificate in certificates
+                )
+                diagnostic = client.get_tls_san_diagnostic()
+                if certificate_ready and diagnostic.is_healthy:
+                    self._console.print(
+                        "[green]ACME-сертификат выдан, SAN-проверка пройдена.[/green]"
+                    )
+                    return True
+                self._console.print(
+                    "[yellow]Сертификат ещё не готов или SAN ещё не обновлён. "
+                    "Добавление не продолжится до успешной проверки.[/yellow]"
+                )
+                continue
+            # "continue" intentionally leaves the wizard without discovery: a router
+            # is never added from a known-invalid HTTPS endpoint.
+            return False
+
+    def offer_acme_repair_from_status(
+        self, *, config: AppConfig, result: StatusDiagnosticsResult
+    ) -> None:
+        """Offer, but never automatically start, repair after a read-only status run."""
+        repairable_ids = {
+            diagnostic.router_id
+            for diagnostic in result.router_results
+            if diagnostic.tls_san is not None
+            and not diagnostic.tls_san.is_healthy
+            and diagnostic.tls_san.hostname.startswith("rci.")
+        }
+        if not repairable_ids:
+            return
+        router = next((item for item in config.routers if item.id in repairable_ids), None)
+        if router is None:
+            return
+        should_repair = self._prompts.confirm(
+            message=f"Открыть ACME-ремонт для {router.id}?",
+            default=False,
+            hint_lines=("Ремонт выполняется только после явного подтверждения.",),
+        )
+        if should_repair is not True:
+            return
+        try:
+            password = self._panel._secret_resolver.resolve(router)
+            self.ensure_tls_san_ready(router=router, password=password)
+        except RuntimeError as exc:
+            self._console.print(f"[red]ACME-ремонт не выполнен:[/red] {exc}")
 
     def edit_router(self) -> None:
         config = self._load_config()

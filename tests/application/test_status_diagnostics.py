@@ -15,6 +15,7 @@ from fqdn_updater.domain.status_diagnostics import (
     OverallDiagnosticStatus,
     RouterDiagnosticStatus,
 )
+from fqdn_updater.domain.tls_diagnostics import TlsEndpointDiagnostic, TlsSanDiagnostic
 
 
 def test_status_diagnostics_reports_healthy_enabled_routers() -> None:
@@ -49,6 +50,21 @@ def test_status_diagnostics_reports_degraded_when_dns_proxy_is_disabled() -> Non
     assert result.router_results[0].dns_proxy_enabled is False
     assert client_factory.clients["router-1"].read_calls == ["dns_proxy_status"]
     assert client_factory.clients["router-1"].write_calls == []
+
+
+def test_status_diagnostics_degrades_san_mismatch_after_reading_dns_proxy() -> None:
+    service = StatusDiagnosticsService(
+        secret_resolver=StubSecretResolver(passwords={"router-1": "secret-1"}),
+        client_factory=TlsRecordingClientFactory(dns_proxy_enabled={"router-1": True}),
+    )
+
+    result = service.check(config=_config())
+
+    router = result.router_results[0]
+    assert router.status is RouterDiagnosticStatus.DEGRADED
+    assert router.dns_proxy_enabled is True
+    assert router.tls_san is not None
+    assert router.tls_san.san_matches_hostname is False
 
 
 def test_status_diagnostics_marks_secret_resolution_failures_per_router() -> None:
@@ -208,6 +224,25 @@ class RecordingClientFactory(KeeneticClientFactory):
             dns_error=self._dns_errors.get(router.id),
         )
         self.clients[router.id] = client
+        return client
+
+
+class TlsRecordingClientFactory(RecordingClientFactory):
+    def create(self, router: RouterConfig, password: str) -> KeeneticClient:
+        client = super().create(router, password)
+        client.get_tls_san_diagnostic = lambda: TlsSanDiagnostic(  # type: ignore[method-assign]
+            hostname="router-1.example",
+            port=443,
+            endpoints=(
+                TlsEndpointDiagnostic(
+                    address="203.0.113.10",
+                    family="ipv4",
+                    port=443,
+                    subject_alt_names=("wrong.example",),
+                    san_matches_hostname=False,
+                ),
+            ),
+        )
         return client
 
 

@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fqdn_updater.domain._enum import StrEnum
 from fqdn_updater.domain.run_artifact import RunStep
+from fqdn_updater.domain.tls_diagnostics import TlsSanDiagnostic
 
 
 class RouterDiagnosticStatus(StrEnum):
@@ -26,6 +27,7 @@ class RouterStatusDiagnostic(BaseModel):
     dns_proxy_enabled: bool | None = None
     error_message: str | None = None
     failure_step: RunStep | None = None
+    tls_san: TlsSanDiagnostic | None = None
 
 
 class StatusDiagnosticsResult(BaseModel):

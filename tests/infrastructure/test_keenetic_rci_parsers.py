@@ -6,6 +6,7 @@ from fqdn_updater.domain.keenetic import RouterInterfaceState, RouteTargetCandid
 from fqdn_updater.domain.object_group_entry import ObjectGroupEntry
 from fqdn_updater.domain.static_route_diff import StaticRouteState
 from fqdn_updater.infrastructure.keenetic_rci_parsers import (
+    parse_acme_certificates,
     parse_dns_proxy_status,
     parse_object_group_state,
     parse_route_binding_state,
@@ -18,6 +19,36 @@ from fqdn_updater.infrastructure.keenetic_rci_parsers import (
 
 def _runtime_error(operation: str, message: str) -> RuntimeError:
     return RuntimeError(f"Router 'router-1' {operation} failed: {message}")
+
+
+def test_parse_acme_certificates_accepts_direct_and_batch_wrapped_contract() -> None:
+    payload = [
+        {
+            "certificate": [
+                {
+                    "domain": "rci.example.keenetic.pro",
+                    "is-expired": False,
+                    "issue-date": "2026-07-01T00:00:00Z",
+                    "expiration-date": "2026-10-01T00:00:00Z",
+                    "renewal-enabled": True,
+                    "renewal-in-progress": False,
+                }
+            ]
+        }
+    ]
+
+    certificates = parse_acme_certificates(
+        payload,
+        operation="acme_list_certificates",
+        runtime_error=_runtime_error,
+    )
+
+    assert certificates[0].domain == "rci.example.keenetic.pro"
+    assert certificates[0].is_expired is False
+    assert certificates[0].issued_at == "2026-07-01T00:00:00Z"
+    assert certificates[0].expires_at == "2026-10-01T00:00:00Z"
+    assert certificates[0].renewal_enabled is True
+    assert certificates[0].renewal_in_progress is False
 
 
 def test_unwrap_response_path_preserves_client_error_shape() -> None:

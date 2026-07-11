@@ -11,6 +11,8 @@ def classify_transport_failure(message: str) -> FailureCategory | None:
         or "temporary failure in name resolution" in normalized_message
     ):
         return FailureCategory.DNS_RESOLUTION_FAILED
+    if "tls_san" in normalized_message and "san_matches=false" in normalized_message:
+        return FailureCategory.TLS_CERT_HOSTNAME_MISMATCH
     if (
         "hostname mismatch" in normalized_message
         or "certificate is not valid for" in normalized_message

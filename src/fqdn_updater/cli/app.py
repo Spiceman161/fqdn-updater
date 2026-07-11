@@ -754,6 +754,23 @@ def _render_status_human(result: StatusDiagnosticsResult) -> str:
             lines.append(f"  failure_step: {router.failure_step.value}")
         if router.error_message is not None:
             lines.append(f"  ошибка: {router.error_message}")
+        if router.tls_san is not None:
+            tls_san = router.tls_san
+            lines.append(
+                "  tls_san: "
+                f"hostname={tls_san.hostname} complete={str(tls_san.is_complete).lower()} "
+                f"san_matches={str(tls_san.san_matches_hostname).lower()}"
+            )
+            for endpoint in tls_san.endpoints:
+                lines.append(
+                    "    endpoint: "
+                    f"{endpoint.family}/{endpoint.address}:{endpoint.port} "
+                    f"san_match={endpoint.san_matches_hostname} "
+                    f"san={','.join(endpoint.subject_alt_names) or '-'} "
+                    f"error={endpoint.error or '-'}"
+                )
+            if tls_san.resolution_error is not None:
+                lines.append(f"    resolution_error: {tls_san.resolution_error}")
 
     return "\n".join(lines)
 

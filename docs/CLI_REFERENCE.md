@@ -29,6 +29,7 @@ fqdn-updater sync --config config.json
 - `panel` открывает интерактивную терминальную панель.
 - `config validate` проверяет локальный config.
 - `status` выполняет read-only remote diagnostics.
+- Перед чтением DNS proxy `status` проверяет TLS/SAN с SNI на всех адресах hostname из `rci_url`. Поле `tls_san` доступно в JSON; mismatch или неполная проверка делает router/overall status `degraded`.
 - `dry-run` строит read-only sync preview.
 - `sync` применяет managed changes.
 

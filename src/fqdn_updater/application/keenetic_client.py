@@ -12,6 +12,7 @@ from fqdn_updater.domain.keenetic import (
     RouterInterfaceState,
 )
 from fqdn_updater.domain.static_route_diff import StaticRouteSpec, StaticRouteState
+from fqdn_updater.domain.tls_diagnostics import TlsSanDiagnostic
 
 
 class KeeneticClient(ABC):
@@ -74,6 +75,13 @@ class KeeneticClient(ABC):
     @abstractmethod
     def get_dns_proxy_status(self) -> DnsProxyStatus:
         """Read whether DNS proxy is enabled on the router."""
+
+    def get_tls_san_diagnostic(self) -> TlsSanDiagnostic | None:
+        """Read-only TLS/SAN diagnostic for the configured RCI endpoint.
+
+        Non-RCI test doubles and alternate clients may opt out by returning ``None``.
+        """
+        return None
 
 
 class KeeneticClientFactory(ABC):

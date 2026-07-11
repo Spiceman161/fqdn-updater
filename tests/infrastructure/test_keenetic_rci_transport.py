@@ -9,9 +9,12 @@ import pytest
 
 from fqdn_updater import __version__
 from fqdn_updater.domain.config_schema import RouterConfig
+from fqdn_updater.domain.tls_diagnostics import TlsEndpointDiagnostic
 from fqdn_updater.infrastructure.keenetic_rci_transport import (
+    KeeneticRciAcmeRepairTransport,
     KeeneticRciTransport,
     RciConnectionProfile,
+    _san_matches_hostname,
 )
 
 
@@ -269,11 +272,15 @@ def test_transport_reports_tls_diagnostics_for_certificate_failures(
         port: int,
         timeout: int,
         family_name: str,
-    ) -> str:
-        return (
-            f"tls_probe {family_name}/{ip}:{port} verify=failed "
-            f"error=certificate mismatch for {host} timeout={timeout} "
-            "cert=subject=wrong.example issuer=Test CA san=wrong.example"
+    ) -> TlsEndpointDiagnostic:
+        return TlsEndpointDiagnostic(
+            address=ip,
+            family=family_name,
+            port=port,
+            subject="wrong.example",
+            issuer="Test CA",
+            subject_alt_names=("wrong.example",),
+            san_matches_hostname=False,
         )
 
     monkeypatch.setattr(transport, "_probe_tls_endpoint", fake_probe_tls_endpoint)
@@ -289,12 +296,24 @@ def test_transport_reports_tls_diagnostics_for_certificate_failures(
     assert "transport failed after 5 attempts" in message
     assert "certificate verify failed: Hostname mismatch" in message
     assert "attempt_errors=1:SSLCertVerificationError:" in message
-    assert "tls_diagnostics host=router-1.example port=443 sni=router-1.example" in message
-    assert "resolved_endpoints=ipv4/203.0.113.10:443,ipv4/203.0.113.11:443" in message
-    assert "tls_probe ipv4/203.0.113.10:443 verify=failed" in message
-    assert "cert=subject=wrong.example issuer=Test CA san=wrong.example" in message
+    assert "tls_san hostname=router-1.example complete=True san_matches=False" in message
+    assert "ipv4/203.0.113.10:443:ok:san_match=False" in message
     assert len(opener.requests) == 5
     assert opener.timeouts == [15, 15, 15, 15, 15]
+
+
+def test_san_matching_supports_exact_and_single_label_wildcards_only() -> None:
+    assert _san_matches_hostname("rci.example.test", "rci.example.test") is True
+    assert _san_matches_hostname("*.example.test", "rci.example.test") is True
+    assert _san_matches_hostname("*.example.test", "a.rci.example.test") is False
+    assert _san_matches_hostname("other.example.test", "rci.example.test") is False
+
+
+def test_acme_unverified_transport_rejects_non_rci_or_different_hostname(profile) -> None:
+    with pytest.raises(ValueError, match="exactly match"):
+        KeeneticRciAcmeRepairTransport(profile, hostname="rci.other.example")
+    with pytest.raises(ValueError, match="rci"):
+        KeeneticRciAcmeRepairTransport(profile, hostname="router-1.example")
 
 
 def _runtime_error(operation: str, message: str) -> RuntimeError:

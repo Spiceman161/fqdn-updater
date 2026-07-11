@@ -202,6 +202,16 @@ def _plain_table_summary(summary: str | list[tuple[str, str]]) -> str:
     return "".join(text for _style, text in summary)
 
 
+class _NoopTlsClient:
+    def get_tls_san_diagnostic(self):
+        return None
+
+
+class _NoopTlsClientFactory:
+    def create(self, router, password):  # noqa: ANN001, ANN201 - test double protocol.
+        return _NoopTlsClient()
+
+
 class ScriptedSourceLoadingService:
     def __init__(self, report: SourceLoadReport) -> None:
         self.report = report
@@ -282,6 +292,7 @@ def make_panel_controller(
         dependencies or build_panel_dependencies(),
         source_loading_service=source_loading_service,
         route_target_discovery_service=EmptyDiscoveryService(),
+        client_factory=_NoopTlsClientFactory(),
     )
     controller = PanelController(
         config_path=tmp_path / "config.json",

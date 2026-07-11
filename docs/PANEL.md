@@ -54,6 +54,8 @@ fqdn-updater panel --config /opt/fqdn-updater/config.json
 
 Панель сгенерирует router id из имени, предложит `api_updater`, создаст пароль и покажет подсказки для Keenetic. Пароль сохраняется в `.env.secrets`, а в config остаётся ссылка вида `FQDN_UPDATER_ROUTER_<ID>_PASSWORD`.
 
+Перед discovery панель проверяет TLS/SAN endpoint на всех разрешённых адресах с SNI. Для проблемного `rci.*` имени она может, только после явного подтверждения, отправить ACME `get` и `save`; выпуск не pollится автоматически. Оператор может проверить `acme list` и внешний SAN, отложить добавление или вернуться назад. Discovery продолжается только после валидного SAN. После panel `status` такой же ремонт предлагается только для проблемных `rci.*` endpoint.
+
 После проверки RCI URL панель показывает интерфейсы из `show interface`: тип, состояние, `global/defaultgw/priority`. Затем выбирается default interface. Если discovery недоступен, интерфейс можно ввести вручную и выбрать режим списков.
 
 Если default interface похож на VPN, панель предлагает direct-группы (`direct_*`) и отдельно спрашивает provider interface для этих групп. Если default interface не VPN, используется прежний сценарий: выбираются VPN-routed списки и общий route target, с optional override для `google_ai`.

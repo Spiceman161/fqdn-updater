@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from fqdn_updater.application.keenetic_client import KeeneticClient, KeeneticClientFactory
+from fqdn_updater.domain.acme import AcmeCertificateStatus
 from fqdn_updater.domain.config_schema import RouterConfig
 from fqdn_updater.domain.keenetic import (
     DnsProxyStatus,
@@ -38,6 +39,7 @@ from fqdn_updater.infrastructure.keenetic_rci_commands import (
 )
 from fqdn_updater.infrastructure.keenetic_rci_errors import iter_rci_status_errors
 from fqdn_updater.infrastructure.keenetic_rci_parsers import (
+    parse_acme_certificates,
     parse_dns_proxy_status,
     parse_object_group_state,
     parse_route_binding_state,
@@ -47,6 +49,7 @@ from fqdn_updater.infrastructure.keenetic_rci_parsers import (
     unwrap_response_path,
 )
 from fqdn_updater.infrastructure.keenetic_rci_transport import (
+    KeeneticRciAcmeRepairTransport,
     KeeneticRciTransport,
     RciConnectionProfile,
 )
@@ -257,6 +260,9 @@ class KeeneticRciClient(KeeneticClient):
             runtime_error=self._runtime_error,
         )
 
+    def get_tls_san_diagnostic(self):
+        return self._transport.get_tls_san_diagnostic()
+
     def discover_wireguard_route_targets(self) -> tuple[RouteTargetCandidate, ...]:
         response_payload = self._post_commands(
             operation="discover_wireguard_route_targets",
@@ -348,3 +354,64 @@ class KeeneticRciClientFactory(KeeneticClientFactory):
         return KeeneticRciClient(
             profile=RciConnectionProfile.from_router_config(router=router, password=password)
         )
+
+    def create_acme_repair_client(
+        self,
+        *,
+        router: RouterConfig,
+        password: str,
+        hostname: str,
+    ) -> KeeneticRciAcmeRepairClient:
+        """Create the restricted unverified client after an explicit UI confirmation."""
+        return KeeneticRciAcmeRepairClient(
+            profile=RciConnectionProfile.from_router_config(router=router, password=password),
+            hostname=hostname,
+        )
+
+
+class KeeneticRciAcmeRepairClient:
+    """Only the three commands authorised for a confirmed ACME repair session."""
+
+    def __init__(self, *, profile: RciConnectionProfile, hostname: str) -> None:
+        self.profile = profile
+        self.hostname = hostname
+        self._transport = KeeneticRciAcmeRepairTransport(profile, hostname=hostname)
+
+    def request_certificate(self) -> None:
+        self._post(operation="acme_get_certificate", action="get")
+
+    def list_certificates(self) -> tuple[AcmeCertificateStatus, ...]:
+        payload = self._post(operation="acme_list_certificates", action="list")
+        return parse_acme_certificates(
+            payload,
+            operation="acme_list_certificates",
+            runtime_error=self._runtime_error,
+        )
+
+    def save_config(self) -> None:
+        self._post(operation="acme_save_config", action="save")
+
+    def _post(self, *, operation: str, action: str) -> object:
+        if action == "get":
+            charset, response_body = self._transport.request_certificate(
+                runtime_error=self._runtime_error
+            )
+        elif action == "list":
+            charset, response_body = self._transport.list_certificates(
+                runtime_error=self._runtime_error
+            )
+        elif action == "save":
+            charset, response_body = self._transport.save_config(runtime_error=self._runtime_error)
+        else:
+            raise AssertionError(f"unsupported ACME action: {action}")
+        try:
+            payload = json.loads(response_body.decode(charset))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise self._runtime_error(operation, f"response JSON decode failed: {exc}") from exc
+        errors = iter_rci_status_errors(payload)
+        if errors:
+            raise self._runtime_error(operation, "; ".join(errors))
+        return payload
+
+    def _runtime_error(self, operation: str, message: str) -> RuntimeError:
+        return RuntimeError(f"Router '{self.profile.router_id}' {operation} failed: {message}")

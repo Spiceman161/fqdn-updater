@@ -13,6 +13,8 @@ FQDN-updater — Python CLI для безопасной синхронизаци
 
 Production transport только один: KeenDNS RCI по HTTPS с HTTP Digest Auth. SSH, web UI, daemon, notifications и не-Keenetic устройства вне текущего scope.
 
+`status` сначала выполняет read-only TLS/SAN probe hostname из `rci_url` с SNI на каждом разрешённом адресе, затем читает DNS proxy. SAN mismatch или неполный probe при успешном RCI — `degraded`; RCI read failure — `failed` с TLS result. CN не является SAN fallback. Обычные `sync`/`dry-run`/`status` не используют TLS bypass. Только явно подтверждённый panel ACME wizard для точного `rci.*` hostname имеет изолированный unverified Digest client, ограниченный `acme get`, `acme list` и `system configuration save`.
+
 ## Архитектура
 
 Код разделён на слои:

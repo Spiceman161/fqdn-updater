@@ -42,6 +42,8 @@ In scope:
 - Optional managed default route priority через Keenetic `ip global`.
 - Read-before-write для любого apply.
 - `status`, `dry-run`, `sync`.
+- `status` должен read-only проверять TLS/SAN с SNI для каждого разрешённого адреса RCI hostname; SAN mismatch — `degraded`, а обычная RCI read-ошибка — `failed` с сохранённой TLS-диагностикой.
+- Только подтверждённый panel wizard для точного `rci.*` hostname может использовать изолированное unverified соединение и только для ACME get/list и save-config. Это не fallback для production sync path.
 - Docker Compose runtime.
 - systemd timer.
 

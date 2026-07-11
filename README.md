@@ -21,6 +21,7 @@
 - Инструмент меняет только managed object-group, DNS route bindings, static routes и router-level `default_route`, описанные в `config.json`.
 - Если снять список в панели, его managed mapping временно сохраняется как `enabled=false`; следующий `sync` удалит связанные с ним наши группы и маршруты на Keenetic, а после успешной cleanup уберёт этот mapping из `config.json`.
 - `status`, `dry-run`, журнал и read-only проверки панели не выполняют удалённых write-операций.
+- `status` отдельно проверяет TLS/SAN для каждого адреса hostname из `rci_url` с SNI; SAN mismatch даёт `degraded` и exit code `20`.
 - В текущем scope нет web UI, daemon-процесса, уведомлений, SSH production transport и поддержки не-Keenetic устройств.
 
 ## Установка
@@ -28,7 +29,7 @@
 На чистой Ubuntu 22.04 и новее используйте versioned release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.1/install.sh | sudo bash -s -- --version v1.1.1
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.2.1/install.sh | sudo bash -s -- --version v1.2.1
 ```
 
 Если installer запущен без `--version`, он установит latest GitHub Release. Если latest release недоступен или ответ GitHub некорректен, установка завершится с ошибкой до скачивания кода проекта.
@@ -50,13 +51,13 @@ fqdn-updater update
 Для фиксации на конкретном release tag:
 
 ```bash
-fqdn-updater update --version v1.1.1
+fqdn-updater update --version v1.2.1
 ```
 
 Если локальный installer отсутствует или недоступен для чтения, wrapper завершится с ошибкой и покажет команду ручной переустановки для Ubuntu 22.04+:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.1.1/install.sh | sudo bash -s -- --version v1.1.1
+curl -fsSL https://raw.githubusercontent.com/Spiceman161/fqdn-updater/v1.2.1/install.sh | sudo bash -s -- --version v1.2.1
 ```
 
 ## Первый запуск
@@ -106,6 +107,8 @@ journalctl -u fqdn-updater.service -n 100 --no-pager
 ```
 
 ## KeenDNS RCI
+
+Если сертификат для `rci.*` endpoint ещё не покрывает его SAN, панель может запустить явно подтверждённый ACME-ремонт. Он ограничен командами `ip http ssl acme get <точный-hostname>`, `ip http ssl acme list` и `system configuration save`; `sync`, `dry-run` и CLI `status` никогда не обходят TLS-проверку.
 
 В Keenetic web UI для `rci.<domain>` публикуется web application с protocol `HTTP` и портом `79`. В `config.json` хранится внешний endpoint вида `https://rci.<domain>/rci/`.
 

@@ -694,6 +694,7 @@ class PanelController:
             return
 
         self._render_status_result(result=result)
+        self._router_flow.offer_acme_repair_from_status(config=config, result=result)
         self._pause()
 
     def _run_dry_run_preview(self) -> None:

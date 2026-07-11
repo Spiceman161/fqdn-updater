@@ -119,6 +119,14 @@ def build_save_config_command() -> dict[str, Any]:
     return {"parse": "system configuration save"}
 
 
+def build_acme_get_certificate_command(hostname: str) -> dict[str, Any]:
+    return {"parse": f"ip http ssl acme get {_format_cli_argument(hostname, 'hostname')}"}
+
+
+def build_acme_list_certificates_command() -> dict[str, Any]:
+    return {"parse": "ip http ssl acme list"}
+
+
 def _build_static_route_payload(
     *,
     route: StaticRouteSpec | StaticRouteState,

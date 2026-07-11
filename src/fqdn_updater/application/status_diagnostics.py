@@ -59,6 +59,8 @@ class StatusDiagnosticsService:
                 failure_step=RunStep.CLIENT_CREATE,
             )
 
+        tls_san = client.get_tls_san_diagnostic()
+
         try:
             dns_proxy_status = client.get_dns_proxy_status()
         except Exception as exc:
@@ -67,19 +69,22 @@ class StatusDiagnosticsService:
                 status=RouterDiagnosticStatus.FAILED,
                 error_message=str(exc),
                 failure_step=RunStep.READ_DNS_PROXY_STATUS,
+                tls_san=tls_san,
             )
 
-        if dns_proxy_status.enabled:
+        if dns_proxy_status.enabled and (tls_san is None or tls_san.is_healthy):
             return RouterStatusDiagnostic(
                 router_id=router.id,
                 status=RouterDiagnosticStatus.HEALTHY,
                 dns_proxy_enabled=True,
+                tls_san=tls_san,
             )
 
         return RouterStatusDiagnostic(
             router_id=router.id,
             status=RouterDiagnosticStatus.DEGRADED,
-            dns_proxy_enabled=False,
+            dns_proxy_enabled=dns_proxy_status.enabled,
+            tls_san=tls_san,
         )
 
 
