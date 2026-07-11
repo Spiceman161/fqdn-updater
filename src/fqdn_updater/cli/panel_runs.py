@@ -41,6 +41,27 @@ def _format_tls_san(router) -> str:
     return "[yellow]SAN mismatch[/yellow]"
 
 
+def _format_status_detail(router) -> Text:
+    if router.error_message is not None:
+        return _format_router_diagnostic_error(router.error_message)
+    diagnostic = router.tls_san
+    if diagnostic is None:
+        return _format_router_diagnostic_error(None)
+    if diagnostic.resolution_error is not None:
+        return Text(f"TLS DNS: {diagnostic.resolution_error}", style="yellow")
+    endpoint_errors = [
+        f"{endpoint.family}/{endpoint.address}: {endpoint.error}"
+        for endpoint in diagnostic.endpoints
+        if endpoint.error is not None
+    ]
+    if endpoint_errors:
+        return Text(
+            panel_formatting._truncate_discovery_error_message("; ".join(endpoint_errors)),
+            style="yellow",
+        )
+    return _format_router_diagnostic_error(None)
+
+
 class PanelRunsFlow:
     """Run history and execution result screens for the interactive panel."""
 
@@ -354,7 +375,7 @@ class PanelRunsFlow:
                 _format_diagnostic_status(router.status.value),
                 _format_dns_proxy(router.dns_proxy_enabled),
                 _format_tls_san(router),
-                _format_router_diagnostic_error(router.error_message),
+                _format_status_detail(router),
             )
         if not result.router_results:
             table.add_row("[dim]нет[/dim]", "-", "-", "-", "-")

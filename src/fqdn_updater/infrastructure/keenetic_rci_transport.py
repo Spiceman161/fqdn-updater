@@ -24,7 +24,10 @@ from fqdn_updater.infrastructure.keenetic_rci_commands import (
 _MAX_REQUEST_ATTEMPTS = 5
 _REQUEST_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0, 8.0)
 _REQUEST_RETRY_JITTER_RATIO = 0.25
-_TLS_DIAGNOSTIC_TIMEOUT_SECONDS = 5
+# KeenDNS may take noticeably longer than a normal HTTPS endpoint to complete
+# an SNI handshake on one of its published addresses.  Do not let a short
+# diagnostic-only timeout turn that into a false SAN degradation.
+_TLS_DIAGNOSTIC_TIMEOUT_SECONDS = 30
 
 _TransportError = TimeoutError | error.URLError | OSError | ssl.SSLError
 _RuntimeErrorFactory = Callable[[str, str], RuntimeError]

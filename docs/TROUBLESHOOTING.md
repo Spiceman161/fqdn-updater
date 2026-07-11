@@ -29,7 +29,7 @@ fqdn-updater init --config /opt/fqdn-updater/config.json
 
 ## `status` показывает TLS/SAN mismatch
 
-`status --output json` содержит hostname, все проверенные IP-адреса, SAN, subject/issuer, даты и ошибки отдельных endpoint в `tls_san`. Проверка использует SNI и не использует CN как fallback. Исправьте публикацию KeenDNS или сертификат. Для hostname, начинающегося с `rci.`, в панели доступен явно подтверждаемый ACME-ремонт; после `get` и `save` проверьте выдачу вручную, не запускайте `sync` или `dry-run` с TLS bypass.
+`status --output json` содержит hostname, все проверенные IP-адреса, SAN, subject/issuer, даты и ошибки отдельных endpoint в `tls_san`. Проверка использует SNI и не использует CN как fallback. На каждый endpoint она ждёт до `min(timeout_seconds, 30)` секунд, чтобы медленный KeenDNS handshake не выглядел как SAN-проблема. Исправьте публикацию KeenDNS или сертификат. Для hostname, начинающегося с `rci.`, в панели доступен явно подтверждаемый ACME-ремонт; после `get` и `save` проверьте выдачу вручную, не запускайте `sync` или `dry-run` с TLS bypass.
 
 Включите DNS proxy на Keenetic. DNS-based route rules не будут работать корректно, если клиенты не используют Keenetic как DNS.
 

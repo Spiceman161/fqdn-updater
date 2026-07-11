@@ -302,6 +302,78 @@ def test_transport_reports_tls_diagnostics_for_certificate_failures(
     assert opener.timeouts == [15, 15, 15, 15, 15]
 
 
+def test_tls_san_diagnostic_uses_router_timeout_up_to_thirty_seconds(
+    monkeypatch,
+    profile,
+) -> None:
+    transport = KeeneticRciTransport(profile=profile.model_copy(update={"timeout_seconds": 45}))
+    observed_timeouts: list[int] = []
+    monkeypatch.setattr(
+        "fqdn_updater.infrastructure.keenetic_rci_transport.socket.getaddrinfo",
+        lambda host, port, type: (  # noqa: A002, ARG005
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", port)),
+        ),
+    )
+
+    def fake_probe_tls_endpoint(
+        *,
+        host: str,
+        ip: str,
+        port: int,
+        timeout: int,
+        family_name: str,
+    ) -> TlsEndpointDiagnostic:
+        observed_timeouts.append(timeout)
+        return TlsEndpointDiagnostic(
+            address=ip,
+            family=family_name,
+            port=port,
+            subject_alt_names=(host,),
+            san_matches_hostname=True,
+        )
+
+    monkeypatch.setattr(transport, "_probe_tls_endpoint", fake_probe_tls_endpoint)
+
+    diagnostic = transport.get_tls_san_diagnostic()
+
+    assert diagnostic.is_healthy is True
+    assert observed_timeouts == [30]
+
+
+def test_tls_san_diagnostic_respects_shorter_router_timeout(monkeypatch, profile) -> None:
+    transport = KeeneticRciTransport(profile=profile)
+    observed_timeouts: list[int] = []
+    monkeypatch.setattr(
+        "fqdn_updater.infrastructure.keenetic_rci_transport.socket.getaddrinfo",
+        lambda host, port, type: (  # noqa: A002, ARG005
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", port)),
+        ),
+    )
+
+    def fake_probe_tls_endpoint(
+        *,
+        host: str,
+        ip: str,
+        port: int,
+        timeout: int,
+        family_name: str,
+    ) -> TlsEndpointDiagnostic:
+        observed_timeouts.append(timeout)
+        return TlsEndpointDiagnostic(
+            address=ip,
+            family=family_name,
+            port=port,
+            subject_alt_names=(host,),
+            san_matches_hostname=True,
+        )
+
+    monkeypatch.setattr(transport, "_probe_tls_endpoint", fake_probe_tls_endpoint)
+
+    transport.get_tls_san_diagnostic()
+
+    assert observed_timeouts == [15]
+
+
 def test_san_matching_supports_exact_and_single_label_wildcards_only() -> None:
     assert _san_matches_hostname("rci.example.test", "rci.example.test") is True
     assert _san_matches_hostname("*.example.test", "rci.example.test") is True

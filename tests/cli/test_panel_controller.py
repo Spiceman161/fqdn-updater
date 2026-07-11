@@ -783,6 +783,7 @@ def test_router_menu_status_choice_calls_diagnostics_service_and_renders_router_
     plain_output = console.export_text(clear=False)
     styled_output = console.export_text(styles=True, clear=False)
     assert "Status diagnostics: overall=failed checked=3" in plain_output
+    assert "Медленный KeenDNS endpoint может отвечать до 30 секунд" in plain_output
     assert "router-healthy" in plain_output
     assert "router-degraded" in plain_output
     assert "router-failed" in plain_output

@@ -685,6 +685,12 @@ class PanelController:
 
     def _run_status_diagnostics(self) -> None:
         config = self._config_with_resolved_runtime_paths(config=self._load_config())
+        enabled_router_count = sum(router.enabled for router in config.routers)
+        self._console.print("[cyan]Проверяем связь с маршрутизаторами и TLS/SAN endpoint…[/cyan]")
+        self._console.print(
+            "[dim]Медленный KeenDNS endpoint может отвечать до 30 секунд; "
+            f"проверяется {enabled_router_count} router(ов).[/dim]"
+        )
         try:
             self._load_runtime_secret_env_file(config=config)
             result = self._status_service.check(config=config)
