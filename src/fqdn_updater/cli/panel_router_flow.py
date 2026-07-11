@@ -72,6 +72,13 @@ from fqdn_updater.infrastructure.secret_env_file import (
     password_env_key_for_router_id,
 )
 
+ACME_REPAIR_HINT_LINES = (
+    "ACME — автоматическое получение или обновление TLS-сертификата для RCI hostname.",
+    "Мастер не меняет списки, маршруты или пользователей; он запрашивает сертификат "
+    "и сохраняет конфигурацию.",
+    "Он доступен только при повторно подтверждённом SAN mismatch.",
+)
+
 if TYPE_CHECKING:
     from fqdn_updater.cli.panel import PanelController
 
@@ -434,6 +441,7 @@ class PanelRouterFlow:
             message=f"Запросить ACME-сертификат для {hostname}?",
             default=False,
             hint_lines=(
+                *ACME_REPAIR_HINT_LINES,
                 "Будут отправлены только ip http ssl acme get, system configuration save "
                 "через одноразовое неподтверждённое HTTPS-соединение.",
             ),
@@ -487,30 +495,45 @@ class PanelRouterFlow:
         self, *, config: AppConfig, result: StatusDiagnosticsResult
     ) -> None:
         """Offer, but never automatically start, repair after a read-only status run."""
-        repairable_ids = {
-            diagnostic.router_id
-            for diagnostic in result.router_results
-            if diagnostic.tls_san is not None
-            and diagnostic.tls_san.has_san_mismatch
-            and diagnostic.tls_san.hostname.startswith("rci.")
+        diagnostics_by_router_id = {
+            diagnostic.router_id: diagnostic for diagnostic in result.router_results
         }
-        if not repairable_ids:
-            return
-        router = next((item for item in config.routers if item.id in repairable_ids), None)
-        if router is None:
-            return
-        should_repair = self._prompts.confirm(
-            message=f"Открыть ACME-ремонт для {router.id}?",
-            default=False,
-            hint_lines=("Ремонт выполняется только после явного подтверждения.",),
-        )
-        if should_repair is not True:
-            return
-        try:
-            password = self._panel._secret_resolver.resolve(router)
-            self.ensure_tls_san_ready(router=router, password=password)
-        except RuntimeError as exc:
-            self._console.print(f"[red]ACME-ремонт не выполнен:[/red] {exc}")
+        for router in config.routers:
+            diagnostic = diagnostics_by_router_id.get(router.id)
+            if (
+                diagnostic is None
+                or diagnostic.tls_san is None
+                or not diagnostic.tls_san.has_san_mismatch
+                or not diagnostic.tls_san.hostname.startswith("rci.")
+            ):
+                continue
+            try:
+                password = self._panel._secret_resolver.resolve(router)
+                refreshed_diagnostic = self._client_factory.create(
+                    router=router, password=password
+                ).get_tls_san_diagnostic()
+            except RuntimeError as exc:
+                self._console.print(
+                    f"[yellow]Не удалось повторно подтвердить SAN для {router.id}: {exc}[/yellow]"
+                )
+                continue
+            if refreshed_diagnostic is None or not refreshed_diagnostic.has_san_mismatch:
+                self._console.print(
+                    f"[yellow]ACME-ремонт для {router.id} не предлагается: "
+                    "SAN mismatch не подтвердился при повторной проверке.[/yellow]"
+                )
+                continue
+            should_repair = self._prompts.confirm(
+                message=f"Открыть ACME-ремонт для {router.id}?",
+                default=False,
+                hint_lines=ACME_REPAIR_HINT_LINES,
+            )
+            if should_repair is not True:
+                continue
+            try:
+                self.ensure_tls_san_ready(router=router, password=password)
+            except RuntimeError as exc:
+                self._console.print(f"[red]ACME-ремонт не выполнен:[/red] {exc}")
 
     def edit_router(self) -> None:
         config = self._load_config()

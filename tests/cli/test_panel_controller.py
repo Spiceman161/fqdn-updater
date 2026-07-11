@@ -890,6 +890,76 @@ def test_add_router_does_not_offer_acme_repair_for_unavailable_tls_endpoint(tmp_
     assert "ACME-ремонт не предлагается" in console.export_text(clear=False)
 
 
+def test_status_rechecks_san_before_offering_acme_repair(tmp_path) -> None:
+    class _FreshHealthyTlsClient:
+        def get_tls_san_diagnostic(self) -> TlsSanDiagnostic:
+            return TlsSanDiagnostic(
+                hostname="rci.example.test",
+                port=443,
+                endpoints=(
+                    TlsEndpointDiagnostic(
+                        address="203.0.113.10",
+                        family="ipv4",
+                        port=443,
+                        subject_alt_names=("rci.example.test",),
+                        san_matches_hostname=True,
+                    ),
+                ),
+            )
+
+    class _FreshHealthyTlsClientFactory:
+        def create(self, router, password):  # noqa: ANN001, ANN201 - test double protocol.
+            return _FreshHealthyTlsClient()
+
+    prompts = ScriptedPromptAdapter()
+    controller, console = make_panel_controller(tmp_path, prompts=prompts)
+    write_config(
+        controller._config_path,
+        routers=[
+            {
+                "id": "router-1",
+                "name": "Router 1",
+                "rci_url": "https://rci.example.test/rci/",
+                "username": "api-user",
+                "password_env": "ROUTER_ONE_SECRET",
+                "enabled": True,
+            }
+        ],
+    )
+    controller._client_factory = _FreshHealthyTlsClientFactory()  # type: ignore[assignment]
+    controller._secret_resolver.resolve = lambda router: "secret"  # type: ignore[method-assign]
+    result = StatusDiagnosticsResult(
+        overall_status=OverallDiagnosticStatus.FAILED,
+        checked_router_count=1,
+        router_results=(
+            RouterStatusDiagnostic(
+                router_id="router-1",
+                status=RouterDiagnosticStatus.FAILED,
+                tls_san=TlsSanDiagnostic(
+                    hostname="rci.example.test",
+                    port=443,
+                    endpoints=(
+                        TlsEndpointDiagnostic(
+                            address="203.0.113.10",
+                            family="ipv4",
+                            port=443,
+                            subject_alt_names=("wrong.example.test",),
+                            san_matches_hostname=False,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    controller._router_flow.offer_acme_repair_from_status(
+        config=controller._load_config(), result=result
+    )
+
+    assert prompts.confirm_calls == []
+    assert "SAN mismatch не подтвердился" in console.export_text(clear=False)
+
+
 def test_add_router_passes_hint_lines_through_wizard_steps(
     tmp_path,
     monkeypatch,
